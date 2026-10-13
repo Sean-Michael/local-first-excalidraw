@@ -4,11 +4,11 @@ cask "local-first-excalidraw" do
 
   url "https://github.com/Sean-Michael/local-first-excalidraw/releases/download/v#{version}/LocalExcalidraw-#{version}.zip"
   name "Local Excalidraw"
-  desc "Local-first Excalidraw editor with an MCP server for coding agents"
+  desc "Offline Excalidraw editor with an MCP server for coding agents"
   homepage "https://github.com/Sean-Michael/local-first-excalidraw"
 
-  depends_on macos: ">= :sonoma"
   depends_on formula: "node"
+  depends_on macos: :sonoma
 
   app "Local Excalidraw.app"
   binary "#{appdir}/Local Excalidraw.app/Contents/Resources/bin/lfx"

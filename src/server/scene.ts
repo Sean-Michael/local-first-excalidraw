@@ -570,6 +570,49 @@ export interface ElementUpdate {
 
 const IMMUTABLE = new Set(["id", "type", "version", "versionNonce", "isDeleted", "seed"]);
 
+/** Properties an update may set: the simplified ones plus Excalidraw's own element fields. */
+const UPDATABLE = new Set([
+  "label", "text", "color", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle",
+  "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness", "fontSize", "fontFamily", "textAlign",
+  "verticalAlign", "link", "locked", "groupIds", "frameId", "points", "startArrowhead", "endArrowhead", "name",
+  "customData", "lineHeight", "autoResize", "elbowed", "startBinding", "endBinding", "boundElements", "containerId",
+  "originalText", "index", "status", "fileId", "scale", "crop",
+]);
+const ALIASES: Record<string, string> = {
+  fill: "backgroundColor", fillColor: "backgroundColor", background: "backgroundColor", bgColor: "backgroundColor",
+  stroke: "strokeColor", borderColor: "strokeColor", textColor: "strokeColor", fontColor: "strokeColor",
+};
+
+/**
+ * Maps the property names models tend to guess (fill, fillColor, stroke, …) onto real ones and
+ * reports anything that would otherwise be silently ignored, so the caller can correct itself.
+ */
+export function normalizeUpdates(updates: ElementUpdate[]): { updates: ElementUpdate[]; notes: string[] } {
+  const notes: string[] = [];
+  const out = updates.map((u) => {
+    const next: ElementUpdate = { id: u.id };
+    for (const [k, v] of Object.entries(u)) {
+      if (k === "id") continue;
+      const key = ALIASES[k] ?? k;
+      if (key !== k) notes.push(`${u.id}: treated "${k}" as "${key}"`);
+      if (key === "color" && typeof v === "string" && !PALETTE[v]) {
+        if (/^#[0-9a-f]{3,8}$/i.test(v)) {
+          next.strokeColor ??= v;
+          notes.push(`${u.id}: "color" takes a palette name; set strokeColor to ${v} (use backgroundColor for the fill)`);
+        } else notes.push(`${u.id}: unknown colour "${v}"; use one of ${Object.keys(PALETTE).join(", ")}`);
+        continue;
+      }
+      if (!UPDATABLE.has(key)) {
+        notes.push(`${u.id}: ignored unknown property "${k}"`);
+        continue;
+      }
+      next[key] = v;
+    }
+    return next;
+  });
+  return { updates: out, notes };
+}
+
 /** Applies partial updates; keeps labels centred and bound arrows attached. */
 export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
   const all = new Map(existing.map((e) => [e.id, e]));
@@ -703,9 +746,16 @@ function colorName(hex: string | undefined): string | undefined {
 }
 
 /** Compact, token-efficient summary of a scene that an agent can reason about. */
-export function describe(scene: Scene): string {
-  const els = live(scene.elements);
-  const all = new Map(els.map((e) => [e.id, e]));
+export function describe(scene: Scene, only?: Set<string>): string {
+  const all = new Map(live(scene.elements).map((e) => [e.id, e]));
+  // A selected label stands for its container; a selected container brings its label along.
+  const picked = only
+    ? new Set([...only].flatMap((id) => {
+        const e = all.get(id);
+        return e?.containerId && all.has(e.containerId) ? [id, e.containerId] : [id];
+      }))
+    : undefined;
+  const els = live(scene.elements).filter((e) => !picked || picked.has(e.id));
   const b = bounds(els);
   const lines: string[] = [
     `${els.length} elements` +

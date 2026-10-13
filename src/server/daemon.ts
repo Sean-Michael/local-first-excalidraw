@@ -1,9 +1,18 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { ChatEvent, ChatRequest } from "../shared/chat.js";
+import { Assistant, AssistantError } from "./ai/agent.js";
+import { listAnthropicModels } from "./ai/anthropic.js";
+import { listOllamaModels } from "./ai/ollama.js";
+import { listOpenAIModels } from "./ai/openai.js";
+import { apiKeyFor, type Endpoint, findClaude, SettingsError, SettingsStore } from "./ai/settings.js";
+import { CodeError, suggestFiles } from "./code.js";
 import {
+  baseUrl,
   type Config,
   ensureStateDir,
   loadOrCreateToken,
@@ -42,6 +51,7 @@ const SESSION_COOKIE = "lfx_session";
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const LOGIN_CODE_TTL_MS = 120 * 1000;
 const RPC_TIMEOUT_MS = 30_000;
+const CLAUDE_CODE_MODELS = ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -127,7 +137,9 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
 
   store.on("change", (ch: SceneChange) => {
     for (const c of clients.values()) {
-      if (c.path === ch.path && c.id !== ch.origin) send(c, { t: "scene", path: ch.path, rev: ch.rev, scene: ch.scene });
+      if (c.path === ch.path && c.id !== ch.origin) {
+        send(c, { t: "scene", path: ch.path, rev: ch.rev, scene: ch.scene, agent: ch.origin === "agent" || undefined });
+      }
     }
   });
 
@@ -182,9 +194,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     return els.map((e) => (typeof e.x === "number" ? { ...e, x: e.x + dx, y: (e.y ?? 0) + dy } : e));
   };
 
+  // Drawings with an assistant turn in progress: their edits are tagged so the canvas can undo them.
+  const agentPaths = new Set<string>();
+
   const op = async (body: Record<string, unknown>) => {
     const p = safe(body.path);
     const { scene } = store.get(p);
+    const origin = agentPaths.has(p) ? "agent" : undefined;
     switch (body.op) {
       case "read": {
         const doc = store.getLive(p);
@@ -194,13 +210,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       case "create": {
         if (store.exists(p) && !body.overwrite) throw new HttpError(409, `${p} already exists (pass overwrite: true to replace it)`);
         const { elements, created } = addSkeletons([], (body.elements as SkeletonEl[]) ?? []);
-        const r = store.apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } });
+        const r = store.apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
         return { path: p, rev: r.rev, created };
       }
       case "add": {
         const els = appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined);
         const { elements, created } = addSkeletons(scene.elements, els);
-        const r = store.apply(p, { elements });
+        const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created };
       }
       case "diagram": {
@@ -219,25 +235,25 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           children: e.children?.map((c) => ren(c)!),
         }));
         const { elements, created } = addSkeletons(scene.elements, renamed);
-        const r = store.apply(p, { elements });
+        const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created };
       }
       case "update": {
         const elements = updateElements(scene.elements, (body.updates as ElementUpdate[]) ?? []);
-        const r = store.apply(p, { elements });
+        const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev };
       }
       case "delete": {
         const { elements, deleted } = deleteElements(scene.elements, (body.ids as string[]) ?? []);
-        const r = store.apply(p, { elements });
+        const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev, deleted };
       }
       case "replace": {
-        const r = store.apply(p, { elements: body.elements as El[], replace: true });
+        const r = store.apply(p, { elements: body.elements as El[], replace: true }, origin);
         return { path: p, rev: r.rev };
       }
       case "clear": {
-        const r = store.apply(p, { elements: [], replace: true });
+        const r = store.apply(p, { elements: [], replace: true }, origin);
         return { path: p, rev: r.rev };
       }
       case "render": {
@@ -258,11 +274,80 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         const b = bounds(scene.elements);
         const nb = bounds(incoming);
         if (b && nb) incoming = incoming.map((e) => ({ ...e, x: e.x + b.maxX + 120 - nb.minX, y: e.y + b.minY - nb.minY }));
-        const r = store.apply(p, { elements: [...scene.elements, ...incoming], files: conv.files });
+        const r = store.apply(p, { elements: [...scene.elements, ...incoming], files: conv.files }, origin);
         return { path: p, rev: r.rev, created: incoming.filter((e) => !e.containerId).map((e) => e.id) };
       }
       default:
         throw new HttpError(400, `Unknown op ${String(body.op)}`);
+    }
+  };
+
+  // ---- assistant ----------------------------------------------------------------------------
+  const settings = new SettingsStore(cfg.stateDir);
+
+  /**
+   * The assistant's project root for a drawing: the git repository it lives in (`lfx open`
+   * registers only the drawing's folder, but the code worth reading is the whole repo),
+   * else the most specific allowed root. Never the home directory or the filesystem root.
+   */
+  const projectRootFor = (file: string) => {
+    let allowed: string | undefined;
+    for (const r of roots()) {
+      const rr = fs.existsSync(r) ? fs.realpathSync.native(r) : r;
+      const rel = path.relative(rr, file);
+      if ((rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) && (!allowed || rr.length > allowed.length)) allowed = rr;
+    }
+    if (!allowed) throw new HttpError(403, "Drawing is outside the allowed roots");
+    const home = fs.realpathSync.native(os.homedir());
+    for (let dir = path.dirname(file); dir !== home && dir !== path.dirname(dir); dir = path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    }
+    return allowed;
+  };
+
+  const broadcastChat = (p: string, ev: ChatEvent) => {
+    for (const c of clients.values()) if (c.path === p) send(c, { t: "chat", path: p, ev });
+  };
+
+  const assistant = new Assistant({
+    stateDir: cfg.stateDir,
+    settings,
+    store,
+    op,
+    list: (root) => listDrawings([safeDir(root)]),
+    safe,
+    projectRootFor,
+    emit: broadcastChat,
+    agentPaths,
+    mcpEnv: { LFX_STATE_DIR: cfg.stateDir, LFX_PORT: String(cfg.port), LFX_URL: baseUrl(cfg) },
+  });
+
+  const publicSettings = () => {
+    const bin = findClaude();
+    return settings.public({ available: !!bin, path: bin });
+  };
+
+  /** Model ids an endpoint offers, using the stored key when the form didn't send a new one. */
+  const listModels = async (body: Record<string, unknown>): Promise<string[]> => {
+    const kind = body.kind as Endpoint["kind"];
+    if (kind === "claude-code") return CLAUDE_CODE_MODELS;
+    const stored = settings.get().endpoints.find((e) => e.id === body.id);
+    const ep = { kind, baseUrl: typeof body.baseUrl === "string" ? body.baseUrl.trim().replace(/\/+$/, "") || undefined : undefined } as Endpoint;
+    if (ep.baseUrl) {
+      const u = new URL(ep.baseUrl);
+      if (u.protocol !== "http:" && u.protocol !== "https:") throw new HttpError(400, "Endpoint URL must be http or https");
+    }
+    const sameHost = stored && stored.kind === kind && stored.baseUrl === ep.baseUrl;
+    ep.apiKey = typeof body.apiKey === "string" && body.apiKey ? body.apiKey : sameHost ? stored.apiKey : undefined;
+    const key = apiKeyFor(ep);
+    try {
+      if (kind === "anthropic") return await listAnthropicModels(ep.baseUrl, key);
+      if (kind === "ollama") return await listOllamaModels(ep.baseUrl);
+      if (!ep.baseUrl) throw new HttpError(400, "Base URL required");
+      return await listOpenAIModels(ep.baseUrl, key);
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(502, `Could not list models: ${(e as Error).message}`);
     }
   };
 
@@ -388,6 +473,44 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       }
     }
 
+    // ---- assistant ----
+    if (pathname === "/api/ai/settings") {
+      if (method === "GET") return json(res, 200, publicSettings());
+      if (method === "PUT") {
+        try {
+          settings.update(await readBody(req));
+        } catch (e) {
+          if (e instanceof SettingsError) throw new HttpError(400, e.message);
+          throw e;
+        }
+        return json(res, 200, publicSettings());
+      }
+    }
+    if (pathname === "/api/ai/models" && method === "POST") {
+      return json(res, 200, { models: await listModels(await readBody(req)) });
+    }
+    if (pathname === "/api/ai/mentions" && method === "GET") {
+      const p = safe(url.searchParams.get("path"));
+      const q = (url.searchParams.get("q") ?? "").slice(0, 200);
+      const root = projectRootFor(p);
+      const lower = q.toLowerCase();
+      const drawings = listDrawings([root])
+        .filter((d) => d.path !== p && path.relative(root, d.path).toLowerCase().includes(lower))
+        .slice(0, 8)
+        .map((d) => ({ kind: "drawing", path: d.path, rel: path.relative(root, d.path) }));
+      let files: { kind: string; path: string; rel: string }[] = [];
+      if (settings.get().codeAccess) {
+        try {
+          files = suggestFiles(root, q, 20)
+            .filter((f) => !f.endsWith(".excalidraw"))
+            .map((f) => ({ kind: "file", path: f, rel: path.relative(root, f) }));
+        } catch (e) {
+          if (!(e instanceof CodeError)) throw e;
+        }
+      }
+      return json(res, 200, { root, items: [...drawings, ...files] });
+    }
+
     // ---- local clients only (MCP server, CLI) ----
     if (pathname === "/api/op" && method === "POST") {
       bearerOnly();
@@ -507,8 +630,33 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         c.unwatch = store.watch(p);
         const doc = store.get(p);
         send(c, { t: "scene", path: p, rev: doc.rev, exists: doc.exists, scene: doc.scene });
+        send(c, { t: "chat", path: p, ev: { type: "history", ...assistant.history(p) } });
         return;
       }
+      case "chat-send": {
+        if (!c.path || safe(msg.path) !== c.path) throw new Error("Chat for a drawing that is not open");
+        const reqId = msg.reqId;
+        assistant.send(msg as unknown as ChatRequest).catch((e: Error) => {
+          send(c, { t: "chat-error", reqId, message: e instanceof AssistantError || e instanceof HttpError ? e.message : `Assistant error: ${e.message}` });
+        });
+        return;
+      }
+      case "chat-history":
+        if (c.path) send(c, { t: "chat", path: c.path, ev: { type: "history", ...assistant.history(c.path) } });
+        return;
+      case "chat-stop":
+        if (c.path) assistant.stop(c.path);
+        return;
+      case "chat-reset":
+      case "chat-revert":
+        if (!c.path) return;
+        try {
+          if (msg.t === "chat-reset") assistant.reset(c.path);
+          else assistant.revert(c.path, String(msg.id));
+        } catch (e) {
+          send(c, { t: "chat-error", message: (e as Error).message });
+        }
+        return;
       case "save": {
         if (!c.path || msg.path !== c.path) throw new Error("Save for a drawing that is not open");
         // A tab may only create a missing file when the user explicitly asks it to (restore / new drawing).

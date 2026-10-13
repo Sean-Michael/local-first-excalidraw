@@ -13,6 +13,7 @@ import {
   emptyScene,
   live,
   mergeElements,
+  normalizeUpdates,
   parseScene,
   serializeScene,
   tombstonesFor,
@@ -190,4 +191,13 @@ test("store picks up external edits and deletions", () => {
   fs.unlinkSync(p);
   assert.equal(store.get(p).exists, false);
   assert.ok(deleted);
+});
+
+test("updates map guessed property names and report what they ignore", () => {
+  const { updates, notes } = normalizeUpdates([{ id: "a", fillColor: "#00ff00", stroke: "#111111", y: 5, wobble: 3, color: "#123456" }]);
+  assert.deepEqual(updates, [{ id: "a", backgroundColor: "#00ff00", strokeColor: "#111111", y: 5 }]);
+  assert.ok(notes.some((n) => n.includes('treated "fillColor" as "backgroundColor"')));
+  assert.ok(notes.some((n) => n.includes('ignored unknown property "wobble"')));
+  assert.ok(notes.some((n) => n.includes('"color" takes a palette name')));
+  assert.deepEqual(normalizeUpdates([{ id: "b", color: "green", label: "Hi" }]), { updates: [{ id: "b", color: "green", label: "Hi" }], notes: [] });
 });

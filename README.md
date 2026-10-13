@@ -102,7 +102,13 @@ To build it from source instead (Xcode 15+ and Node 20+), run the following. It 
 macos/build-app.sh --install
 ```
 
-To cut a release, run `macos/build-app.sh --release`. It zips the app and writes the version and sha256 into `Casks/local-first-excalidraw.rb`. Then upload `build/LocalExcalidraw-<version>.zip` to a GitHub release tagged `v<version>`. Builds are ad-hoc signed by default, so Gatekeeper blocks a downloaded copy on first launch. Set `SIGN_IDENTITY="Developer ID Application: …"` and `NOTARY_PROFILE=<notarytool profile>` to sign and notarize the release.
+To cut a release, first do this one-time setup. Create a **Developer ID Application** certificate: in Xcode, go to Settings → Accounts → Manage Certificates → + (only the team's Account Holder can do this). Then save notarization credentials with `xcrun notarytool store-credentials lfx-notary --apple-id <you> --team-id <TEAMID>`. After that, bump the version (`npm version patch --no-git-tag-version`), commit it to `main`, and run:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" NOTARY_PROFILE=lfx-notary macos/build-app.sh --release --publish
+```
+
+The script checks the certificate, the notary profile and the git state before building. It then signs with hardened runtime, notarizes and staples the app, and creates the GitHub release `v<version>` with the zip. Last, it writes the new sha256 into `Casks/local-first-excalidraw.rb` and pushes that commit. Without `--publish`, it stops after writing the zip and updating the cask. Without the two variables, the build is ad-hoc signed and only suitable for your own Mac.
 
 ## Docker (egress-isolated)
 

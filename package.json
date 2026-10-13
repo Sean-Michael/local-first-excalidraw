@@ -1,0 +1,47 @@
+{
+  "name": "local-first-excalidraw",
+  "version": "0.1.0",
+  "description": "Local-first, offline, secure Excalidraw with an MCP server for coding agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lfx": "dist/src/server/cli.js"
+  },
+  "files": [
+    "dist/src",
+    "dist/web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "tsc -p tsconfig.server.json && chmod +x dist/src/server/cli.js",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "npm run build:server && node --test dist/test/*.test.js",
+    "dev:web": "vite"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ws": "8.22.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "2.2.2",
+    "@types/node": "22.19.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "5.1.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sean-Michael/local-first-excalidraw"
+  }
+}

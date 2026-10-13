@@ -20,7 +20,8 @@
     "build:server": "tsc -p tsconfig.server.json && chmod +x dist/src/server/cli.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "npm run build:server && node --test dist/test/*.test.js",
-    "dev:web": "vite"
+    "dev:web": "vite",
+    "build:mac": "macos/build-app.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { baseUrl, type Config, ensureStateDir, loadOrCreateToken } from "./config.js";
 
 export class DaemonError extends Error {
@@ -57,7 +58,7 @@ export class DaemonClient {
     if (process.env.LFX_URL) throw new Error(`Daemon at ${this.url} is not reachable`);
     ensureStateDir(this.cfg);
     const log = fs.openSync(path.join(this.cfg.stateDir, "daemon.log"), "a", 0o600);
-    const cli = path.resolve(path.dirname(new URL(import.meta.url).pathname), "cli.js");
+    const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "cli.js");
     const child = spawn(process.execPath, [cli, "serve"], {
       detached: true,
       stdio: ["ignore", log, log],

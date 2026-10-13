@@ -74,6 +74,30 @@ or in a client's JSON config:
 
 The project root is the client's MCP root if it provides one, otherwise the server's working directory (`--root DIR` or `LFX_PROJECT_ROOT` override it). Relative drawing paths resolve against it, and a bare name like `auth-flow` becomes `docs/diagrams/auth-flow.excalidraw`.
 
+## macOS app
+
+A native SwiftUI app: a sidebar of your drawings (grouped by folder, filterable), File menu and toolbar commands (New Drawing ⌘N, Open… ⌘O, Add Folder, Export as SVG/PNG, Show in Finder), native save and open panels, and `.excalidraw` files open from Finder. The canvas is the same bundled editor, in a `WKWebView` that talks only to the local daemon. The app reuses a daemon that's already running (started by the CLI or an agent) and otherwise starts its own, which it stops on quit unless you turn on **Keep the daemon running** in Settings.
+
+Install it with Homebrew. The repository doubles as a tap:
+
+```bash
+brew tap sean-michael/local-first-excalidraw https://github.com/Sean-Michael/local-first-excalidraw
+```
+
+```bash
+brew install --cask local-first-excalidraw
+```
+
+The cask also links `lfx` onto your PATH, so the Claude Code plugin and `claude mcp add excalidraw -- lfx mcp` work without cloning the repo. It depends on Homebrew's `node`.
+
+To build it from source instead (Xcode 15+ and Node 20+), run the following. It creates `build/Local Excalidraw.app` (universal, macOS 14+) and copies it to `/Applications`:
+
+```bash
+macos/build-app.sh --install
+```
+
+To cut a release, run `macos/build-app.sh --release`. It zips the app and writes the version and sha256 into `Casks/local-first-excalidraw.rb`. Then upload `build/LocalExcalidraw-<version>.zip` to a GitHub release tagged `v<version>`. Builds are ad-hoc signed by default, so Gatekeeper blocks a downloaded copy on first launch. Set `SIGN_IDENTITY="Developer ID Application: …"` and `NOTARY_PROFILE=<notarytool profile>` to sign and notarize the release.
+
 ## Docker (egress-isolated)
 
 ```bash
@@ -149,6 +173,7 @@ Not in scope: someone already running code as your user. They can read the token
 npm run build      # vite (editor) + tsc (daemon, MCP, CLI)
 npm test           # node:test unit tests: scene ops, merge, layout, path safety, store
 npm run typecheck
+npm run build:mac  # macOS app -> build/Local Excalidraw.app (see macos/)
 ```
 
 Layout: `src/server/` holds the daemon (`daemon.ts`), doc store and merge (`store.ts`, `scene.ts`), auto-layout (`layout.ts`), MCP server (`mcp.ts`), security helpers (`security.ts`) and the CLI. `src/web/` holds the editor (`Editor.tsx`) and the drawing list. `plugin/` is the Claude Code plugin.

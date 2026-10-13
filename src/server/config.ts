@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const VERSION = "0.1.0";
 
@@ -43,7 +44,7 @@ export function loadConfig(): Config {
     ? envList("LFX_ROOTS")
     : [path.join(os.homedir(), "Excalidraw")]
   ).map((p) => path.resolve(p));
-  const here = path.dirname(new URL(import.meta.url).pathname);
+  const here = path.dirname(fileURLToPath(import.meta.url));
   // dist/src/server -> dist/web
   const webDir = process.env.LFX_WEB_DIR ?? path.resolve(here, "..", "..", "web");
   return {

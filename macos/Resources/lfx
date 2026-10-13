@@ -1,0 +1,20 @@
+#!/bin/sh
+# `lfx` CLI shipped inside Local Excalidraw.app (Homebrew links it onto your PATH).
+# Runs the same bundled runtime as the app, so the app, the CLI and the MCP server share one daemon.
+set -e
+self=$(realpath "$0")
+resources=$(cd "$(dirname "$self")/.." && pwd)
+cli="$resources/lfx/dist/src/server/cli.js"
+
+node="${LFX_NODE:-}"
+if [ -z "$node" ]; then
+  for c in "$resources/node/bin/node" /opt/homebrew/bin/node /opt/homebrew/opt/node/bin/node \
+           /usr/local/bin/node /usr/local/opt/node/bin/node "$(command -v node 2>/dev/null || true)"; do
+    if [ -n "$c" ] && [ -x "$c" ]; then node="$c"; break; fi
+  done
+fi
+if [ -z "$node" ]; then
+  echo "lfx: Node.js 20+ is required (brew install node)" >&2
+  exit 1
+fi
+exec "$node" "$cli" "$@"

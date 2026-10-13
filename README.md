@@ -85,8 +85,14 @@ brew tap sean-michael/local-first-excalidraw https://github.com/Sean-Michael/loc
 ```
 
 ```bash
+brew trust sean-michael/local-first-excalidraw
+```
+
+```bash
 brew install --cask local-first-excalidraw
 ```
+
+Releases aren't notarized yet, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and click **Open Anyway**. You only need to do this once per install.
 
 The cask also links `lfx` onto your PATH, so the Claude Code plugin and `claude mcp add excalidraw -- lfx mcp` work without cloning the repo. It depends on Homebrew's `node`.
 

@@ -1,0 +1,11 @@
+{
+  "name": "local-first-excalidraw",
+  "owner": { "name": "Sean-Michael" },
+  "plugins": [
+    {
+      "name": "excalidraw",
+      "source": "./plugin",
+      "description": "Local-first Excalidraw: agents draw and edit .excalidraw files in your repo while you edit the same drawing live in a local browser tab. No network access."
+    }
+  ]
+}

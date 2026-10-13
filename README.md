@@ -1,0 +1,156 @@
+# local-first-excalidraw
+
+The real Excalidraw editor, running entirely on your machine, with an MCP server so coding agents (Claude Code, Claude Desktop, Cursor, VS Code, …) can draw and edit the same diagrams you do.
+
+- **Your files are the source of truth.** Drawings are plain `.excalidraw` JSON in your repo (default `docs/diagrams/`), with stable 2-space formatting for clean git diffs.
+- **Live, both directions.** When an agent edits a drawing, your open tab updates instantly. When you draw, the file is saved within ~250 ms. If the file changes on disk (an editor, `git checkout`), the tab updates too.
+- **No network.** No CDN, no telemetry, no share links, no collaboration server, no AI backend. Fonts and code ship in the bundle, and the browser is locked to its own origin by CSP.
+- **Agent-friendly.** Agents get high-level tools (graph → auto-laid-out diagram, Mermaid → Excalidraw, labelled shapes with bound arrows) plus a compact text description of a drawing and a PNG render so they can check their own work.
+
+```
+ Claude Code / any MCP client              your browser (localhost only)
+        │ stdio                                     ▲ WebSocket (same-origin, cookie)
+        ▼                                           │
+   lfx mcp  ──── HTTP + bearer token ────►  lfx daemon (127.0.0.1:7467)  ◄──► docs/diagrams/*.excalidraw
+                                            serves the Excalidraw editor,
+                                            merges edits, watches files
+```
+
+## Why not `excalidraw/excalidraw-mcp`?
+
+That project is a good MCP App, but it isn't local-first:
+
+| | excalidraw-mcp | this project |
+|---|---|---|
+| Editor code & fonts | loaded at runtime from `esm.sh` | bundled; CSP `connect-src 'self'`, and the CDN fallback is stripped at build time (the build fails if any CDN URL survives) |
+| Sharing | `export_to_excalidraw` uploads the scene to `json.excalidraw.com` | none; export writes `.excalidraw.svg` / `.png` into your repo |
+| HTTP mode | binds `0.0.0.0`, `cors()` open to every origin, no auth | binds `127.0.0.1`, Host-header + Origin checks (DNS-rebinding / CSRF safe), bearer token for local clients, one-time login links + `HttpOnly SameSite=Strict` session for the browser |
+| Storage | checkpoints in shared `$TMPDIR` | your `.excalidraw` files; daemon state in `~/.local-first-excalidraw` (mode 0700, files 0600) |
+| File access | n/a | only `.excalidraw` files under registered project roots; symlink escapes rejected |
+| Dependencies at runtime | React, Excalidraw, Redis client, express, … | `@modelcontextprotocol/sdk`, `ws`, `zod`; the editor is prebuilt static files |
+
+## Quick start (native)
+
+Requires Node 20+.
+
+```bash
+git clone https://github.com/Sean-Michael/local-first-excalidraw && cd local-first-excalidraw
+```
+
+```bash
+npm ci && npm run build && npm link
+```
+
+`npm link` puts `lfx` on your PATH. Then:
+
+```bash
+lfx open docs/diagrams/architecture.excalidraw
+```
+
+The daemon starts in the background on first use. `lfx open` with no file shows the list of drawings. Other commands: `lfx url` (print the sign-in link instead of opening a browser), `lfx status`, `lfx stop`.
+
+### Claude Code plugin
+
+The plugin adds the MCP server, a diagramming skill, and the `/excalidraw:diagram <what>` and `/excalidraw:open` commands. It runs the `lfx` you linked above. In Claude Code:
+
+```
+/plugin marketplace add /path/to/local-first-excalidraw
+/plugin install excalidraw@local-first-excalidraw
+```
+
+Then try: *"/excalidraw:diagram the request path through our API, from the load balancer to the database"*.
+
+### Plain MCP (any client)
+
+```bash
+claude mcp add excalidraw -- lfx mcp
+```
+
+or in a client's JSON config:
+
+```json
+{ "mcpServers": { "excalidraw": { "command": "lfx", "args": ["mcp"] } } }
+```
+
+The project root is the client's MCP root if it provides one, otherwise the server's working directory (`--root DIR` or `LFX_PROJECT_ROOT` override it). Relative drawing paths resolve against it, and a bare name like `auth-flow` becomes `docs/diagrams/auth-flow.excalidraw`.
+
+## Docker (egress-isolated)
+
+```bash
+LFX_WORKSPACE=~/code/my-repo docker compose up -d --build
+```
+
+```bash
+docker compose exec lfx lfx url
+```
+
+- `lfx`, the app container, is attached only to an `internal: true` network, so it has no route to the internet. It runs read-only, non-root, with all capabilities dropped and `no-new-privileges`.
+- `gateway` is the same image running a ~30-line TCP forwarder (`lfx proxy`). It publishes the UI on `127.0.0.1:7467` only.
+- The workspace mount is the only place drawings can be read or written (`LFX_LOCK_ROOTS=1`).
+
+MCP config for agents when using Docker:
+
+```json
+{ "mcpServers": { "excalidraw": { "command": "docker", "args": ["exec", "-i", "lfx", "lfx", "mcp"] } } }
+```
+
+Paths in that mode are relative to the mounted workspace.
+
+## MCP tools
+
+| Tool | What it does |
+|---|---|
+| `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. |
+| `mermaid_to_drawing` | Mermaid flowchart / sequence / class diagram → editable Excalidraw elements. |
+| `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
+| `update_elements` | Move, resize, relabel or recolour by id. Labels re-centre and bound arrows re-route. |
+| `delete_elements` | Removes elements with their labels and detaches arrows. |
+| `read_drawing` | Compact listing: `[id] type at (x,y) size WxH "label" fill=…`, arrows as `from -> to`. Raw JSON on request. |
+| `render_drawing` | PNG for the agent to look at. |
+| `export_drawing` | Writes `name.excalidraw.svg` (scene embedded: viewable on GitHub *and* re-editable) or `.png`. |
+| `list_drawings`, `create_drawing`, `open_drawing`, `excalidraw_guide` | Housekeeping and the element cheat-sheet. |
+
+Render, export and Mermaid run in an open editor tab, because only a real browser has the fonts and canvas. If no tab is open, the agent opens one for you. Everything else works headless.
+
+## How concurrent editing works
+
+The same model as Excalidraw's own collaboration: every element has a `version` and a random `versionNonce`, and when copies disagree the higher version wins. Deletions are tombstones, so they propagate rather than being undone by a stale copy. The daemon is the single writer to disk: it merges every save from the browser, the agent and external edits, writes atomically (temp file + rename), and pushes the result to open tabs. Agent edits are applied atomically in the daemon, so they can't race your typing on other elements. If you both change the *same* element at the same moment, one version wins, the same as in Excalidraw collab.
+
+If a drawing is deleted or moved on disk while open, the tab stops saving and offers **Restore it** instead of silently recreating the file.
+
+## Security model
+
+Threats considered: malicious websites in your normal browser (CSRF, DNS rebinding, cross-site WebSocket hijacking), other users or processes on the machine, other hosts on your LAN, supply-chain or CDN compromise at runtime, and data exfiltration from the editor.
+
+- **Network surface:** loopback only (`127.0.0.1`). Requests whose `Host` isn't `localhost`/`127.0.0.1`/`[::1]` on the configured port are rejected (DNS rebinding). Any request with a foreign `Origin` is rejected, and WebSocket upgrades *require* a same-origin `Origin`.
+- **Authentication:** local clients (MCP server, CLI) use a 256-bit bearer token in `~/.local-first-excalidraw/token` (0600). Browsers get a single-use, 2-minute login code, exchanged for an `HttpOnly; SameSite=Strict` session cookie. The token never appears in URLs. Root registration, the agent operations API, login-code minting and shutdown are bearer-only. A browser session can't reach them.
+- **Filesystem:** only `*.excalidraw` files, only under `~/Excalidraw` plus project roots that local clients register. Paths are canonicalised with `realpath`, so `..` and symlink escapes are refused. Registering `/` is refused. Exports are confined to the project root.
+- **Browser:** `default-src 'none'`. Scripts, styles, fonts and connections are allowed from `'self'` only (plus `'wasm-unsafe-eval'` for Excalidraw's font subsetting). `frame-src 'none'` and embeds are disabled. Also `frame-ancestors 'none'`, `no-referrer`, COOP/CORP same-origin, and AI features off.
+- **Supply chain:** exact-pinned dependencies, `ignore-scripts=true` in `.npmrc`, browser-only packages are devDependencies (the runtime installs three packages), and the build fails if a CDN URL is left in the bundle.
+
+Not in scope: someone already running code as your user. They can read the token, just as they can read your drawings. Links in Excalidraw's Help dialog and the "Browse libraries" button still open external sites, but only when you click them.
+
+## Configuration
+
+| Env var | Default | |
+|---|---|---|
+| `LFX_PORT` | `7467` | daemon port |
+| `LFX_STATE_DIR` | `~/.local-first-excalidraw` | token, sessions, roots, library, log |
+| `LFX_ROOTS` | `~/Excalidraw` | always-allowed roots (`:`-separated) |
+| `LFX_DEFAULT_DIR` | `docs/diagrams` | where bare drawing names go |
+| `LFX_PROJECT_ROOT` | MCP root / cwd | project root for the MCP server |
+| `LFX_LOCK_ROOTS` | unset | `1` = don't allow registering extra roots |
+| `LFX_NO_BROWSER` | unset | `1` = print links instead of opening a browser |
+| `LFX_HOST` / `LFX_ALLOWED_HOSTS` | `127.0.0.1` | for containers only |
+
+## Development
+
+```bash
+npm run build      # vite (editor) + tsc (daemon, MCP, CLI)
+npm test           # node:test unit tests: scene ops, merge, layout, path safety, store
+npm run typecheck
+```
+
+Layout: `src/server/` holds the daemon (`daemon.ts`), doc store and merge (`store.ts`, `scene.ts`), auto-layout (`layout.ts`), MCP server (`mcp.ts`), security helpers (`security.ts`) and the CLI. `src/web/` holds the editor (`Editor.tsx`) and the drawing list. `plugin/` is the Claude Code plugin.
+
+The editor is the official [`@excalidraw/excalidraw`](https://github.com/excalidraw/excalidraw) package (MIT), the same editor as excalidraw.com, without the hosted app's sharing and collaboration services.

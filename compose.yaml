@@ -1,0 +1,45 @@
+# Egress-isolated deployment.
+#   lfx      - the app. Attached ONLY to an internal network: it has no route to the internet.
+#   gateway  - a ~30-line TCP forwarder (same image) that publishes the UI on 127.0.0.1 only.
+#
+#   LFX_WORKSPACE=~/code/my-repo docker compose up -d
+#   docker compose exec lfx lfx url          # one-time sign-in link for the browser
+#   MCP: docker exec -i lfx lfx mcp          # see README for agent config
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+services:
+  lfx:
+    <<: *hardening
+    build: .
+    image: local-first-excalidraw:latest
+    container_name: lfx
+    user: "${LFX_UID:-1000}:${LFX_GID:-1000}"
+    networks: [isolated]
+    environment:
+      LFX_ALLOWED_HOSTS: "localhost:${LFX_PORT:-7467},127.0.0.1:${LFX_PORT:-7467}"
+    volumes:
+      - ${LFX_WORKSPACE:-./workspace}:/workspace
+      - lfx-state:/state
+
+  gateway:
+    <<: *hardening
+    image: local-first-excalidraw:latest
+    command: ["node", "dist/src/server/cli.js", "proxy", "7467", "lfx:7467"]
+    networks: [isolated, published]
+    ports: ["127.0.0.1:${LFX_PORT:-7467}:7467"]
+    depends_on: [lfx]
+    healthcheck: { disable: true }
+
+networks:
+  isolated:
+    internal: true
+  published: {}
+
+volumes:
+  lfx-state: {}

@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.1.0";
+// dist/src/server -> package.json, which ships alongside dist/ in every layout (repo, npm, Docker, macOS app).
+export const VERSION: string = JSON.parse(
+  fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "package.json"), "utf8"),
+).version;
 
 export interface Config {
   /** Directory holding the token, sessions, roots and logs (mode 0700). */

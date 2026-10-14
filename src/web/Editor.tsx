@@ -82,7 +82,7 @@ async function normalize(elements: any[]): Promise<{ elements: any[]; fixed: num
   return { elements: out, fixed };
 }
 
-async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: string; mime: string }> {
+async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: string; mime: string; scale?: number }> {
   const elements = (await normalize(scene.elements)).elements.filter((e) => !e.isDeleted);
   if (!elements.length) throw new Error("The drawing is empty");
   const appState = {
@@ -96,18 +96,20 @@ async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: strin
     const svg = await exportToSvg({ elements, appState, files: scene.files as any, exportPadding: 24 });
     return { data: toBase64(new TextEncoder().encode(svg.outerHTML)), mime: "image/svg+xml" };
   }
-  const scale = opts.scale ?? 1;
+  // With maxSize, fit the longest side but don't blow small renders up past 2x.
+  let scale = opts.scale ?? 1;
   const blob = await exportToBlob({
     elements,
     appState,
     files: scene.files as any,
     mimeType: "image/png",
     exportPadding: 24,
-    ...(opts.maxSize
-      ? { maxWidthOrHeight: opts.maxSize }
-      : { getDimensions: (w: number, h: number) => ({ width: w * scale, height: h * scale, scale }) }),
+    getDimensions: (w: number, h: number) => {
+      if (opts.maxSize) scale = Math.min(2, opts.maxSize / Math.max(w, h));
+      return { width: Math.round(w * scale), height: Math.round(h * scale), scale };
+    },
   });
-  return { data: toBase64(new Uint8Array(await blob.arrayBuffer())), mime: "image/png" };
+  return { data: toBase64(new Uint8Array(await blob.arrayBuffer())), mime: "image/png", scale };
 }
 
 async function mermaid(text: string): Promise<{ elements: any[]; files: Record<string, unknown> }> {

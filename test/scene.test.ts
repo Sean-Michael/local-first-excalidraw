@@ -15,6 +15,7 @@ import {
   mergeElements,
   normalizeUpdates,
   parseScene,
+  selectForRender,
   serializeScene,
   tombstonesFor,
   updateElements,
@@ -224,4 +225,29 @@ test("a shape can change type in place, keeping its id, position, label and arro
   assert.equal(byId(updateElements(next, [{ id: "a", type: "diamond" }]), "a").type, "diamond");
   assert.throws(() => updateElements(next, [{ id: "ab", type: "rectangle" }]), /only rectangle, ellipse and diamond/);
   assert.deepEqual(normalizeUpdates([{ id: "a", type: "ellipse" }]).notes, []);
+});
+
+test("selectForRender brings labels, frame children and attached arrows", () => {
+  const { elements } = addSkeletons([], [
+    { type: "frame", id: "f", x: 0, y: 0, width: 600, height: 300, name: "Zone" },
+    { type: "rectangle", id: "a", x: 20, y: 20, width: 100, height: 60, label: "A", frameId: "f" },
+    { type: "rectangle", id: "b", x: 900, y: 20, width: 100, height: 60, label: "B" },
+    { type: "rectangle", id: "c", x: 900, y: 600, width: 100, height: 60, label: "C" },
+    { type: "arrow", id: "ab", x: 0, y: 0, start: { id: "a" }, end: { id: "b" }, label: "calls" },
+  ] as any);
+  const labelOf = (id: string) => elements.find((e) => e.containerId === id)!.id;
+
+  const one = selectForRender(elements, { ids: [labelOf("b"), "nope"] });
+  const ids = new Set(one.elements.map((e) => e.id));
+  assert.deepEqual(one.missing, ["nope"]);
+  assert.ok(ids.has("b") && ids.has(labelOf("b")), "selecting a label selects its container");
+  assert.ok(ids.has("ab") && ids.has(labelOf("ab")), "attached arrow and its label come along");
+  assert.ok(!ids.has("c") && !ids.has("a"));
+
+  const frame = new Set(selectForRender(elements, { ids: ["f"] }).elements.map((e) => e.id));
+  assert.ok(frame.has("a") && frame.has(labelOf("a")), "frame children come along");
+  assert.ok(frame.has("ab"), "arrows leaving a frame child come along");
+
+  const region = new Set(selectForRender(elements, { region: { x: 850, y: 550, width: 300, height: 200 } }).elements.map((e) => e.id));
+  assert.ok(region.has("c") && region.has(labelOf("c")) && !region.has("b"));
 });

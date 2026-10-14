@@ -8,9 +8,8 @@ import { SERVER_INSTRUCTIONS } from "./guide.js";
 import { drawingTools, type ToolContext, type ToolOutput } from "./tools.js";
 
 function toResult(out: ToolOutput): CallToolResult {
-  const content: CallToolResult["content"] = out.image
-    ? [{ type: "image", data: out.image.data, mimeType: out.image.mime }]
-    : [{ type: "text", text: out.text }];
+  const content: CallToolResult["content"] = [{ type: "text", text: out.text }];
+  if (out.image) content.push({ type: "image", data: out.image.data, mimeType: out.image.mime });
   return { content };
 }
 

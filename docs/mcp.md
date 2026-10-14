@@ -14,7 +14,7 @@ claude mcp add excalidraw -- lfx mcp
 
 ### Claude Code plugin
 
-The plugin adds the MCP server, a diagramming skill, and two commands: `/excalidraw:diagram <what>` investigates the code, draws, renders to check the layout and fixes problems; `/excalidraw:open` opens the editor. In Claude Code:
+The plugin adds the MCP server, two skills (diagramming, and a readability review with a rubric for vision-capable models), and three commands: `/excalidraw:diagram <what>` investigates the code, draws, renders to check the layout and fixes problems; `/excalidraw:review <drawing>` renders the drawing and close-ups of each part, checks them against the readability rubric and fixes what's hard to read; `/excalidraw:open` opens the editor. In Claude Code:
 
 ```
 /plugin marketplace add /path/to/local-first-excalidraw
@@ -54,7 +54,7 @@ Relative drawing paths resolve against the project root. A bare name such as `au
 | `update_elements` | Move, resize, relabel, recolour, or swap rectangle, ellipse and diamond by id. Labels re-centre and bound arrows re-route. |
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
 | `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=…`, with arrows as `from -> to`. Raw JSON on request. |
-| `render_drawing` | A PNG of the drawing for the agent to look at. |
+| `render_drawing` | A PNG of the drawing for the agent to look at. `element_ids` or `region` renders a close-up of part of it at full size, and the result says how big the smallest text appears. |
 | `export_drawing` | Writes `name.excalidraw.svg` (scene embedded, so it's viewable on GitHub and still editable) or `.png`. |
 | `list_drawings` | Drawings in the project, most recently modified first. |
 | `create_drawing` | A new drawing, optionally with initial elements. |

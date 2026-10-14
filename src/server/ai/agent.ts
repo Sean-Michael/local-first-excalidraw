@@ -73,7 +73,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "- Call read_drawing before editing parts of the drawing the context doesn't describe.",
     "- For icons or a house style (people, cloud services, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape (next_to places it beside an existing element). Don't imitate an icon with plain boxes when the library has it.",
     "- Join two existing elements with connect_elements rather than drawing a free arrow.",
-    o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix overlaps or cramped labels." : "",
+    o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix what hurts readability: overlapping or covered text, labels overflowing their shapes, arrows running through unrelated shapes or left unbound, needless crossings, ragged alignment, and a flow that doesn't read in one direction. On a large drawing the overview is scaled down, so check small text with a close-up (element_ids or region) before changing it. Re-render what you changed." : "",
     o.code
       ? "- You can explore the user's project read-only with " +
         (o.claudeCode ? "Read, Grep and Glob" : "list_files, search_files and read_file") +

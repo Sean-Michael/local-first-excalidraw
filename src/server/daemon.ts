@@ -31,8 +31,10 @@ import {
   type El,
   type ElementUpdate,
   live,
+  type Region,
   type Scene,
   SceneError,
+  selectForRender,
   type SkeletonEl,
   updateElements,
 } from "./scene.js";
@@ -344,11 +346,25 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       case "render": {
         const doc = store.getLive(p);
         if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
+        let scene = doc.scene;
+        let missing: string[] = [];
+        const ids = Array.isArray(body.elementIds) ? (body.elementIds as string[]) : undefined;
+        const region = body.region as Region | undefined;
+        if (ids?.length || region) {
+          const sel = selectForRender(scene.elements, { ids, region });
+          if (!sel.elements.length) {
+            throw new HttpError(400, ids?.length ? `None of these elements exist: ${sel.missing.join(", ")}` : "No elements overlap that region");
+          }
+          scene = { ...scene, elements: sel.elements };
+          missing = sel.missing;
+        }
         const out = (await rpc(
-          { t: "render", scene: doc.scene, opts: body.opts ?? {} },
+          { t: "render", scene, opts: body.opts ?? {} },
           Math.max(3_000, Number(body.waitMs ?? 0)),
-        )) as { data: string; mime: string };
-        return out;
+        )) as { data: string; mime: string; scale?: number };
+        const texts = scene.elements.filter((e) => e.type === "text" && !e.isDeleted && typeof e.fontSize === "number");
+        const minFont = texts.length ? Math.min(...texts.map((e) => e.fontSize as number)) : undefined;
+        return { ...out, missing, minFont, elements: scene.elements.filter((e) => !e.isDeleted).length };
       }
       case "mermaid": {
         const conv = (await rpc({ t: "mermaid", text: body.text }, Math.max(3_000, Number(body.waitMs ?? 0)))) as {

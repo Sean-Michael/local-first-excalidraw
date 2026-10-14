@@ -1,0 +1,248 @@
+{
+  "note": "Bundled starter libraries from github.com/excalidraw/excalidraw-libraries (MIT; authors listed per library). Download counts as of 2026-10-13. Where a published library has no item names, names were added here.",
+  "libraries": [
+    {
+      "file": "software-architecture.excalidrawlib",
+      "name": "Software Architecture",
+      "description": "Collection of software architecture components: microservice, database, cache, event bus or pipeline, documents or code, browser, and mobile device",
+      "authors": [
+        "Youri Tjang"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#mzQjGLHnDi",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/youritjang/software-architecture.excalidrawlib",
+      "license": "MIT",
+      "downloads": 201634,
+      "items": 7,
+      "itemNames": [
+        "Microservice",
+        "Database",
+        "Cache",
+        "Event bus or pipeline",
+        "Documents or code",
+        "Browser",
+        "Mobile device"
+      ],
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
+    },
+    {
+      "file": "system-design.excalidrawlib",
+      "name": "System Design Components",
+      "description": "Components useful in interviews and elsewhere to build high-level system diagrams.",
+      "authors": [
+        "Rohan Pithadiya"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#4SlkJRmBgDQ",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/rohanp/system-design.excalidrawlib",
+      "license": "MIT",
+      "downloads": 86756,
+      "items": 24,
+      "itemNames": []
+    },
+    {
+      "file": "stick-figures.excalidrawlib",
+      "name": "Stick Figures",
+      "description": "Collection of stick figures.",
+      "authors": [
+        "Youri Tjang"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#832Zp5zaukx",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/youritjang/stick-figures.excalidrawlib",
+      "license": "MIT",
+      "downloads": 58169,
+      "items": 9,
+      "itemNames": [
+        "Stick man",
+        "Moustache man",
+        "Girl",
+        "Guy",
+        "Grandma",
+        "Child",
+        "Shrug",
+        "Happy",
+        "Sad"
+      ]
+    },
+    {
+      "file": "basic-ux-wireframing-elements.excalidrawlib",
+      "name": "Basic UX/wireframing elements",
+      "description": "This library contains different variants of basic UX/wireframing elements such as buttons, text boxes, text areas, checkboxes, drop-down menus, image placeholders, etc. ",
+      "authors": [
+        "gabi.macakova"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#4a2SdXxZddP",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/gabrielamacakova/basic-ux-wireframing-elements.excalidrawlib",
+      "license": "MIT",
+      "downloads": 33206,
+      "items": 69,
+      "itemNames": [
+        "Bulb",
+        "Dropdown with options",
+        "Image placeholder (simple)",
+        "Profile photo",
+        "Boxed toggle with text (ON)",
+        "Boxed toggle with text (OFF)",
+        "Boxed toggle (OFF)",
+        "Boxed toggle (ON)",
+        "Rounded toggle with text (ON)",
+        "Rounded toggle with text (OFF)",
+        "Rounded toggle (ON)",
+        "Rounded toggle (OFF)",
+        "Filled help (text+icon)",
+        "Outlined help (text+icon)",
+        "Filled help (icon only)",
+        "Outlined help (icon only)",
+        "Horizontal options",
+        "Horizontal options in the circle",
+        "Vertical options",
+        "Vertical options in the circle",
+        "Hamburger menu (text+icon)",
+        "Boxed hamburger menu (text+icon)",
+        "Hamburger menu (icon only)",
+        "Boxed hamburger menu (icon only)",
+        "Check mark",
+        "Reject button (text+icon)",
+        "Confirm button (text+icon)",
+        "Reject button (icon only)",
+        "Confirm button (icon only)",
+        "Boxed reject button (icon only)",
+        "Boxed confirm button (icon only)",
+        "Filled slider",
+        "Outlined slider",
+        "Go forward arrow",
+        "Go back arrow",
+        "Modal",
+        "Tooltip (left)",
+        "Tooltip (right)",
+        "Tooltip (top)",
+        "Tooltip (bottom)",
+        "Cross",
+        "Search",
+        "Selected checkbox (icon only)",
+        "Show more button (circle)",
+        "Show more button (boxed)",
+        "Upload image section",
+        "Image placeholder",
+        "Disabled checkbox (text+icon)",
+        "Selected disabled checkbox (text+icon)",
+        "Selected checkbox (text+icon)",
+        "Checkbox (text+icon)",
+        "Selected disabled radio button (text+icon)",
+        "Disabled radio button (text+icon)",
+        "Selected radio button (text+icon)",
+        "Radio button (text+icon)",
+        "Videoplayer",
+        "Disabled outlined button (text only)",
+        "Outlined button (text only)",
+        "Disabled filled button (text only)",
+        "Filled button (text only)",
+        "Text area",
+        "Text area with placeholder",
+        "Disabled dropdown menu",
+        "Selected dropdown menu",
+        "Dropdown menu",
+        "Search field",
+        "Disabled text field with placeholder",
+        "Text field with text",
+        "Text field with placeholder"
+      ]
+    },
+    {
+      "file": "decision-flow-control.excalidrawlib",
+      "name": "Decision flow control",
+      "description": "Yes/no condition boxes for diagramming.",
+      "authors": [
+        "James Wiens"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#5EQHJmvPfDg",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/aretecode/decision-flow-control.excalidrawlib",
+      "license": "MIT",
+      "downloads": 31682,
+      "items": 8,
+      "itemNames": [
+        "Decision: in from right, yes and no out left",
+        "Decision: in from left, yes and no out right",
+        "Decision: in from top, yes left, no right",
+        "Decision: in from top, yes right, no left",
+        "Decision: in from left, yes down, no up",
+        "Decision: in from left, yes up, no down",
+        "Decision: in from top, yes and no out down",
+        "Decision: yes and no out up"
+      ],
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
+    },
+    {
+      "file": "network-topology-icons.excalidrawlib",
+      "name": "Network topology icons",
+      "description": "Several of the most common network topology icons.",
+      "authors": [
+        "dwelle"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#5AFQOIRuFn5",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/dwelle/network-topology-icons.excalidrawlib",
+      "license": "MIT",
+      "downloads": 22258,
+      "items": 10,
+      "itemNames": [
+        "Computer w/ keyboard (3D)",
+        "Computer w/ keyboard and mouse (3D)",
+        "Computer (3D)",
+        "VPN",
+        "Firewall",
+        "Server",
+        "Switch",
+        "Hub",
+        "Router",
+        "Client"
+      ]
+    },
+    {
+      "file": "post-it.excalidrawlib",
+      "name": "Sticky Notes",
+      "description": "Post its in every color for your design thinking sessions.",
+      "authors": [
+        "ferminrp"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#1GackrBWvTI",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/ferminrp/post-it.excalidrawlib",
+      "license": "MIT",
+      "downloads": 17615,
+      "items": 13,
+      "itemNames": [
+        "Sticky note (light gray)",
+        "Sticky note (gray)",
+        "Sticky note (red)",
+        "Sticky note (pink)",
+        "Sticky note (grape)",
+        "Sticky note (violet)",
+        "Sticky note (indigo)",
+        "Sticky note (blue)",
+        "Sticky note (teal)",
+        "Sticky note (green)",
+        "Sticky note (lime)",
+        "Sticky note (yellow)",
+        "Sticky note (orange)"
+      ],
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
+    },
+    {
+      "file": "bubbles.excalidrawlib",
+      "name": "Bubbles",
+      "description": "A collection of simple speech and thought bubbles.",
+      "authors": [
+        "Oscar Capraro"
+      ],
+      "source": "https://libraries.excalidraw.com/?target=_excalidraw&referrer=local-first-excalidraw#2S7dChJEzpC",
+      "url": "https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/ocapraro/bubbles.excalidrawlib",
+      "license": "MIT",
+      "downloads": 14400,
+      "items": 4,
+      "itemNames": [
+        "Speech bubble (tail left)",
+        "Speech bubble (tail right)",
+        "Thought bubble",
+        "Thought bubble (small)"
+      ],
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
+    }
+  ]
+}

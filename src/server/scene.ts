@@ -224,7 +224,7 @@ function base(type: string, extra: Partial<El> = {}): El {
   };
 }
 
-function textElement(text: string, opts: Partial<El> = {}): El {
+export function textElement(text: string, opts: Partial<El> = {}): El {
   const fontSize = opts.fontSize ?? 20;
   const family = fontFamily(opts.fontFamily);
   const m = measureText(text, fontSize, family);
@@ -423,6 +423,11 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
 
   for (const s of skeletons) {
     if (!s || typeof s.type !== "string") throw new SceneError("Each element needs a type");
+    // A fully built element (e.g. part of a library shape): taken as-is.
+    if (s.type === "placed" && s.element) {
+      put(s.element as El, true);
+      continue;
+    }
     if (s.id && all.has(s.id) && !all.get(s.id)!.isDeleted) {
       throw new SceneError(`Element id "${s.id}" already exists; use update_elements to change it`);
     }
@@ -570,6 +575,49 @@ export interface ElementUpdate {
 
 const IMMUTABLE = new Set(["id", "type", "version", "versionNonce", "isDeleted", "seed"]);
 
+/** Properties an update may set: the simplified ones plus Excalidraw's own element fields. */
+const UPDATABLE = new Set([
+  "label", "text", "color", "type", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle",
+  "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness", "fontSize", "fontFamily", "textAlign",
+  "verticalAlign", "link", "locked", "groupIds", "frameId", "points", "startArrowhead", "endArrowhead", "name",
+  "customData", "lineHeight", "autoResize", "elbowed", "startBinding", "endBinding", "boundElements", "containerId",
+  "originalText", "index", "status", "fileId", "scale", "crop",
+]);
+const ALIASES: Record<string, string> = {
+  fill: "backgroundColor", fillColor: "backgroundColor", background: "backgroundColor", bgColor: "backgroundColor",
+  stroke: "strokeColor", borderColor: "strokeColor", textColor: "strokeColor", fontColor: "strokeColor",
+};
+
+/**
+ * Maps the property names models tend to guess (fill, fillColor, stroke, …) onto real ones and
+ * reports anything that would otherwise be silently ignored, so the caller can correct itself.
+ */
+export function normalizeUpdates(updates: ElementUpdate[]): { updates: ElementUpdate[]; notes: string[] } {
+  const notes: string[] = [];
+  const out = updates.map((u) => {
+    const next: ElementUpdate = { id: u.id };
+    for (const [k, v] of Object.entries(u)) {
+      if (k === "id") continue;
+      const key = ALIASES[k] ?? k;
+      if (key !== k) notes.push(`${u.id}: treated "${k}" as "${key}"`);
+      if (key === "color" && typeof v === "string" && !PALETTE[v]) {
+        if (/^#[0-9a-f]{3,8}$/i.test(v)) {
+          next.strokeColor ??= v;
+          notes.push(`${u.id}: "color" takes a palette name; set strokeColor to ${v} (use backgroundColor for the fill)`);
+        } else notes.push(`${u.id}: unknown colour "${v}"; use one of ${Object.keys(PALETTE).join(", ")}`);
+        continue;
+      }
+      if (!UPDATABLE.has(key)) {
+        notes.push(`${u.id}: ignored unknown property "${k}"`);
+        continue;
+      }
+      next[key] = v;
+    }
+    return next;
+  });
+  return { updates: out, notes };
+}
+
 /** Applies partial updates; keeps labels centred and bound arrows attached. */
 export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
   const all = new Map(existing.map((e) => [e.id, e]));
@@ -588,12 +636,21 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
       patch.strokeColor = PALETTE[u.color].stroke;
       if (SHAPES.has(cur.type)) patch.backgroundColor = PALETTE[u.color].fill;
     }
+    // Shapes can swap type in place (keeping id, label and arrows); anything else can't.
+    if (typeof u.type === "string" && u.type !== cur.type) {
+      if (!SHAPES.has(cur.type) || !SHAPES.has(u.type)) {
+        throw new SceneError(`Can't turn a ${cur.type} into a ${u.type}: only rectangle, ellipse and diamond can be swapped`);
+      }
+      patch.type = u.type;
+      // Ellipses have no corners; keep rounded corners when swapping between the others.
+      patch.roundness = u.type === "ellipse" ? null : (cur.roundness ?? (u.type === "diamond" ? { type: 2 } : null));
+    }
     if (cur.type === "text" && typeof u.text === "string") {
       patch.originalText = u.text;
       if (!cur.containerId) Object.assign(patch, measureText(u.text, (patch.fontSize as number) ?? cur.fontSize, cur.fontFamily));
     }
     let next = bump(cur, patch);
-    if (["x", "y", "width", "height"].some((k) => k in patch)) moved.add(cur.id);
+    if (["x", "y", "width", "height", "type"].some((k) => k in patch)) moved.add(cur.id);
 
     // A longer label grows its shape (around the same centre) unless the caller sized it explicitly.
     if (u.label && SHAPES.has(cur.type) && u.width === undefined && u.height === undefined) {
@@ -703,9 +760,16 @@ function colorName(hex: string | undefined): string | undefined {
 }
 
 /** Compact, token-efficient summary of a scene that an agent can reason about. */
-export function describe(scene: Scene): string {
-  const els = live(scene.elements);
-  const all = new Map(els.map((e) => [e.id, e]));
+export function describe(scene: Scene, only?: Set<string>): string {
+  const all = new Map(live(scene.elements).map((e) => [e.id, e]));
+  // A selected label stands for its container; a selected container brings its label along.
+  const picked = only
+    ? new Set([...only].flatMap((id) => {
+        const e = all.get(id);
+        return e?.containerId && all.has(e.containerId) ? [id, e.containerId] : [id];
+      }))
+    : undefined;
+  const els = live(scene.elements).filter((e) => !picked || picked.has(e.id));
   const b = bounds(els);
   const lines: string[] = [
     `${els.length} elements` +

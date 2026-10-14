@@ -12,13 +12,23 @@ import {
   restoreElements,
 } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI, LibraryItems } from "@excalidraw/excalidraw/types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Chat, type ChatBridge } from "./Chat";
 import { api, basename, type RenderOpts, type SceneData, type ServerMsg, type Status, Sync } from "./sync";
 
 const SAVE_DEBOUNCE_MS = 250;
 const PERSISTED_APP_STATE = ["viewBackgroundColor", "gridSize", "gridStep", "gridModeEnabled"] as const;
 
 const THEME_KEY = "lfx-theme";
+const CHAT_KEY = "lfx-chat-open";
+
+function storedFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
 function storedTheme(): "light" | "dark" {
   try {
     const t = localStorage.getItem(THEME_KEY);
@@ -122,6 +132,28 @@ export function Editor({ path }: { path: string }) {
   const saveTimer = useRef<number | undefined>(undefined);
   const libraryHash = useRef<string>("");
   const [theme] = useState(storedTheme);
+  const [liveTheme, setLiveTheme] = useState(theme);
+  const [chatOpen, setChatOpen] = useState(() => storedFlag(CHAT_KEY));
+  const [selectionCount, setSelectionCount] = useState(0);
+  const selectionKey = useRef("");
+  const chatListeners = useRef(new Set<(m: ServerMsg) => void>());
+
+  const toggleChat = useCallback((open?: boolean) => {
+    setChatOpen((v) => {
+      const next = open ?? !v;
+      try {
+        localStorage.setItem(CHAT_KEY, next ? "1" : "0");
+      } catch {
+        // storage unavailable
+      }
+      return next;
+    });
+  }, []);
+
+  // The macOS app toggles the panel from its toolbar.
+  useEffect(() => {
+    (window as any).lfx = { toggleChat: () => toggleChat() };
+  }, [toggleChat]);
 
   useEffect(() => {
     document.title = `${basename(path)} · Excalidraw`;
@@ -151,10 +183,11 @@ export function Editor({ path }: { path: string }) {
   }, [excalidraw, path]);
 
   const applyRemote = useCallback(
-    async (scene: SceneData, first: boolean) => {
+    async (scene: SceneData, first: boolean, agent = false) => {
       const x = excalidraw!;
       const { elements: remote, fixed } = await normalize(scene.elements);
       const local = x.getSceneElementsIncludingDeleted();
+      const wasEmpty = !local.some((e) => !e.isDeleted);
       const merged = reconcileElements(local, remote as any, x.getAppState());
       const files = Object.values(scene.files ?? {}) as any[];
       for (const f of files) sentFiles.current.add(f.id);
@@ -162,7 +195,8 @@ export function Editor({ path }: { path: string }) {
       x.updateScene({
         elements: merged,
         appState: scene.appState?.viewBackgroundColor ? { viewBackgroundColor: scene.appState.viewBackgroundColor as string } : undefined,
-        captureUpdate: CaptureUpdateAction.NEVER,
+        // Assistant edits go on the undo stack so ⌘Z takes them back.
+        captureUpdate: agent ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
       });
       lastBg.current = x.getAppState().viewBackgroundColor;
       if (fixed === 0) lastHash.current = hashElementsVersion(x.getSceneElementsIncludingDeleted());
@@ -172,8 +206,11 @@ export function Editor({ path }: { path: string }) {
         if (merged.some((e) => !e.isDeleted)) {
           requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: false }));
         }
-      } else {
+      } else if (!agent) {
         x.setToast({ message: "Drawing updated", duration: 1200, closable: false });
+      } else if (wasEmpty && merged.some((e) => !e.isDeleted)) {
+        // The assistant just drew on a blank canvas: bring its work into view.
+        requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: true }));
       }
       if (fixed > 0) flush();
     },
@@ -208,7 +245,9 @@ export function Editor({ path }: { path: string }) {
           if (m.exists === false && first) createNext.current = true;
           const isFirst = first;
           first = false;
-          chain = chain.then(() => applyRemote(m.scene, isFirst)).catch((e: Error) => setError(e.message));
+          chain = chain.then(() => applyRemote(m.scene, isFirst, !!m.agent)).catch((e: Error) => setError(e.message));
+        } else if (m.t === "chat" || m.t === "chat-error") {
+          for (const fn of chatListeners.current) fn(m);
         } else if (m.t === "render") reply(m.id, render(m.scene, m.opts));
         else if (m.t === "mermaid") reply(m.id, mermaid(m.text));
         else if (m.t === "error") setError(m.message);
@@ -228,6 +267,8 @@ export function Editor({ path }: { path: string }) {
     // Cmd/Ctrl+S: we autosave, so just flush and confirm instead of opening a save dialog.
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && !e.shiftKey) {
+        // Editors in the side panel (settings JSON) save themselves.
+        if ((e.target as Element | null)?.closest?.("[data-lfx-own-save]")) return;
         e.preventDefault();
         e.stopPropagation();
         flush();
@@ -254,13 +295,65 @@ export function Editor({ path }: { path: string }) {
       } catch {
         // storage unavailable
       }
+      if (appState.theme !== liveTheme) setLiveTheme(appState.theme);
+      const ids = Object.keys(appState.selectedElementIds ?? {}).filter((k) => appState.selectedElementIds[k]);
+      const key = ids.join(",");
+      if (key !== selectionKey.current) {
+        selectionKey.current = key;
+        setSelectionCount(ids.length);
+      }
       if (!excalidraw || !loaded.current) return;
       const h = hashElementsVersion(excalidraw.getSceneElementsIncludingDeleted());
       if (h === lastHash.current && appState.viewBackgroundColor === lastBg.current) return;
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(flush, SAVE_DEBOUNCE_MS);
     },
-    [excalidraw, flush],
+    [excalidraw, flush, liveTheme],
+  );
+
+  const bridge = useMemo<ChatBridge>(
+    () => ({
+      send: (msg) => syncRef.current?.send({ path, ...msg }),
+      subscribe: (fn) => {
+        chatListeners.current.add(fn);
+        syncRef.current?.send({ t: "chat-history" });
+        return () => chatListeners.current.delete(fn);
+      },
+      selection: () => (selectionKey.current ? selectionKey.current.split(",") : []),
+      addToLibrary: (items) => {
+        if (!excalidraw) return;
+        excalidraw.updateLibrary({
+          libraryItems: items.map((it) => ({
+            id: Math.random().toString(36).slice(2),
+            status: "unpublished" as const,
+            created: Date.now(),
+            name: it.name,
+            elements: restoreElements(it.elements, null) as any,
+          })),
+          merge: true,
+          openLibraryMenu: true,
+        });
+      },
+      snapshot: async (ids) => {
+        if (!excalidraw) return undefined;
+        const set = new Set(ids);
+        const elements = excalidraw
+          .getSceneElements()
+          .filter((e: any) => set.has(e.id) || (e.containerId && set.has(e.containerId)));
+        if (!elements.length) return undefined;
+        await ensureFonts(elements as any[]);
+        const blob = await exportToBlob({
+          elements,
+          appState: { ...excalidraw.getAppState(), exportBackground: true, exportWithDarkMode: false } as any,
+          files: excalidraw.getFiles(),
+          mimeType: "image/png",
+          exportPadding: 16,
+          maxWidthOrHeight: 1024,
+        });
+        return { data: toBase64(new Uint8Array(await blob.arrayBuffer())), mime: "image/png" };
+      },
+    }),
+    [excalidraw, path],
   );
 
   const onLibraryChange = useCallback((items: LibraryItems) => {
@@ -271,7 +364,8 @@ export function Editor({ path }: { path: string }) {
   }, []);
 
   return (
-    <div className="lfx-editor">
+    <div className={`lfx-editor${chatOpen ? " lfx-with-chat" : ""}`} data-theme={liveTheme}>
+      <div className="lfx-canvas">
       <Excalidraw
         excalidrawAPI={setExcalidraw}
         initialData={{ appState: { theme } }}
@@ -283,16 +377,28 @@ export function Editor({ path }: { path: string }) {
           canvasActions: { saveToActiveFile: false, loadScene: false, toggleTheme: true, export: { saveFileToDisk: true } },
         }}
         renderTopRightUI={() => (
-          <div className="lfx-badge" title={path}>
-            <span className={`lfx-dot lfx-${status}`} title={status === "live" ? "Synced to disk" : status} />
-            <a href="/" className="lfx-files">
-              {basename(path)}
-            </a>
+          <div className="lfx-top-right">
+            <div className="lfx-badge" title={path}>
+              <span className={`lfx-dot lfx-${status}`} title={status === "live" ? "Synced to disk" : status} />
+              <a href="/" className="lfx-files">
+                {basename(path)}
+              </a>
+            </div>
+            {!chatOpen && (
+              <button type="button" className="lfx-badge lfx-ai-toggle" onClick={() => toggleChat(true)} title="Open the assistant">
+                <svg viewBox="0 0 20 20" aria-hidden>
+                  <path d="M10 2l1.8 4.6L16.5 8l-4.7 1.6L10 14l-1.8-4.4L3.5 8l4.7-1.4z" />
+                  <path d="M15.5 13l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+                </svg>
+                Assistant
+              </button>
+            )}
           </div>
         )}
       >
         <MainMenu>
           <MainMenu.Item onSelect={() => (location.href = "/")}>All drawings</MainMenu.Item>
+          <MainMenu.Item onSelect={() => toggleChat()}>{chatOpen ? "Hide assistant" : "Show assistant"}</MainMenu.Item>
           <MainMenu.Separator />
           <MainMenu.DefaultItems.Export />
           <MainMenu.DefaultItems.SaveAsImage />
@@ -304,6 +410,8 @@ export function Editor({ path }: { path: string }) {
           <MainMenu.DefaultItems.ChangeCanvasBackground />
         </MainMenu>
       </Excalidraw>
+      </div>
+      {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} dark={liveTheme === "dark"} onClose={() => toggleChat(false)} />}
       {deleted && (
         <div className="lfx-error" role="alert">
           This drawing was deleted or moved on disk. Edits are not being saved.{" "}

@@ -15,6 +15,10 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let d = model.selectedDrawing {
+                    Button { model.editor.toggleAssistant() } label: {
+                        Label("Assistant", systemImage: "sparkles")
+                    }
+                    .help("Show or hide the assistant (⇧⌘A)")
                     Menu {
                         Button("Export as SVG…") { model.export(format: "svg") }
                         Button("Export as PNG…") { model.export(format: "png") }

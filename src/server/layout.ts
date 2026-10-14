@@ -7,9 +7,12 @@ import { measureText, type SkeletonEl } from "./scene.js";
 export interface NodeSpec {
   id: string;
   label: string;
-  shape?: "rectangle" | "ellipse" | "diamond";
+  /** rectangle | ellipse | diamond, or a library shape (resolved and sized by the caller). */
+  shape?: string;
   color?: string;
   group?: string;
+  /** Fixed size, for library shapes. */
+  size?: { w: number; h: number };
 }
 
 export interface EdgeSpec {
@@ -38,6 +41,7 @@ const MIN_H_GAP = 110; // between layers
 const V_GAP = 50; // between siblings in a layer
 
 function nodeSize(n: NodeSpec): { w: number; h: number } {
+  if (n.size) return n.size;
   const m = measureText(n.label, 20);
   // Excalidraw fits bound text in the inscribed box: about half a diamond, ~70% of an ellipse.
   if (n.shape === "diamond") return { w: Math.round(Math.max(170, m.width * 2 + 50)), h: Math.round(Math.max(100, m.height * 2 + 40)) };

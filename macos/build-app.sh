@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds "Local Excalidraw.app" (universal) with the lfx runtime bundled inside it.
+# Builds "Local Excalidraw.app" (Apple silicon) with the lfx runtime bundled inside it.
 #
 #   macos/build-app.sh                      build into build/
 #   macos/build-app.sh --install            ...and copy it to /Applications
@@ -56,8 +56,8 @@ echo "==> Building the lfx runtime"
 npm run build
 
 echo "==> Building the native app"
-swift build -c release --package-path macos --arch arm64 --arch x86_64
-bin=$(swift build -c release --package-path macos --arch arm64 --arch x86_64 --show-bin-path)
+swift build -c release --package-path macos --arch arm64
+bin=$(swift build -c release --package-path macos --arch arm64 --show-bin-path)
 
 echo "==> Assembling $app"
 rm -rf "$app"
@@ -70,6 +70,7 @@ install -m 0755 macos/Resources/lfx "$contents/Resources/bin/lfx"
 # The JS runtime: compiled daemon/MCP/CLI, the prebuilt editor, and the three production dependencies.
 rt="$contents/Resources/lfx"
 cp -R dist/src dist/web "$rt/dist/"
+cp -R libraries "$rt/"
 cp package.json package-lock.json .npmrc LICENSE "$rt/"
 (cd "$rt" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
 rm -f "$rt/package-lock.json" "$rt/.npmrc"

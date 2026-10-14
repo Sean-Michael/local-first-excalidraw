@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type EndpointKind, endpointLabel, type PublicEndpoint, type PublicSettings } from "../shared/chat";
+import { SettingsJson } from "./SettingsJson";
 import { api } from "./sync";
 
 type Icon = "local" | "lmstudio" | "llamacpp" | "terminal" | "spark" | "cloud" | "router" | "server";
@@ -34,7 +35,7 @@ const CONTEXTS = [8192, 16384, 32768, 65536, 131072];
 /** An endpoint being edited. `apiKey`: string sets it, null clears it, undefined keeps it. */
 type Draft = PublicEndpoint & { apiKey?: string | null };
 
-type Page = { name: "list" } | { name: "providers" } | { name: "form"; id?: string; preset?: Preset };
+type Page = { name: "list" } | { name: "json" } | { name: "providers" } | { name: "form"; id?: string; preset?: Preset };
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -87,6 +88,10 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
       setSaving(false);
     }
   };
+
+  if (page.name === "json") {
+    return <SettingsJson settings={settings} onSaved={onSaved} onBack={() => setPage({ name: "list" })} />;
+  }
 
   if (page.name === "providers") {
     return (
@@ -160,6 +165,14 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
 
   return (
     <div className="lfx-settings">
+      {settings.fileError && (
+        <p className="lfx-banner" role="alert">
+          {settings.fileError}. The last good settings are still in use.{" "}
+          <button type="button" className="lfx-link" onClick={() => setPage({ name: "json" })}>
+            Open JSON
+          </button>
+        </p>
+      )}
       <div className="lfx-pane">
         <Section footer="Draws and edits diagrams on this canvas using the model you choose below.">
           <div className="lfx-group">
@@ -238,6 +251,10 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
         )}
       </div>
       <footer className="lfx-pane-foot">
+        <button type="button" className="lfx-btn lfx-json-btn" onClick={() => setPage({ name: "json" })}>
+          <span aria-hidden>{"{ }"}</span> Edit as JSON
+        </button>
+        <span className="lfx-spacer" />
         <button type="button" className="lfx-btn lfx-primary" onClick={onClose}>
           Done
         </button>

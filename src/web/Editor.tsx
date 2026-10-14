@@ -267,6 +267,8 @@ export function Editor({ path }: { path: string }) {
     // Cmd/Ctrl+S: we autosave, so just flush and confirm instead of opening a save dialog.
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && !e.shiftKey) {
+        // Editors in the side panel (settings JSON) save themselves.
+        if ((e.target as Element | null)?.closest?.("[data-lfx-own-save]")) return;
         e.preventDefault();
         e.stopPropagation();
         flush();

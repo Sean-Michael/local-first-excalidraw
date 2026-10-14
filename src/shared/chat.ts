@@ -91,6 +91,10 @@ export interface PublicSettings {
   codeAccess: boolean;
   endpoints: PublicEndpoint[];
   claudeCode: { available: boolean; path?: string };
+  /** Where the settings live on disk; hand edits are picked up without a restart. */
+  file?: string;
+  /** Set when a hand edit to the file couldn't be loaded; the last good settings stay in use. */
+  fileError?: string;
 }
 
 export function applyChatEvent(items: ChatItem[], ev: ChatEvent): ChatItem[] {

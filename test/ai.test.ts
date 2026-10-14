@@ -11,6 +11,7 @@ import { applyChatEvent } from "../src/shared/chat.js";
 import { mermaidBlocks } from "../src/server/ai/agent.js";
 import { claudeCodeArgs } from "../src/server/ai/claude-code.js";
 import { SettingsStore } from "../src/server/ai/settings.js";
+import { JsoncError, parseJsonc } from "../src/shared/jsonc.js";
 import { CodeError, globToRegExp, isSecretFile, listFiles, readFile, searchFiles } from "../src/server/code.js";
 import type { Config } from "../src/server/config.js";
 import { startDaemon } from "../src/server/daemon.js";
@@ -104,6 +105,58 @@ test("API keys are write-only and dropped when an endpoint's URL changes", () =>
   assert.throws(() => s.update({ endpoints: [{ id: "a", kind: "openai", baseUrl: "file:///etc/passwd" }] }));
   assert.throws(() => s.update({ endpoints: [{ id: "a", kind: "shell", baseUrl: "http://x" }] }));
   assert.throws(() => s.update({ endpoints: [{ id: "a", kind: "openai", baseUrl: "http://user:pw@x" }] }));
+});
+
+test("hand edits to ai.json apply without a restart, and a broken edit keeps the last good settings", () => {
+  const dir = tmp("state");
+  const file = path.join(dir, "ai.json");
+  const s = new SettingsStore(dir);
+  s.update({ enabled: true, active: "a", endpoints: [{ id: "a", kind: "openai", baseUrl: "https://api.example.com/v1", model: "m", apiKey: "sk-1" }] });
+
+  const edited = JSON.parse(fs.readFileSync(file, "utf8"));
+  edited.endpoints[0].model = "m2";
+  edited.endpoints[0].baseUrl = "https://api.example.com/v1/";
+  fs.writeFileSync(file, JSON.stringify(edited));
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 5000));
+  assert.equal(s.get().endpoints[0].model, "m2");
+  assert.equal(s.get().endpoints[0].baseUrl, "https://api.example.com/v1");
+  // The user's own file may hold a key for any host.
+  assert.equal(s.get().endpoints[0].apiKey, "sk-1");
+
+  fs.writeFileSync(file, `// mine\n{ "enabled": true, "endpoints": [{ "id": "a", "kind": "ollama", "model": "q", },], }`);
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 7000));
+  assert.equal(s.get().endpoints[0].model, "q");
+
+  fs.writeFileSync(file, '{ "enabled": true, ');
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 10000));
+  assert.equal(s.get().endpoints[0].model, "q");
+  assert.match(s.public({ available: false }).fileError ?? "", /ai\.json was not loaded/);
+
+  fs.writeFileSync(file, JSON.stringify({ endpoints: [{ kind: "shell" }] }));
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 15000));
+  assert.match(s.public({ available: false }).fileError ?? "", /Unknown endpoint kind/);
+
+  // Saving from the app replaces the broken file and clears the error.
+  s.update({ enabled: false });
+  assert.equal(s.public({ available: false }).fileError, undefined);
+  assert.throws(() => s.update({ endpoints: [{ id: "x", kind: "ollama" }, { id: "x", kind: "ollama" }] }), /share the id/);
+});
+
+test("JSONC accepts comments and trailing commas and reports where errors are", () => {
+  assert.deepEqual(parseJsonc('// note\n{\n  "a": [1, 2,], /* x */ "b": "c\\"d", // end\n}\n'), { a: [1, 2], b: 'c"d' });
+  assert.deepEqual(parseJsonc('{"url": "http://x//y"}'), { url: "http://x//y" });
+  const err = (t: string) => {
+    try {
+      parseJsonc(t);
+    } catch (e) {
+      assert.ok(e instanceof JsoncError);
+      return [e.line, e.column];
+    }
+    assert.fail("expected an error");
+  };
+  assert.deepEqual(err('{\n  "a": 1\n  "b": 2\n}'), [3, 3]);
+  assert.deepEqual(err('{\n  "a": tru\n}'), [2, 8]);
+  assert.deepEqual(err('{ "a": 1 } x'), [1, 12]);
 });
 
 // ---------------------------------------------------------------------------

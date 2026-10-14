@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds "Local Excalidraw.app" (universal) with the lfx runtime bundled inside it.
+# Builds "Local Excalidraw.app" (Apple silicon) with the lfx runtime bundled inside it.
 #
 #   macos/build-app.sh             build into build/
 #   macos/build-app.sh --install   ...and copy it to /Applications
@@ -30,8 +30,8 @@ echo "==> Building the lfx runtime"
 npm run build
 
 echo "==> Building the native app"
-swift build -c release --package-path macos --arch arm64 --arch x86_64
-bin=$(swift build -c release --package-path macos --arch arm64 --arch x86_64 --show-bin-path)
+swift build -c release --package-path macos --arch arm64
+bin=$(swift build -c release --package-path macos --arch arm64 --show-bin-path)
 
 echo "==> Assembling $app"
 rm -rf "$app"

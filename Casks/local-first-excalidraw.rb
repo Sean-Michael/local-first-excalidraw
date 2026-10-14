@@ -8,6 +8,7 @@ cask "local-first-excalidraw" do
   homepage "https://github.com/Sean-Michael/local-first-excalidraw"
 
   depends_on formula: "node"
+  depends_on arch: :arm64
   depends_on macos: :sonoma
 
   app "Local Excalidraw.app"

@@ -97,7 +97,7 @@ Releases aren't notarized yet, so macOS blocks the first launch. Open **System S
 
 The cask also links `lfx` onto your PATH, so the Claude Code plugin and `claude mcp add excalidraw -- lfx mcp` work without cloning the repo. It depends on Homebrew's `node`.
 
-To build it from source instead (Xcode 15+ and Node 20+), run the following. It creates `build/Local Excalidraw.app` (universal, macOS 14+) and copies it to `/Applications`:
+To build it from source instead (Xcode 15+ and Node 20+), run the following. It creates `build/Local Excalidraw.app` (Apple silicon, macOS 14+) and copies it to `/Applications`:
 
 ```bash
 macos/build-app.sh --install

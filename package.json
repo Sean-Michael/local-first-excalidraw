@@ -9,7 +9,8 @@
   },
   "files": [
     "dist/src",
-    "dist/web"
+    "dist/web",
+    "libraries"
   ],
   "engines": {
     "node": ">=20"

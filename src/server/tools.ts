@@ -9,6 +9,7 @@ import { z } from "zod";
 import { writeFileAtomic } from "./config.js";
 import { listFiles, readFile, searchFiles } from "./code.js";
 import { GUIDE } from "./guide.js";
+import { type LibraryShape, searchShapes } from "./library.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
 
@@ -215,22 +216,48 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "list_shapes",
       title: "List library shapes",
       description:
-        "Lists reusable shapes (icons, components) from the user's Excalidraw library and from .excalidrawlib files in the project, e.g. an AWS or Kubernetes icon set. Use the key with insert_shape or as a create_diagram node shape.",
-      input: { query: z.string().optional().describe("Only shapes whose key, name or source contains this") },
+        "Searches reusable shapes (icons, components, figures) from the built-in starter libraries, libraries the user installed, .excalidrawlib files in the project, and the user's Excalidraw library. Use a key with insert_shape or as a create_diagram node shape. Without a query you get a summary of the libraries.",
+      input: {
+        query: z.string().optional().describe('Words to look for, e.g. "database", "stick figure", "s3"'),
+        library: z.string().optional().describe("Only this library (name or id)"),
+        preview: z.boolean().optional().describe("Also return a picture of the matching shapes (up to 30), to tell unnamed or similar items apart. Needs a model that accepts images."),
+      },
       readOnly: true,
-      run: async ({ query }, ctx) => {
+      run: async ({ query, library, preview }, ctx) => {
         const file = ctx.currentDrawing ?? path.join(ctx.projectRoot, "_.excalidraw");
-        const { shapes } = (await ctx.op({ op: "shapes", path: file })) as {
-          shapes: { key: string; name: string; source: string; width: number; height: number; description: string }[];
+        const r = (await ctx.op({ op: "shapes", path: file })) as {
+          libraries: { id: string; name: string; origin: string; items: number; enabled: boolean }[];
+          shapes: LibraryShape[];
         };
-        const q = (query ?? "").toLowerCase();
-        const hits = shapes.filter((s) => !q || `${s.key} ${s.name} ${s.source}`.toLowerCase().includes(q));
-        if (!shapes.length) {
-          return { text: "The library is empty. The user can add items in the editor's Library panel (or import an .excalidrawlib), or put an .excalidrawlib file in the project." };
+        const enabled = r.libraries.filter((l) => l.enabled && l.items > 0);
+        if (!r.shapes.length) {
+          return { text: "No library shapes are available. The user can add libraries in the assistant's Shapes view, or put an .excalidrawlib file in the project." };
         }
-        if (!hits.length) return { text: `No shapes match "${query}". ${shapes.length} shapes in total; try a broader query.` };
-        const lines = hits.slice(0, 300).map((s) => `${s.key}: "${s.name}" (${s.source}) ${s.width}x${s.height} - ${s.description}`);
-        return { text: lines.join("\n") + (hits.length > 300 ? `\n… ${hits.length - 300} more; narrow with query` : "") };
+        let pool = r.shapes;
+        if (library) {
+          const l = library.toLowerCase();
+          pool = pool.filter((s) => s.library.toLowerCase() === l || s.libraryName.toLowerCase().includes(l));
+          if (!pool.length) return { text: `No library matches "${library}". Libraries: ${enabled.map((x) => x.name).join(", ")}` };
+        }
+        const hits = query ? searchShapes(pool, query) : pool;
+        if (!query && !library && pool.length > 60) {
+          const lines = enabled.map((l) => {
+            const sample = r.shapes.filter((s) => s.library === l.id).slice(0, 6).map((s) => s.name);
+            return `- ${l.name} (${l.origin}, ${l.items} shapes): ${sample.join(", ")}${l.items > 6 ? ", …" : ""}`;
+          });
+          return { text: `${r.shapes.length} shapes in ${enabled.length} libraries. Search with query (and optionally library):\n${lines.join("\n")}` };
+        }
+        if (!hits.length) return { text: `No shapes match "${query}". Try other words, or call list_shapes without a query to see the libraries.` };
+        const shown = hits.slice(0, 150);
+        const groups = new Map<string, LibraryShape[]>();
+        for (const s of shown) groups.set(s.libraryName, [...(groups.get(s.libraryName) ?? []), s]);
+        const text = [...groups]
+          .map(([lib, items]) => `## ${lib}\n${items.map((s) => `${s.key}: "${s.name}" ${s.width}x${s.height} - ${s.description}`).join("\n")}`)
+          .join("\n\n");
+        const more = hits.length > shown.length ? `\n… ${hits.length - shown.length} more; narrow the query` : "";
+        if (!preview) return { text: text + more };
+        const img = (await ctx.withEditor(file, { op: "shapes_preview", path: file, keys: hits.slice(0, 30).map((s) => s.key) })) as { data: string; mime: string };
+        return { text: `${text}${more}\n\nThe picture shows the first ${Math.min(30, hits.length)} matches, each labelled with its name.`, image: img };
       },
     },
     {
@@ -243,10 +270,18 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         shape: z.string().describe("Shape key or name from list_shapes"),
         x: z.number().optional().describe("Left edge; default: right of existing content"),
         y: z.number().optional().describe("Top edge"),
-        width: z.number().positive().optional().describe("Scale to this width (keeps proportions with height)"),
-        height: z.number().positive().optional(),
-        label: z.string().optional().describe("Text shown under the shape"),
-        id: z.string().optional().describe("Id for the shape's main element, so arrows and updates can refer to it"),
+        next_to: z
+          .object({
+            id: z.string().describe("An existing element's id"),
+            side: z.enum(["left", "right", "above", "below"]).optional().describe("Default right"),
+            gap: z.number().optional().describe("Space between them (default 100)"),
+          })
+          .optional()
+          .describe("Place it beside an existing element instead of giving x/y"),
+        width: z.number().nonnegative().optional().describe("Scale to this width (keeps proportions with height)"),
+        height: z.number().nonnegative().optional(),
+        label: z.string().optional().describe("Caption shown under the shape (replaces the icon's own caption if it has one)"),
+        id: z.string().optional().describe("Id for the shape, so arrows and updates can refer to it"),
       },
       run: async ({ path: p, ...args }, ctx) => {
         const file = resolveDrawing(ctx, p);
@@ -282,6 +317,30 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
           text: `Added ${(r.created as string[]).length} elements to ${relPath(ctx, file)}: ${(r.created as string[]).join(", ")}`,
           drawing: other(ctx, file),
         };
+      },
+    },
+    {
+      name: "connect_elements",
+      title: "Connect elements",
+      description: "Draws an arrow from one element to another (by id). The arrow stays attached when either end moves.",
+      input: {
+        path: pathArg,
+        from: z.string().describe("Id of the element the arrow starts at"),
+        to: z.string().describe("Id of the element the arrow points to"),
+        label: z.string().optional(),
+        style: z.enum(["solid", "dashed", "dotted"]).optional(),
+        bidirectional: z.boolean().optional().describe("Arrowheads at both ends"),
+        id: z.string().optional(),
+      },
+      run: async ({ path: p, from, to, label, style, bidirectional, id }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        const r = await ctx.op({
+          op: "add",
+          path: file,
+          placement: "absolute",
+          elements: [{ type: "arrow", id, start: { id: from }, end: { id: to }, label, strokeStyle: style ?? "solid", startArrowhead: bidirectional ? "arrow" : null }],
+        });
+        return { text: `Connected ${from} -> ${to} in ${relPath(ctx, file)} (arrow id ${(r.created as string[])[0]}).`, drawing: other(ctx, file) };
       },
     },
     {

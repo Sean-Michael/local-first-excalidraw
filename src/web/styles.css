@@ -206,3 +206,38 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-form .lfx-row input { flex: 1; }
 .lfx-form .lfx-link { align-self: flex-start; font-size: .75rem; }
 .lfx-form > .lfx-row:last-child, .lfx-settings > .lfx-row:last-child { justify-content: flex-end; }
+
+/* ---- Shapes / libraries ---------------------------------------------------- */
+.lfx-shapes { flex: 1; overflow-y: auto; padding: .8rem .9rem 1rem; display: flex; flex-direction: column; gap: .7rem; }
+.lfx-shapes.lfx-dragging { outline: 2px dashed var(--c-accent); outline-offset: -6px; }
+.lfx-tabs { display: flex; gap: .3rem; align-items: center; }
+.lfx-tabs [role="tab"] { font: inherit; font-size: .8rem; padding: .35rem .7rem; border-radius: 999px; border: 1px solid var(--c-line); background: transparent; color: var(--c-muted); cursor: pointer; }
+.lfx-tabs [role="tab"].lfx-on { background: var(--c-accent-soft); color: var(--c-fg); border-color: transparent; }
+.lfx-tabs .lfx-btn { margin-left: auto; }
+.lfx-ok { margin: 0; padding: .4rem .6rem; border-radius: .5rem; background: var(--c-accent-soft); font-size: .8rem; cursor: pointer; }
+.lfx-libs { list-style: none; margin: .3rem 0 0; padding: 0; border: 1px solid var(--c-line); border-radius: .6rem; }
+.lfx-lib + .lfx-lib { border-top: 1px solid var(--c-line); }
+.lfx-lib-row { display: flex; align-items: center; gap: .55rem; padding: .45rem .6rem; }
+.lfx-lib-row input { accent-color: var(--c-accent); flex: none; }
+.lfx-lib-name { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left; font: inherit; font-size: .84rem; border: 0; background: none; color: var(--c-fg); cursor: pointer; padding: 0; }
+.lfx-lib-name small { color: var(--c-muted); font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.lfx-lib-caret { color: var(--c-muted); font-size: .75rem; }
+.lfx-lib-body { padding: 0 .6rem .6rem; display: flex; flex-direction: column; gap: .4rem; }
+.lfx-lib-actions { justify-content: flex-start; font-size: .78rem; }
+.lfx-danger { color: var(--c-err); }
+.lfx-items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: .4rem; }
+.lfx-items li { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.lfx-thumb { aspect-ratio: 1; border: 1px solid var(--c-line); border-radius: .45rem; background: var(--c-soft); display: grid; place-items: center; padding: .35rem; overflow: hidden; color: var(--c-muted); }
+.lfx-thumb svg { width: 100%; height: 100%; }
+.lfx-item-name { font: inherit; font-size: .72rem; border: 0; background: none; color: var(--c-fg); cursor: text; padding: 0 .1rem; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lfx-item-name:hover { text-decoration: underline dotted; }
+.lfx-item-input { font: inherit; font-size: .72rem; padding: .1rem .25rem; border: 1px solid var(--c-accent); border-radius: .3rem; background: var(--c-bg); color: var(--c-fg); min-width: 0; }
+.lfx-more { align-self: center; }
+.lfx-catalog { display: flex; flex-direction: column; gap: .6rem; }
+.lfx-search-input { font: inherit; font-size: .85rem; padding: .45rem .6rem; border-radius: .5rem; border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-fg); }
+.lfx-search-input:focus { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+.lfx-catalog-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.lfx-catalog-list li { display: flex; gap: .6rem; align-items: flex-start; justify-content: space-between; padding: .55rem 0; border-top: 1px solid var(--c-line); font-size: .82rem; }
+.lfx-catalog-list li > div { min-width: 0; }
+.lfx-catalog-list small { display: block; color: var(--c-muted); font-size: .72rem; }
+.lfx-catalog-list p { margin: .2rem 0 0; color: var(--c-muted); font-size: .76rem; }

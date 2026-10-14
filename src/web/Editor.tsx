@@ -318,6 +318,20 @@ export function Editor({ path }: { path: string }) {
         return () => chatListeners.current.delete(fn);
       },
       selection: () => (selectionKey.current ? selectionKey.current.split(",") : []),
+      addToLibrary: (items) => {
+        if (!excalidraw) return;
+        excalidraw.updateLibrary({
+          libraryItems: items.map((it) => ({
+            id: Math.random().toString(36).slice(2),
+            status: "unpublished" as const,
+            created: Date.now(),
+            name: it.name,
+            elements: restoreElements(it.elements, null) as any,
+          })),
+          merge: true,
+          openLibraryMenu: true,
+        });
+      },
       snapshot: async (ids) => {
         if (!excalidraw) return undefined;
         const set = new Set(ids);
@@ -395,7 +409,7 @@ export function Editor({ path }: { path: string }) {
         </MainMenu>
       </Excalidraw>
       </div>
-      {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} onClose={() => toggleChat(false)} />}
+      {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} dark={liveTheme === "dark"} onClose={() => toggleChat(false)} />}
       {deleted && (
         <div className="lfx-error" role="alert">
           This drawing was deleted or moved on disk. Edits are not being saved.{" "}

@@ -10,6 +10,7 @@ import {
 } from "../shared/chat";
 import { ChatSettings } from "./ChatSettings";
 import { Markdown } from "./Markdown";
+import { Shapes } from "./Shapes";
 import { api, basename, type ServerMsg } from "./sync";
 
 export interface ChatBridge {
@@ -19,6 +20,8 @@ export interface ChatBridge {
   selection(): string[];
   /** PNG of the given elements, for endpoints that accept images. */
   snapshot(ids: string[]): Promise<{ data: string; mime: string } | undefined>;
+  /** Adds shapes to the canvas Library sidebar. */
+  addToLibrary(items: { name: string; elements: any[] }[]): void;
 }
 
 interface Suggestion {
@@ -140,10 +143,22 @@ const STARTERS = [
   "Add a legend explaining the colours",
 ];
 
-export function Chat({ path, bridge, selectionCount, onClose }: { path: string; bridge: ChatBridge; selectionCount: number; onClose: () => void }) {
+export function Chat({
+  path,
+  bridge,
+  selectionCount,
+  dark,
+  onClose,
+}: {
+  path: string;
+  bridge: ChatBridge;
+  selectionCount: number;
+  dark: boolean;
+  onClose: () => void;
+}) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
-  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [view, setView] = useState<"chat" | "settings" | "shapes">("chat");
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<Suggestion[]>([]);
   const [useSelection, setUseSelection] = useState(true);
@@ -277,7 +292,7 @@ export function Chat({ path, bridge, selectionCount, onClose }: { path: string; 
     <aside className="lfx-chat" aria-label="Assistant">
       <header className="lfx-chat-head">
         <div className="lfx-chat-title">
-          <strong>Assistant</strong>
+          <strong>{view === "shapes" ? "Shapes" : "Assistant"}</strong>
           {configured && view === "chat" && (
             <select
               className="lfx-endpoint"
@@ -306,6 +321,20 @@ export function Chat({ path, bridge, selectionCount, onClose }: { path: string; 
           )}
           <button
             type="button"
+            className={`lfx-icon${view === "shapes" ? " lfx-on" : ""}`}
+            title="Shapes and libraries"
+            aria-label="Shapes and libraries"
+            onClick={() => setView(view === "shapes" ? "chat" : "shapes")}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden>
+              <rect x="3" y="3" width="6" height="6" rx="1" />
+              <circle cx="14" cy="6" r="3" />
+              <path d="M6 11.5l3 5H3z" />
+              <rect x="11" y="11" width="6" height="6" rx="1" />
+            </svg>
+          </button>
+          <button
+            type="button"
             className={`lfx-icon${view === "settings" ? " lfx-on" : ""}`}
             title="Assistant settings"
             aria-label="Assistant settings"
@@ -324,7 +353,9 @@ export function Chat({ path, bridge, selectionCount, onClose }: { path: string; 
         </div>
       </header>
 
-      {view === "settings" && settings ? (
+      {view === "shapes" ? (
+        <Shapes path={path} dark={dark} onAddToCanvas={bridge.addToLibrary} />
+      ) : view === "settings" && settings ? (
         <ChatSettings settings={settings} onSaved={setSettings} onClose={() => setView("chat")} />
       ) : (
         <>

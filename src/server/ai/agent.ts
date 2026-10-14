@@ -71,7 +71,8 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "- \"This\", \"these\" and \"the selection\" mean the selected elements listed in the context. Change them by id with update_elements or delete_elements, keeping ids stable rather than deleting and re-adding.",
     "- For new diagrams prefer create_diagram (automatic layout) or mermaid_to_drawing. Use add_elements for annotations and precise placement; call excalidraw_guide once before hand-placing elements. New content goes to the right of existing content unless you position it.",
     "- Call read_drawing before editing parts of the drawing the context doesn't describe.",
-    "- For icons or a house style (cloud services, Kubernetes, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape. Don't imitate an icon with plain boxes when the library has it.",
+    "- For icons or a house style (people, cloud services, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape (next_to places it beside an existing element). Don't imitate an icon with plain boxes when the library has it.",
+    "- Join two existing elements with connect_elements rather than drawing a free arrow.",
     o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix overlaps or cramped labels." : "",
     o.code
       ? "- You can explore the user's project read-only with " +
@@ -240,7 +241,10 @@ export class Assistant {
 
   private tools(ep: Endpoint, code: boolean): ToolDef[] {
     return [
-      ...drawingTools({ currentDrawing: true }).filter((t) => t.name !== "open_drawing" && (ep.vision || t.name !== "render_drawing")),
+      ...drawingTools({ currentDrawing: true })
+        .filter((t) => t.name !== "open_drawing" && (ep.vision || t.name !== "render_drawing"))
+        // Pictures of shapes are no use to a model that can't see them.
+        .map((t) => (t.name === "list_shapes" && !ep.vision ? { ...t, input: Object.fromEntries(Object.entries(t.input).filter(([k]) => k !== "preview")) } : t)),
       ...(code ? codeTools() : []),
     ];
   }
@@ -333,6 +337,7 @@ export class Assistant {
     if (req.image && ep.vision) content.push({ type: "image", data: req.image.data, mime: req.image.mime });
     c.messages.push({ role: "user", content });
 
+    let retries = 0;
     for (let step = 0; step < MAX_STEPS; step++) {
       let partial = "";
       let res;
@@ -352,6 +357,17 @@ export class Assistant {
       } catch (e) {
         if (partial) c.messages.push({ role: "assistant", text: partial, toolCalls: [] });
         if (signal.aborted) return undefined;
+        // The server couldn't parse a tool call the model wrote (Ollama reports this as an error):
+        // let the model see what went wrong and try again, a couple of times at most.
+        const parseError = /error parsing tool call|invalid (tool|function) call|failed to parse tool/i.test((e as Error).message);
+        if (parseError && retries < 2) {
+          retries++;
+          c.messages.push({
+            role: "user",
+            content: [{ type: "text", text: `(Your last tool call could not be parsed: ${(e as Error).message.slice(0, 400)}. Call the tool again with valid JSON arguments.)` }],
+          });
+          continue;
+        }
         // Some local models can't call tools at all; fall back to Mermaid replies.
         if (useTools && step === 0 && /does not support tools|tool(s)? (are |is )?not supported|tool_choice/i.test((e as Error).message)) {
           useTools = false;

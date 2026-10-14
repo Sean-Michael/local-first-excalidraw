@@ -357,6 +357,9 @@ test("OpenAI-compatible endpoint: streamed tool calls edit the drawing and can b
     assert.ok(toolNames.includes("create_diagram") && toolNames.includes("search_files"));
     assert.ok(!toolNames.includes("render_drawing"), "no render without vision");
     assert.ok(!toolNames.includes("open_drawing"));
+    assert.ok(toolNames.includes("connect_elements"));
+    const listShapes = first.body.tools.find((x: any) => x.function.name === "list_shapes");
+    assert.equal(listShapes.function.parameters.properties.preview, undefined, "no image previews for models that can't see");
     const toolMsg = second.body.messages.find((m: any) => m.role === "tool");
     assert.equal(toolMsg.tool_call_id, "call_1");
     assert.match(toolMsg.content, /Drew 2 nodes and 1 edges/);
@@ -564,7 +567,7 @@ test("library shapes: list, insert, and use as create_diagram nodes with bound a
   const file = path.join(proj, "docs", "arch.excalidraw");
 
   const list = await op({ op: "shapes", path: file });
-  assert.deepEqual(list.body.shapes.map((s: any) => s.key), ["item-1", "database", "message-queue"]);
+  assert.deepEqual(list.body.shapes.map((s: any) => s.key), ["infra/database", "infra/message-queue", "your-excalidraw-library/your-excalidraw-library-1"]);
   assert.equal(list.body.shapes[0].elements, undefined, "elements stay server-side");
 
   const ins = await op({ op: "insert_shape", path: file, shape: "Database", x: 10, y: 20, label: "Orders", id: "orders" });
@@ -601,6 +604,72 @@ test("library shapes: list, insert, and use as create_diagram nodes with bound a
   const parts = els.filter((e) => e.groupIds?.includes(dbGroup));
   assert.ok(parts.length >= 4);
   for (const part of parts) assert.equal(part.frameId, "data");
+  // next_to places a shape beside an element; connect_elements binds an arrow to both ends.
+  const before = read(file).elements.length;
+  const beside = await op({ op: "insert_shape", path: file, shape: "message queue", next_to: { id: "api", side: "left", gap: 50 }, id: "q2", label: "Retry" });
+  assert.equal(beside.status, 200, JSON.stringify(beside.body));
+  const api2 = read(file).elements.find((e: any) => e.id === "api");
+  assert.ok(beside.body.bounds.x + beside.body.bounds.width <= api2.x - 49, "left of the API");
+  assert.ok(read(file).elements.length > before);
   // Not drawn as a plain labelled box.
   assert.ok(!els.some((e) => e.type === "text" && e.text === "Users DB" && e.containerId === "db"));
+});
+
+test("library routes: import, browse, rename, toggle and remove from the page", async () => {
+  const file = path.join(root, "docs", "diagrams", "libs.excalidraw");
+  const lib = JSON.stringify({ type: "excalidrawlib", version: 1, library: [[{ id: "a", type: "ellipse", x: 0, y: 0, width: 30, height: 30, version: 1, versionNonce: 1 }]] });
+  const imp = await api("POST", "/api/libraries/import", { fileName: "people.excalidrawlib", content: lib });
+  assert.equal(imp.status, 200, JSON.stringify(imp.body));
+  const id = imp.body.library.id;
+  assert.equal(id, "installed:people");
+  assert.equal((await api("POST", "/api/libraries/import", { content: "{" })).status, 400);
+
+  const list = await api("GET", `/api/libraries?path=${encodeURIComponent(file)}`);
+  assert.ok(list.body.libraries.some((l: any) => l.id === id && l.items === 1 && l.enabled));
+  const items = await api("GET", `/api/libraries/items?id=${encodeURIComponent(id)}&path=${encodeURIComponent(file)}`);
+  assert.equal(items.body.items[0].name, "people 1");
+  assert.equal(items.body.items[0].elements[0].type, "ellipse");
+
+  await api("POST", "/api/libraries/update", { id, rename: { itemId: "0", name: "Head" } });
+  await api("POST", "/api/libraries/update", { id, enabled: false });
+  const after = await api("GET", `/api/libraries/items?id=${encodeURIComponent(id)}`);
+  assert.equal(after.body.items[0].key, "people/head");
+  assert.equal((await api("GET", "/api/libraries")).body.libraries.find((l: any) => l.id === id).enabled, false);
+
+  assert.equal((await api("POST", "/api/libraries/remove", { id })).status, 200);
+  assert.equal((await api("POST", "/api/libraries/remove", { id: "personal" })).status, 400);
+  assert.ok(!(await api("GET", "/api/libraries")).body.libraries.some((l: any) => l.id === id));
+});
+
+test("a tool call the server couldn't parse is retried instead of ending the turn", async () => {
+  let n = 0;
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      n++;
+      if (n === 1) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: 'error parsing tool call: raw=\'{"from":"a",\', err=unexpected end of JSON input' }));
+      }
+      const sent = JSON.parse(body);
+      const last = sent.messages[sent.messages.length - 1];
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.end(JSON.stringify({ message: { role: "assistant", content: last.content.includes("could not be parsed") ? "Retried." : "?" }, done: true, done_reason: "stop" }) + "\n");
+    });
+  });
+  const port = await freePort();
+  await new Promise<void>((r) => server.listen(port, "127.0.0.1", () => r()));
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "o", endpoints: [{ id: "o", kind: "ollama", baseUrl: `http://127.0.0.1:${port}`, model: "m" }] });
+    const t = await tab(path.join(root, "docs", "diagrams", "retry.excalidraw"));
+    await t.chat("connect them");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "done", turn.error);
+    assert.equal(turn.parts.find((p) => p.type === "text")?.type === "text" && (turn.parts.find((p) => p.type === "text") as any).text, "Retried.");
+    t.ws.close();
+  } finally {
+    server.close();
+  }
 });

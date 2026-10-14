@@ -21,7 +21,8 @@ import {
   writeFileAtomic,
 } from "./config.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
-import { findShape, labelSize, LibraryError, type LibraryShape, loadShapes, PRIMITIVE_SHAPES, placeShape, shapeScale } from "./library.js";
+import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
+import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
 import {
   addSkeletons,
   bounds,
@@ -95,6 +96,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   const rootsFile = path.join(cfg.stateDir, "roots.json");
   const sessionsFile = path.join(cfg.stateDir, "sessions.json");
   const libraryFile = path.join(cfg.stateDir, "library.json");
+  const libraries = new Libraries(cfg.stateDir, libraryFile, cfg.librariesDir);
   const registered = new Set<string>(readJson<string[]>(rootsFile, []).filter((r) => fs.existsSync(r)));
   for (const r of cfg.defaultRoots) fs.mkdirSync(r, { recursive: true });
   const roots = () => [...new Set([...cfg.defaultRoots, ...registered])];
@@ -227,7 +229,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         let shapes: LibraryShape[] | undefined;
         for (const n of spec.nodes) {
           if (!n.shape || PRIMITIVE_SHAPES.has(n.shape)) continue;
-          shapes ??= loadShapes(libraryFile, projectRootFor(p));
+          shapes ??= libraries.shapes(projectRootFor(p));
           const shape = findShape(shapes, n.shape);
           const scale = shapeScale(shape, { normalize: true });
           const label = labelSize(n.label);
@@ -270,18 +272,54 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return { path: p, rev: r.rev, created };
       }
       case "shapes": {
-        const shapes = loadShapes(libraryFile, projectRootFor(p));
-        return { shapes: shapes.map(({ elements: _els, ...rest }) => rest) };
+        const shapes = libraries.shapes(projectRootFor(p));
+        return { libraries: libraries.list(projectRootFor(p)), shapes: shapes.map(({ elements: _els, ...rest }: LibraryShape) => rest) };
+      }
+      case "shapes_preview": {
+        // A contact sheet of library shapes, labelled with their names, rendered by an editor tab.
+        const all = libraries.shapes(projectRootFor(p));
+        const picked = ((body.keys as string[]) ?? []).slice(0, 30).flatMap((k) => all.filter((s) => s.key === k));
+        if (!picked.length) throw new HttpError(400, "No shapes to preview");
+        const cols = Math.min(6, picked.length);
+        const cell = { w: 170, h: 170 };
+        const elements = picked.flatMap((shape, i) => {
+          const scale = Math.min(110 / Math.max(shape.width, 1), 110 / Math.max(shape.height, 1), 2);
+          const x = (i % cols) * cell.w + (cell.w - shape.width * scale) / 2;
+          const y = Math.floor(i / cols) * cell.h + (110 - shape.height * scale) / 2;
+          return placeShape(shape, { x, y, scale, label: shape.name.length > 22 ? shape.name.slice(0, 21) + "…" : shape.name }).elements;
+        });
+        return (await rpc(
+          { t: "render", scene: { elements, appState: { viewBackgroundColor: "#ffffff" }, files: {} }, opts: { format: "png", maxSize: 1200 } },
+          Math.max(3_000, Number(body.waitMs ?? 0)),
+        )) as { data: string; mime: string };
       }
       case "insert_shape": {
-        const shape = findShape(loadShapes(libraryFile, projectRootFor(p)), String(body.shape ?? ""));
+        const shape = findShape(libraries.shapes(projectRootFor(p)), String(body.shape ?? ""));
         const id = typeof body.id === "string" ? body.id : undefined;
         if (id && live(scene.elements).some((e) => e.id === id)) throw new HttpError(409, `Element id "${id}" already exists`);
         const b = bounds(scene.elements);
-        const x = typeof body.x === "number" ? body.x : b ? b.maxX + 120 : 0;
-        const y = typeof body.y === "number" ? body.y : b ? b.minY : 0;
-        const scale = shapeScale(shape, { width: body.width as number | undefined, height: body.height as number | undefined });
-        const placed = placeShape(shape, { x, y, scale, label: body.label as string | undefined, anchorId: id });
+        const size = (k: string) => (typeof body[k] === "number" && (body[k] as number) > 0 ? (body[k] as number) : undefined);
+        const scale = shapeScale(shape, { width: size("width"), height: size("height") });
+        const label = typeof body.label === "string" && body.label ? body.label : undefined;
+        let x = typeof body.x === "number" ? body.x : b ? b.maxX + 120 : 0;
+        let y = typeof body.y === "number" ? body.y : b ? b.minY : 0;
+        const near = body.next_to as { id?: string; side?: string; gap?: number } | undefined;
+        if (near?.id) {
+          // Beside an existing element, centred on it, so callers needn't do coordinate arithmetic.
+          const target = live(scene.elements).find((e) => e.id === near.id);
+          if (!target) throw new HttpError(404, `Element "${near.id}" not found`);
+          const t = bounds([target])!;
+          const probe = placeShape(shape, { x: 0, y: 0, scale, label }).bounds;
+          const gap = typeof near.gap === "number" ? near.gap : 100;
+          const cx = (t.minX + t.maxX) / 2;
+          const cy = (t.minY + t.maxY) / 2;
+          const side = near.side ?? "right";
+          if (side === "left") [x, y] = [t.minX - gap - probe.width, cy - probe.height / 2];
+          else if (side === "above") [x, y] = [cx - probe.width / 2, t.minY - gap - probe.height];
+          else if (side === "below") [x, y] = [cx - probe.width / 2, t.maxY + gap];
+          else [x, y] = [t.maxX + gap, cy - probe.height / 2];
+        }
+        const placed = placeShape(shape, { x, y, scale, label, anchorId: id });
         const r = store.apply(p, { elements: placed.elements }, origin);
         return { path: p, rev: r.rev, shape: shape.key, anchor: placed.anchorId, created: placed.ids, bounds: placed.bounds };
       }
@@ -556,6 +594,62 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         }
       }
       return json(res, 200, { root, items: [...drawings, ...files] });
+    }
+
+    // ---- shape libraries ----
+    if (pathname.startsWith("/api/libraries")) {
+      const projectFor = (q: string | null | undefined) => (q ? projectRootFor(safe(q)) : undefined);
+      try {
+        if (pathname === "/api/libraries" && method === "GET") {
+          return json(res, 200, { libraries: libraries.list(projectFor(url.searchParams.get("path"))) });
+        }
+        if (pathname === "/api/libraries/items" && method === "GET") {
+          const id = url.searchParams.get("id") ?? "";
+          const items = libraries.shapes(projectFor(url.searchParams.get("path")), id);
+          return json(res, 200, { items: items.map((s) => ({ key: s.key, name: s.name, itemId: s.itemId, elements: s.elements })) });
+        }
+        if (pathname === "/api/libraries/import" && method === "POST") {
+          const body = await readBody(req);
+          if (typeof body.content !== "string") throw new HttpError(400, "content must be the library file's text");
+          const info = libraries.install(body.content, { name: body.name as string | undefined, fileName: body.fileName as string | undefined });
+          return json(res, 200, { library: info });
+        }
+        if (pathname === "/api/libraries/update" && method === "POST") {
+          const body = await readBody(req);
+          const id = String(body.id ?? "");
+          if (typeof body.enabled === "boolean") libraries.setEnabled(id, body.enabled);
+          const rn = body.rename as { itemId?: unknown; name?: unknown } | undefined;
+          if (rn && typeof rn.itemId === "string") libraries.rename(id, rn.itemId, typeof rn.name === "string" ? rn.name : null);
+          return json(res, 200, { ok: true });
+        }
+        if (pathname === "/api/libraries/remove" && method === "POST") {
+          libraries.remove(String((await readBody(req)).id ?? ""));
+          return json(res, 200, { ok: true });
+        }
+        if (pathname === "/api/libraries/catalog" && method === "GET") {
+          const installed = libraries.installedUrls();
+          const builtIn = new Set(libraries.list().filter((l) => l.origin === "built-in").map((l) => l.url));
+          // Files imported by hand carry no catalog URL; they're installed under their file name.
+          const ids = new Set(libraries.list().map((l) => l.id));
+          const entries = await fetchCatalog();
+          return json(res, 200, {
+            entries: entries.map((e) => ({
+              ...e,
+              itemNames: undefined,
+              installed: installed.has(e.url) || builtIn.has(e.url) || ids.has(`installed:${slug(path.basename(e.source, ".excalidrawlib"))}`),
+            })),
+          });
+        }
+        if (pathname === "/api/libraries/install" && method === "POST") {
+          const { entry, content } = await fetchCatalogLibrary(String((await readBody(req)).source ?? ""));
+          const info = libraries.install(content, { name: entry.name, description: entry.description, authors: entry.authors, url: entry.url, itemNames: entry.itemNames });
+          return json(res, 200, { library: info });
+        }
+      } catch (e) {
+        if (e instanceof LibraryError || e instanceof SyntaxError) throw new HttpError(400, e.message);
+        if (e instanceof HttpError) throw e;
+        throw new HttpError(502, (e as Error).message);
+      }
     }
 
     // ---- local clients only (MCP server, CLI) ----

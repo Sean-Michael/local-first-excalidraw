@@ -83,7 +83,11 @@ export function resolveDrawing(ctx: ToolContext, p: string | undefined): string 
   }
   let rel = p.trim();
   if (!rel.endsWith(".excalidraw")) rel += ".excalidraw";
-  if (!path.isAbsolute(rel) && !rel.includes("/") && !rel.includes(path.sep)) rel = path.join(DEFAULT_DIR, rel);
+  if (!path.isAbsolute(rel) && !rel.includes("/") && !rel.includes(path.sep)) {
+    // A bare name goes next to the open drawing in the assistant (so its own name means that
+    // drawing), and into docs/diagrams/ for MCP agents.
+    return ctx.currentDrawing ? path.join(path.dirname(ctx.currentDrawing), rel) : path.resolve(ctx.projectRoot, DEFAULT_DIR, rel);
+  }
   return path.resolve(ctx.projectRoot, rel);
 }
 

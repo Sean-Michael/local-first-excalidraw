@@ -14,7 +14,7 @@ import { SettingsStore } from "../src/server/ai/settings.js";
 import { CodeError, globToRegExp, isSecretFile, listFiles, readFile, searchFiles } from "../src/server/code.js";
 import type { Config } from "../src/server/config.js";
 import { startDaemon } from "../src/server/daemon.js";
-import { codeTools, drawingTools, jsonSchema } from "../src/server/tools.js";
+import { codeTools, drawingTools, jsonSchema, resolveDrawing, type ToolContext } from "../src/server/tools.js";
 
 const tmp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `lfx-${name}-`));
 
@@ -536,4 +536,17 @@ test("the project root is the drawing's git repository, not just its folder", as
   // Without a repository, it falls back to the allowed root.
   const plain = path.join(root, "docs", "diagrams", "y.excalidraw");
   assert.equal((await api("GET", `/api/ai/mentions?path=${encodeURIComponent(plain)}&q=`)).body.root, fs.realpathSync(root));
+});
+
+test("in the assistant, a bare drawing name means the open drawing's folder, not docs/diagrams", () => {
+  const base = { projectRoot: "/home/me", op: async () => ({}), withEditor: async () => ({}), list: async () => [] } as ToolContext;
+  const current = "/home/me/Excalidraw/sketch.excalidraw";
+  const assistant = { ...base, currentDrawing: current };
+  assert.equal(resolveDrawing(assistant, "sketch.excalidraw"), current);
+  assert.equal(resolveDrawing(assistant, "sketch"), current);
+  assert.equal(resolveDrawing(assistant, undefined), current);
+  assert.equal(resolveDrawing(assistant, "other"), "/home/me/Excalidraw/other.excalidraw");
+  assert.equal(resolveDrawing(assistant, "docs/x"), "/home/me/docs/x.excalidraw");
+  // MCP agents keep the docs/diagrams default.
+  assert.equal(resolveDrawing(base, "sketch"), "/home/me/docs/diagrams/sketch.excalidraw");
 });

@@ -21,6 +21,7 @@ import {
   writeFileAtomic,
 } from "./config.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
+import { findShape, labelSize, LibraryError, type LibraryShape, loadShapes, PRIMITIVE_SHAPES, placeShape, shapeScale } from "./library.js";
 import {
   addSkeletons,
   bounds,
@@ -221,6 +222,19 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       }
       case "diagram": {
         const spec = body.graph as GraphSpec;
+        // Nodes may name a library shape: size them to it so the layout leaves room.
+        const lib = new Map<string, LibraryShape>();
+        let shapes: LibraryShape[] | undefined;
+        for (const n of spec.nodes) {
+          if (!n.shape || PRIMITIVE_SHAPES.has(n.shape)) continue;
+          shapes ??= loadShapes(libraryFile, projectRootFor(p));
+          const shape = findShape(shapes, n.shape);
+          const scale = shapeScale(shape, { normalize: true });
+          const label = labelSize(n.label);
+          n.shape = `lib:${shape.key}`;
+          n.size = { w: Math.round(Math.max(shape.width * scale, label.width)), h: Math.round(shape.height * scale + label.height) };
+          lib.set(n.shape, shape);
+        }
         const els = appendPlacement(scene, layoutGraph(spec), (body.placement as string) ?? "right");
         // Namespace ids when appending so repeated diagrams don't collide.
         const taken = new Set(live(scene.elements).map((e) => e.id));
@@ -234,9 +248,42 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           end: e.end ? { id: ren(e.end.id)! } : undefined,
           children: e.children?.map((c) => ren(c)!),
         }));
-        const { elements, created } = addSkeletons(scene.elements, renamed);
+        // Swap library nodes for copies of their elements; arrows bind to each shape's main part.
+        const parts = new Map<string, string[]>();
+        const expanded = renamed.flatMap((e): SkeletonEl[] => {
+          const shape = lib.get(e.type);
+          if (!shape) return [e];
+          const scale = shapeScale(shape, { normalize: true });
+          const placed = placeShape(shape, {
+            x: (e.x ?? 0) + ((e.width ?? 0) - shape.width * scale) / 2,
+            y: e.y ?? 0,
+            scale,
+            label: typeof e.label === "string" ? e.label : undefined,
+            anchorId: e.id,
+          });
+          parts.set(e.id!, placed.ids);
+          return placed.elements.map((el): SkeletonEl => ({ type: "placed", element: el }));
+        });
+        for (const e of expanded) if (e.type === "frame" && e.children) e.children = e.children.flatMap((c) => parts.get(c) ?? [c]);
+        const { elements, created } = addSkeletons(scene.elements, expanded);
         const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created };
+      }
+      case "shapes": {
+        const shapes = loadShapes(libraryFile, projectRootFor(p));
+        return { shapes: shapes.map(({ elements: _els, ...rest }) => rest) };
+      }
+      case "insert_shape": {
+        const shape = findShape(loadShapes(libraryFile, projectRootFor(p)), String(body.shape ?? ""));
+        const id = typeof body.id === "string" ? body.id : undefined;
+        if (id && live(scene.elements).some((e) => e.id === id)) throw new HttpError(409, `Element id "${id}" already exists`);
+        const b = bounds(scene.elements);
+        const x = typeof body.x === "number" ? body.x : b ? b.maxX + 120 : 0;
+        const y = typeof body.y === "number" ? body.y : b ? b.minY : 0;
+        const scale = shapeScale(shape, { width: body.width as number | undefined, height: body.height as number | undefined });
+        const placed = placeShape(shape, { x, y, scale, label: body.label as string | undefined, anchorId: id });
+        const r = store.apply(p, { elements: placed.elements }, origin);
+        return { path: p, rev: r.rev, shape: shape.key, anchor: placed.anchorId, created: placed.ids, bounds: placed.bounds };
       }
       case "update": {
         const elements = updateElements(scene.elements, (body.updates as ElementUpdate[]) ?? []);
@@ -574,7 +621,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     handle(req, res).catch((e: unknown) => {
       if (res.headersSent) return res.end();
       if (e instanceof HttpError) return json(res, e.status, { error: e.message, ...e.extra });
-      if (e instanceof SceneError || e instanceof PathError) return json(res, 400, { error: e.message });
+      if (e instanceof SceneError || e instanceof PathError || e instanceof LibraryError) return json(res, 400, { error: e.message });
       const err = e as NodeJS.ErrnoException;
       if (err.code === "ENOENT") return json(res, 404, { error: "Not found" });
       console.error(e);

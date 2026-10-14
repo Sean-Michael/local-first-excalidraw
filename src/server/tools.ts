@@ -176,7 +176,10 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
             z.object({
               id: z.string(),
               label: z.string(),
-              shape: z.enum(["rectangle", "ellipse", "diamond"]).optional(),
+              shape: z
+                .string()
+                .optional()
+                .describe("rectangle (default), ellipse, diamond, or a library shape key from list_shapes (drawn as that icon with the label below)"),
               color,
               group: z.string().optional().describe("Group id; members are drawn inside a labelled frame"),
             }),
@@ -206,6 +209,58 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         let msg = `Drew ${nodes.length} nodes and ${edges?.length ?? 0} edges in ${relPath(ctx, file)}. Element ids: ${(r.created as string[]).join(", ")}.`;
         if (open && ctx.open) msg += " " + (await ctx.open(file));
         return { text: msg, drawing: other(ctx, file) };
+      },
+    },
+    {
+      name: "list_shapes",
+      title: "List library shapes",
+      description:
+        "Lists reusable shapes (icons, components) from the user's Excalidraw library and from .excalidrawlib files in the project, e.g. an AWS or Kubernetes icon set. Use the key with insert_shape or as a create_diagram node shape.",
+      input: { query: z.string().optional().describe("Only shapes whose key, name or source contains this") },
+      readOnly: true,
+      run: async ({ query }, ctx) => {
+        const file = ctx.currentDrawing ?? path.join(ctx.projectRoot, "_.excalidraw");
+        const { shapes } = (await ctx.op({ op: "shapes", path: file })) as {
+          shapes: { key: string; name: string; source: string; width: number; height: number; description: string }[];
+        };
+        const q = (query ?? "").toLowerCase();
+        const hits = shapes.filter((s) => !q || `${s.key} ${s.name} ${s.source}`.toLowerCase().includes(q));
+        if (!shapes.length) {
+          return { text: "The library is empty. The user can add items in the editor's Library panel (or import an .excalidrawlib), or put an .excalidrawlib file in the project." };
+        }
+        if (!hits.length) return { text: `No shapes match "${query}". ${shapes.length} shapes in total; try a broader query.` };
+        const lines = hits.slice(0, 300).map((s) => `${s.key}: "${s.name}" (${s.source}) ${s.width}x${s.height} - ${s.description}`);
+        return { text: lines.join("\n") + (hits.length > 300 ? `\n… ${hits.length - 300} more; narrow with query` : "") };
+      },
+    },
+    {
+      name: "insert_shape",
+      title: "Insert library shape",
+      description:
+        "Places a library shape (from list_shapes) into the drawing as a grouped copy, with an optional label below it. Returns the id to bind arrows to (pass `id` to choose it).",
+      input: {
+        path: pathArg,
+        shape: z.string().describe("Shape key or name from list_shapes"),
+        x: z.number().optional().describe("Left edge; default: right of existing content"),
+        y: z.number().optional().describe("Top edge"),
+        width: z.number().positive().optional().describe("Scale to this width (keeps proportions with height)"),
+        height: z.number().positive().optional(),
+        label: z.string().optional().describe("Text shown under the shape"),
+        id: z.string().optional().describe("Id for the shape's main element, so arrows and updates can refer to it"),
+      },
+      run: async ({ path: p, ...args }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        const r = (await ctx.op({ op: "insert_shape", path: file, ...args })) as {
+          shape: string;
+          anchor: string;
+          created: string[];
+          bounds: { x: number; y: number; width: number; height: number };
+        };
+        const b = r.bounds;
+        return {
+          text: `Inserted ${r.shape} into ${relPath(ctx, file)} at (${Math.round(b.x)},${Math.round(b.y)}) size ${Math.round(b.width)}x${Math.round(b.height)}. Bind arrows to id "${r.anchor}". All ids: ${r.created.join(", ")}.`,
+          drawing: other(ctx, file),
+        };
       },
     },
     {

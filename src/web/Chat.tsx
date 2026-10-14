@@ -39,6 +39,8 @@ const TOOL_LABELS: Record<string, string> = {
   mermaid_to_drawing: "Converted Mermaid",
   render_drawing: "Looked at the drawing",
   export_drawing: "Exported an image",
+  list_shapes: "Looked up library shapes",
+  insert_shape: "Inserted a library shape",
   list_files: "Listed files",
   search_files: "Searched files",
   read_file: "Read a file",

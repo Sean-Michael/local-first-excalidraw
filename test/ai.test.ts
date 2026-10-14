@@ -14,6 +14,7 @@ import { SettingsStore } from "../src/server/ai/settings.js";
 import { CodeError, globToRegExp, isSecretFile, listFiles, readFile, searchFiles } from "../src/server/code.js";
 import type { Config } from "../src/server/config.js";
 import { startDaemon } from "../src/server/daemon.js";
+import { writeLibraries } from "./fixtures.js";
 import { codeTools, drawingTools, jsonSchema, resolveDrawing, type ToolContext } from "../src/server/tools.js";
 
 const tmp = (name: string) => fs.mkdtempSync(path.join(os.tmpdir(), `lfx-${name}-`));
@@ -549,4 +550,57 @@ test("in the assistant, a bare drawing name means the open drawing's folder, not
   assert.equal(resolveDrawing(assistant, "docs/x"), "/home/me/docs/x.excalidraw");
   // MCP agents keep the docs/diagrams default.
   assert.equal(resolveDrawing(base, "sketch"), "/home/me/docs/diagrams/sketch.excalidraw");
+});
+
+test("library shapes: list, insert, and use as create_diagram nodes with bound arrows", async () => {
+  const proj = path.join(root, "shapes-proj");
+  fs.mkdirSync(path.join(proj, ".git"), { recursive: true });
+  writeLibraries(proj, path.join(cfg.stateDir, "library.json"));
+  const token = fs.readFileSync(path.join(cfg.stateDir, "token"), "utf8").trim();
+  const op = async (body: Record<string, unknown>) => {
+    const res = await fetch(`${base()}/api/op`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+  const file = path.join(proj, "docs", "arch.excalidraw");
+
+  const list = await op({ op: "shapes", path: file });
+  assert.deepEqual(list.body.shapes.map((s: any) => s.key), ["item-1", "database", "message-queue"]);
+  assert.equal(list.body.shapes[0].elements, undefined, "elements stay server-side");
+
+  const ins = await op({ op: "insert_shape", path: file, shape: "Database", x: 10, y: 20, label: "Orders", id: "orders" });
+  assert.equal(ins.status, 200, JSON.stringify(ins.body));
+  assert.equal(ins.body.anchor, "orders");
+  assert.equal((await op({ op: "insert_shape", path: file, shape: "Database", id: "orders" })).status, 409);
+  assert.match((await op({ op: "insert_shape", path: file, shape: "kubernetes" })).body.error, /No library shape/);
+
+  const diag = await op({
+    op: "diagram",
+    path: file,
+    graph: {
+      nodes: [
+        { id: "api", label: "API" },
+        { id: "db", label: "Users DB", shape: "database", group: "data" },
+        { id: "q", label: "Events", shape: "Message Queue" },
+      ],
+      edges: [{ from: "api", to: "db" }, { from: "api", to: "q" }],
+      groups: [{ id: "data", label: "Data" }],
+    },
+  });
+  assert.equal(diag.status, 200, JSON.stringify(diag.body));
+  const els = read(file).elements as any[];
+  const byId = new Map(els.map((e) => [e.id, e]));
+  // Library nodes keep the node id on their arrow target, so the edges bind to them.
+  assert.equal(byId.get("db").strokeColor, "transparent", "multi-part icon: invisible target box");
+  assert.notEqual(byId.get("q").strokeColor, "transparent", "single-shape icon is its own target");
+  const toDb = els.find((e) => e.type === "arrow" && e.endBinding?.elementId === "db");
+  assert.ok(toDb, "arrow bound to the database shape");
+  assert.ok(byId.get("db").boundElements.some((b: any) => b.id === toDb.id));
+  assert.ok(els.some((e) => e.type === "text" && e.text === "Users DB"));
+  // The group's frame contains every part of the library shape, not just its anchor.
+  const dbGroup = byId.get("db").groupIds.at(-1);
+  const parts = els.filter((e) => e.groupIds?.includes(dbGroup));
+  assert.ok(parts.length >= 4);
+  for (const part of parts) assert.equal(part.frameId, "data");
+  // Not drawn as a plain labelled box.
+  assert.ok(!els.some((e) => e.type === "text" && e.text === "Users DB" && e.containerId === "db"));
 });

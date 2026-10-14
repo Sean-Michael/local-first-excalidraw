@@ -115,6 +115,7 @@ Click **Assistant** at the top right of a drawing (or **Toggle Assistant**, ⇧�
   - **Anthropic API** (default model `claude-opus-5-5`).
   - **Claude Code**: runs your local `claude` CLI with your existing login, restricted to read-only file tools and this project's MCP server. It does its own code search.
   - A model without tool calling still works: it answers in Mermaid, which is converted into editable elements.
+- **Your shapes.** The assistant can use your Excalidraw library and any `.excalidrawlib` file in the project, for example an icon set from [libraries.excalidraw.com](https://libraries.excalidraw.com) committed next to your diagrams. Ask for "our AWS icons" and it looks them up instead of drawing boxes.
 - **What it sees.** Each message carries a description of the drawing, the selected elements (plus a snapshot image, for models marked as accepting images), and anything you `@`-mention. With **project files** on (the default), it can also list, search and read files in the drawing's git repository on its own. File access is read-only, never leaves the repository, skips dependencies and `.gitignore`d paths, and refuses anything that looks like a secret (`.env`, keys, credentials).
 - **Undo.** The assistant's edits go on the canvas undo stack, so ⌘Z takes them back. Each reply also has **Revert changes**, which restores everything that reply changed except elements you've edited since.
 - **Where requests go.** The local daemon makes every model request; the page never talks to anything but the daemon. The panel always shows the destination (`→ localhost:11434 · gpt-oss:20b`). Keys are stored in `~/.local-first-excalidraw/ai.json` (0600) and are never sent back to the browser. Changing an endpoint's URL drops its stored key, so a key can't be redirected to another host. Conversations are kept per drawing in `~/.local-first-excalidraw/chats/`.
@@ -145,7 +146,8 @@ Paths in that mode are relative to the mounted workspace.
 
 | Tool | What it does |
 |---|---|
-| `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. |
+| `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. A node's `shape` can be a library shape, drawn as that icon with its label below. |
+| `list_shapes` / `insert_shape` | Reusable shapes from your Excalidraw library and any `.excalidrawlib` files in the project (an AWS or Kubernetes icon set, your team's components). Inserted as a grouped copy that arrows bind to. |
 | `mermaid_to_drawing` | Mermaid flowchart / sequence / class diagram → editable Excalidraw elements. |
 | `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
 | `update_elements` | Move, resize, relabel, recolour, or swap rectangle ↔ ellipse ↔ diamond by id. Labels re-centre and bound arrows re-route. |

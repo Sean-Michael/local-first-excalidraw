@@ -71,6 +71,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "- \"This\", \"these\" and \"the selection\" mean the selected elements listed in the context. Change them by id with update_elements or delete_elements, keeping ids stable rather than deleting and re-adding.",
     "- For new diagrams prefer create_diagram (automatic layout) or mermaid_to_drawing. Use add_elements for annotations and precise placement; call excalidraw_guide once before hand-placing elements. New content goes to the right of existing content unless you position it.",
     "- Call read_drawing before editing parts of the drawing the context doesn't describe.",
+    "- For icons or a house style (cloud services, Kubernetes, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape. Don't imitate an icon with plain boxes when the library has it.",
     o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix overlaps or cramped labels." : "",
     o.code
       ? "- You can explore the user's project read-only with " +

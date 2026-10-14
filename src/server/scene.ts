@@ -224,7 +224,7 @@ function base(type: string, extra: Partial<El> = {}): El {
   };
 }
 
-function textElement(text: string, opts: Partial<El> = {}): El {
+export function textElement(text: string, opts: Partial<El> = {}): El {
   const fontSize = opts.fontSize ?? 20;
   const family = fontFamily(opts.fontFamily);
   const m = measureText(text, fontSize, family);
@@ -423,6 +423,11 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
 
   for (const s of skeletons) {
     if (!s || typeof s.type !== "string") throw new SceneError("Each element needs a type");
+    // A fully built element (e.g. part of a library shape): taken as-is.
+    if (s.type === "placed" && s.element) {
+      put(s.element as El, true);
+      continue;
+    }
     if (s.id && all.has(s.id) && !all.get(s.id)!.isDeleted) {
       throw new SceneError(`Element id "${s.id}" already exists; use update_elements to change it`);
     }

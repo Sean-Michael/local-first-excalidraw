@@ -4,7 +4,8 @@ The real Excalidraw editor, running entirely on your machine, with an MCP server
 
 - **Your files are the source of truth.** Drawings are plain `.excalidraw` JSON in your repo (default `docs/diagrams/`), with stable 2-space formatting for clean git diffs.
 - **Live, both directions.** When an agent edits a drawing, your open tab updates instantly. When you draw, the file is saved within ~250 ms. If the file changes on disk (an editor, `git checkout`), the tab updates too.
-- **No network.** No CDN, no telemetry, no share links, no collaboration server, no AI backend. Fonts and code ship in the bundle, and the browser is locked to its own origin by CSP.
+- **No network.** No CDN, no telemetry, no share links, no collaboration server. Fonts and code ship in the bundle, and the browser is locked to its own origin by CSP.
+- **Optional assistant, your choice of model.** A chat panel beside the canvas that draws and edits with a local model (Ollama, LM Studio, llama.cpp), Claude Code, or an API you configure. It's off until you set it up, and nothing is sent anywhere before then.
 - **Agent-friendly.** Agents get high-level tools (graph → auto-laid-out diagram, Mermaid → Excalidraw, labelled shapes with bound arrows) plus a compact text description of a drawing and a PNG render so they can check their own work.
 
 ```
@@ -27,7 +28,7 @@ That project is a good MCP App, but it isn't local-first:
 | HTTP mode | binds `0.0.0.0`, `cors()` open to every origin, no auth | binds `127.0.0.1`, Host-header + Origin checks (DNS-rebinding / CSRF safe), bearer token for local clients, one-time login links + `HttpOnly SameSite=Strict` session for the browser |
 | Storage | checkpoints in shared `$TMPDIR` | your `.excalidraw` files; daemon state in `~/.local-first-excalidraw` (mode 0700, files 0600) |
 | File access | n/a | only `.excalidraw` files under registered project roots; symlink escapes rejected |
-| Dependencies at runtime | React, Excalidraw, Redis client, express, … | `@modelcontextprotocol/sdk`, `ws`, `zod`; the editor is prebuilt static files |
+| Dependencies at runtime | React, Excalidraw, Redis client, express, … | `@modelcontextprotocol/sdk`, `ws`, `zod`, `@anthropic-ai/sdk` (used only if you pick the Anthropic API); the editor is prebuilt static files |
 
 ## Quick start (native)
 
@@ -96,13 +97,34 @@ Releases aren't notarized yet, so macOS blocks the first launch. Open **System S
 
 The cask also links `lfx` onto your PATH, so the Claude Code plugin and `claude mcp add excalidraw -- lfx mcp` work without cloning the repo. It depends on Homebrew's `node`.
 
-To build it from source instead (Xcode 15+ and Node 20+), run the following. It creates `build/Local Excalidraw.app` (universal, macOS 14+) and copies it to `/Applications`:
+To build it from source instead (Xcode 15+ and Node 20+), run the following. It creates `build/Local Excalidraw.app` (Apple silicon, macOS 14+) and copies it to `/Applications`:
 
 ```bash
 macos/build-app.sh --install
 ```
 
 To cut a release, run `macos/build-app.sh --release`. It zips the app and writes the version and sha256 into `Casks/local-first-excalidraw.rb`. Then upload `build/LocalExcalidraw-<version>.zip` to a GitHub release tagged `v<version>`. Builds are ad-hoc signed by default, so Gatekeeper blocks a downloaded copy on first launch. Set `SIGN_IDENTITY="Developer ID Application: …"` and `NOTARY_PROFILE=<notarytool profile>` to sign and notarize the release.
+
+## Assistant
+
+Click **Assistant** at the top right of a drawing (or **Toggle Assistant**, ⇧⌘A, in the macOS app) to open a chat panel beside the canvas. Ask for a new diagram, or select items (drag a rectangle or click them) and ask for changes to just those. Type `@` to mention a project file or another drawing.
+
+- **Endpoints.** Add one in the panel's settings:
+  - **Ollama**, through its native API, so the context window can be set (default 32K; Ollama's own default of 4K is too small for the assistant's tools). Use a model with tool calling, such as `gpt-oss` or `qwen3-coder`.
+  - **Any OpenAI-compatible server**: LM Studio, llama.cpp (`llama-server --jinja`), vLLM, OpenAI, OpenRouter, …
+  - **Anthropic API** (default model `claude-opus-5-5`).
+  - **Claude Code**: runs your local `claude` CLI with your existing login, restricted to read-only file tools and this project's MCP server. It does its own code search.
+  - A model without tool calling still works: it answers in Mermaid, which is converted into editable elements.
+- **Settings as JSON.** Click **Edit as JSON** at the bottom of the settings, VS Code style: comments and trailing commas are fine, errors show their line, and unknown keys are flagged. You can also edit `~/.local-first-excalidraw/ai.json` directly; the daemon picks up changes without a restart and keeps the last good settings if an edit doesn't parse. API keys never appear in the in-app editor: add `"apiKey": "…"` to an endpoint to set one, or `null` to remove it. Saving from the app rewrites the file, which drops any comments you added by hand.
+- **Shapes and libraries.** The assistant draws with library shapes (people, databases, cloud icons, UI parts) instead of imitating them with boxes. Open the panel's **Shapes** view (the grid icon) to manage them:
+  - **Built in:** eight of the most-downloaded generic libraries ship with the app and work offline: Software Architecture, System Design Components, Stick Figures, Basic UX/Wireframing, Decision Flow Control, Network Topology Icons, Sticky Notes and Bubbles. They're MIT-licensed, from [the Excalidraw library catalog](https://github.com/excalidraw/excalidraw-libraries); see [libraries/manifest.json](libraries/manifest.json) for authors.
+  - **Browse catalog:** all public libraries, most downloaded first, installed in one click. Vendor icon sets (AWS, Google Cloud, Azure, logos) live here rather than in the app. This is the only feature that downloads anything, and only when you click Install.
+  - **Import:** drop `.excalidrawlib` files onto the Shapes view.
+  - **In this project:** `.excalidrawlib` files committed to the repo are picked up automatically, so a team can share its own icon set.
+  - Click a shape's name to rename it. Many published libraries have unnamed items; names come from the catalog or from text inside the shape where possible, and good names are what the assistant searches. Untick a library to hide it from the assistant. **Add to canvas library** copies a set into Excalidraw's own Library sidebar so you can drag shapes in by hand.
+- **What it sees.** Each message carries a description of the drawing, the selected elements (plus a snapshot image, for models marked as accepting images), and anything you `@`-mention. With **project files** on (the default), it can also list, search and read files in the drawing's git repository on its own. File access is read-only, never leaves the repository, skips dependencies and `.gitignore`d paths, and refuses anything that looks like a secret (`.env`, keys, credentials).
+- **Undo.** The assistant's edits go on the canvas undo stack, so ⌘Z takes them back. Each reply also has **Revert changes**, which restores everything that reply changed except elements you've edited since.
+- **Where requests go.** The local daemon makes every model request; the page never talks to anything but the daemon. The panel always shows the destination (`→ localhost:11434 · gpt-oss:20b`). Keys are stored in `~/.local-first-excalidraw/ai.json` (0600) and are never sent back to the browser. Changing an endpoint's URL drops its stored key, so a key can't be redirected to another host. Conversations are kept per drawing in `~/.local-first-excalidraw/chats/`.
 
 ## Docker (egress-isolated)
 
@@ -130,10 +152,12 @@ Paths in that mode are relative to the mounted workspace.
 
 | Tool | What it does |
 |---|---|
-| `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. |
+| `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. A node's `shape` can be a library shape, drawn as that icon with its label below. |
+| `list_shapes` / `insert_shape` | Search and place library shapes: the built-in starter libraries, installed ones, `.excalidrawlib` files in the project, and your Excalidraw library. `list_shapes` can return a picture of the matches; `insert_shape` can place a shape `next_to` an existing element. Shapes go in as grouped copies that arrows bind to. |
+| `connect_elements` | An arrow from one element to another that stays attached when either moves. |
 | `mermaid_to_drawing` | Mermaid flowchart / sequence / class diagram → editable Excalidraw elements. |
 | `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
-| `update_elements` | Move, resize, relabel or recolour by id. Labels re-centre and bound arrows re-route. |
+| `update_elements` | Move, resize, relabel, recolour, or swap rectangle ↔ ellipse ↔ diamond by id. Labels re-centre and bound arrows re-route. |
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
 | `read_drawing` | Compact listing: `[id] type at (x,y) size WxH "label" fill=…`, arrows as `from -> to`. Raw JSON on request. |
 | `render_drawing` | PNG for the agent to look at. |
@@ -155,8 +179,9 @@ Threats considered: malicious websites in your normal browser (CSRF, DNS rebindi
 - **Network surface:** loopback only (`127.0.0.1`). Requests whose `Host` isn't `localhost`/`127.0.0.1`/`[::1]` on the configured port are rejected (DNS rebinding). Any request with a foreign `Origin` is rejected, and WebSocket upgrades *require* a same-origin `Origin`.
 - **Authentication:** local clients (MCP server, CLI) use a 256-bit bearer token in `~/.local-first-excalidraw/token` (0600). Browsers get a single-use, 2-minute login code, exchanged for an `HttpOnly; SameSite=Strict` session cookie. The token never appears in URLs. Root registration, the agent operations API, login-code minting and shutdown are bearer-only. A browser session can't reach them.
 - **Filesystem:** only `*.excalidraw` files, only under `~/Excalidraw` plus project roots that local clients register. Paths are canonicalised with `realpath`, so `..` and symlink escapes are refused. Registering `/` is refused. Exports are confined to the project root.
-- **Browser:** `default-src 'none'`. Scripts, styles, fonts and connections are allowed from `'self'` only (plus `'wasm-unsafe-eval'` for Excalidraw's font subsetting). `frame-src 'none'` and embeds are disabled. Also `frame-ancestors 'none'`, `no-referrer`, COOP/CORP same-origin, and AI features off.
-- **Supply chain:** exact-pinned dependencies, `ignore-scripts=true` in `.npmrc`, browser-only packages are devDependencies (the runtime installs three packages), and the build fails if a CDN URL is left in the bundle.
+- **Browser:** `default-src 'none'`. Scripts, styles, fonts and connections are allowed from `'self'` only (plus `'wasm-unsafe-eval'` for Excalidraw's font subsetting). `frame-src 'none'` and embeds are disabled. Also `frame-ancestors 'none'`, `no-referrer`, COOP/CORP same-origin, and Excalidraw's built-in AI features (which call excalidraw.com) off.
+- **Assistant:** off by default. Model requests come from the daemon, never the page. The `claude` binary is found on `PATH` (or `LFX_CLAUDE_BIN`) and can't be set from the page, since that would let the page choose what to execute. Project-file tools are read-only and confined as described under [Assistant](#assistant).
+- **Supply chain:** exact-pinned dependencies, `ignore-scripts=true` in `.npmrc`, browser-only packages are devDependencies (the runtime installs four packages), and the build fails if a CDN URL is left in the bundle.
 
 Not in scope: someone already running code as your user. They can read the token, just as they can read your drawings. Links in Excalidraw's Help dialog and the "Browse libraries" button still open external sites, but only when you click them.
 
@@ -171,6 +196,8 @@ Not in scope: someone already running code as your user. They can read the token
 | `LFX_PROJECT_ROOT` | MCP root / cwd | project root for the MCP server |
 | `LFX_LOCK_ROOTS` | unset | `1` = don't allow registering extra roots |
 | `LFX_NO_BROWSER` | unset | `1` = print links instead of opening a browser |
+| `LFX_CLAUDE_BIN` | `claude` on `PATH` | Claude Code binary for the assistant |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | unset | used when an endpoint has no stored key |
 | `LFX_HOST` / `LFX_ALLOWED_HOSTS` | `127.0.0.1` | for containers only |
 
 ## Development

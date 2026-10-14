@@ -13,6 +13,7 @@ import {
   emptyScene,
   live,
   mergeElements,
+  normalizeUpdates,
   parseScene,
   serializeScene,
   tombstonesFor,
@@ -190,4 +191,37 @@ test("store picks up external edits and deletions", () => {
   fs.unlinkSync(p);
   assert.equal(store.get(p).exists, false);
   assert.ok(deleted);
+});
+
+test("updates map guessed property names and report what they ignore", () => {
+  const { updates, notes } = normalizeUpdates([{ id: "a", fillColor: "#00ff00", stroke: "#111111", y: 5, wobble: 3, color: "#123456" }]);
+  assert.deepEqual(updates, [{ id: "a", backgroundColor: "#00ff00", strokeColor: "#111111", y: 5 }]);
+  assert.ok(notes.some((n) => n.includes('treated "fillColor" as "backgroundColor"')));
+  assert.ok(notes.some((n) => n.includes('ignored unknown property "wobble"')));
+  assert.ok(notes.some((n) => n.includes('"color" takes a palette name')));
+  assert.deepEqual(normalizeUpdates([{ id: "b", color: "green", label: "Hi" }]), { updates: [{ id: "b", color: "green", label: "Hi" }], notes: [] });
+});
+
+test("a shape can change type in place, keeping its id, position, label and arrows", () => {
+  const { elements } = addSkeletons(
+    [],
+    [
+      { type: "rectangle", id: "a", x: 0, y: 0, width: 200, height: 80, label: "UI", rounded: true },
+      { type: "rectangle", id: "b", x: 400, y: 0, width: 200, height: 80 },
+      { type: "arrow", id: "ab", start: { id: "a" }, end: { id: "b" } },
+    ],
+  );
+  const before = byId(elements, "ab");
+  const next = updateElements(elements, [{ id: "a", type: "ellipse" }]);
+  const a = byId(next, "a");
+  assert.equal(a.type, "ellipse");
+  assert.deepEqual([a.x, a.y, a.width, a.height], [0, 0, 200, 80]);
+  assert.equal(a.roundness, null);
+  assert.equal(next.find((e) => e.containerId === "a")?.text, "UI");
+  const arrow = byId(next, "ab");
+  assert.equal(arrow.startBinding.elementId, "a");
+  assert.ok(arrow.version > before.version, "arrow re-routed to the new outline");
+  assert.equal(byId(updateElements(next, [{ id: "a", type: "diamond" }]), "a").type, "diamond");
+  assert.throws(() => updateElements(next, [{ id: "ab", type: "rectangle" }]), /only rectangle, ellipse and diamond/);
+  assert.deepEqual(normalizeUpdates([{ id: "a", type: "ellipse" }]).notes, []);
 });

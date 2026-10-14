@@ -19,6 +19,8 @@ export interface Config {
   /** Whether bearer clients may register additional roots at runtime. */
   allowRootRegistration: boolean;
   webDir: string;
+  /** Built-in starter libraries (libraries/ next to dist/). */
+  librariesDir?: string;
 }
 
 function envList(name: string): string[] {
@@ -55,6 +57,7 @@ export function loadConfig(): Config {
     defaultRoots,
     allowRootRegistration: process.env.LFX_LOCK_ROOTS !== "1",
     webDir,
+    librariesDir: process.env.LFX_LIBRARIES_DIR ?? path.resolve(here, "..", "..", "..", "libraries"),
   };
 }
 

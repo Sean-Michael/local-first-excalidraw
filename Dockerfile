@@ -7,6 +7,7 @@ RUN npm ci --ignore-scripts
 COPY tsconfig.server.json tsconfig.web.json vite.config.ts ./
 COPY src ./src
 COPY test ./test
+COPY libraries ./libraries
 RUN npm run build && npm test && npm prune --omit=dev --ignore-scripts
 
 # Runtime: three small server deps + prebuilt static assets, non-root, no shell tools needed.
@@ -24,6 +25,7 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/src ./dist/src
 COPY --from=build /app/dist/web ./dist/web
+COPY --from=build /app/libraries ./libraries
 RUN ln -s /app/dist/src/server/cli.js /usr/local/bin/lfx \
  && mkdir -p /state /workspace && chown node:node /state /workspace
 USER node

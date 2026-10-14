@@ -45,6 +45,11 @@ final class EditorController: NSObject {
         if let current { load(current) }
     }
 
+    /// Shows or hides the assistant panel, which lives in the web page beside the canvas.
+    func toggleAssistant() {
+        webView.evaluateJavaScript("window.lfx && window.lfx.toggleChat()")
+    }
+
     private func load(_ path: String) {
         if signedIn {
             webView.load(URLRequest(url: daemon.editorURL(file: path)))

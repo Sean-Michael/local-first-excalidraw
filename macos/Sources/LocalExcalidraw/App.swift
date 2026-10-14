@@ -38,6 +38,9 @@ struct LocalExcalidrawApp: App {
                     .disabled(model.phase != .ready)
             }
             CommandGroup(after: .sidebar) {
+                Button("Toggle Assistant") { model.editor.toggleAssistant() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .disabled(model.selection == nil)
                 Button("Reload Drawing") { model.editor.reload() }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                     .disabled(model.selection == nil)

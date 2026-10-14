@@ -292,7 +292,7 @@ export function Chat({
     <aside className="lfx-chat" aria-label="Assistant">
       <header className="lfx-chat-head">
         <div className="lfx-chat-title">
-          <strong>{view === "shapes" ? "Shapes" : "Assistant"}</strong>
+          <strong>{view === "shapes" ? "Shapes" : view === "settings" ? "Assistant Settings" : "Assistant"}</strong>
           {configured && view === "chat" && (
             <select
               className="lfx-endpoint"
@@ -305,7 +305,7 @@ export function Chat({
             >
               {settings!.endpoints.map((ep) => (
                 <option key={ep.id} value={ep.id}>
-                  {ep.name} → {endpointLabel(ep)}
+                  {ep.model ? `${ep.name} · ${ep.model}` : ep.name}
                 </option>
               ))}
             </select>

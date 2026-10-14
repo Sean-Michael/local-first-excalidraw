@@ -79,10 +79,16 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-editor {
   --c-bg: #ffffff; --c-fg: #1b1b1f; --c-muted: #6b6b76; --c-line: #e6e6ea; --c-soft: #f5f5f7;
   --c-accent: #6965db; --c-accent-fg: #ffffff; --c-accent-soft: #ecebff; --c-ok: #2f9e44; --c-err: #e03131; --c-code: #f3f3f6;
+  --c-pane: #f5f5f7; --c-group: #ffffff; --c-group-edge: rgba(0,0,0,.09); --c-sep: rgba(0,0,0,.14); --c-hover: rgba(0,0,0,.04); --c-press: rgba(0,0,0,.08);
+  --c-control: #ffffff; --c-placeholder: rgba(60,60,67,.38); --c-switch-off: rgba(0,0,0,.12); --c-ring: rgba(105,101,219,.35); --c-ring-strong: rgba(105,101,219,.7);
+  --c-menu: rgba(246,246,248,.94); --c-menu-edge: rgba(0,0,0,.14);
 }
 .lfx-editor[data-theme="dark"] {
   --c-bg: #1f1f23; --c-fg: #e6e6ea; --c-muted: #9a9aa5; --c-line: #33333a; --c-soft: #26262b;
   --c-accent: #a8a5ff; --c-accent-fg: #121212; --c-accent-soft: #2e2c4d; --c-ok: #69db7c; --c-err: #ff8787; --c-code: #2a2a30;
+  --c-pane: #1b1b1f; --c-group: #26262b; --c-group-edge: rgba(255,255,255,.07); --c-sep: rgba(255,255,255,.12); --c-hover: rgba(255,255,255,.05); --c-press: rgba(255,255,255,.09);
+  --c-control: #3a3a40; --c-placeholder: rgba(235,235,245,.3); --c-switch-off: rgba(255,255,255,.16); --c-ring: rgba(168,165,255,.4); --c-ring-strong: rgba(168,165,255,.8);
+  --c-menu: rgba(44,44,50,.95); --c-menu-edge: rgba(255,255,255,.12);
 }
 
 .lfx-chat {
@@ -98,8 +104,14 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-chat-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem .6rem .6rem .9rem; border-bottom: 1px solid var(--c-line); }
 .lfx-chat-title { display: flex; flex-direction: column; min-width: 0; gap: .1rem; }
 .lfx-chat-title strong { font-size: .95rem; }
-.lfx-endpoint { font: inherit; font-size: .75rem; color: var(--c-muted); background: transparent; border: 0; padding: 0; max-width: 250px; text-overflow: ellipsis; cursor: pointer; }
-.lfx-endpoint:focus-visible { outline: 2px solid var(--c-accent); border-radius: 4px; }
+.lfx-endpoint {
+  appearance: none; -webkit-appearance: none; font: inherit; font-size: .75rem; color: var(--c-muted); background-color: transparent; border: 0; cursor: pointer;
+  max-width: 250px; text-overflow: ellipsis; padding: .1rem 1.1rem .1rem .3rem; margin-left: -.3rem; border-radius: 5px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 16' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6l3-3 3 3M3 10l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right .3rem center; background-size: .45rem .65rem;
+}
+.lfx-endpoint:hover { background-color: var(--c-hover); color: var(--c-fg); }
+.lfx-endpoint:focus-visible { outline: 2px solid var(--c-accent); }
 .lfx-chat-actions { display: flex; gap: .15rem; flex: none; }
 .lfx-icon { width: 2rem; height: 2rem; display: grid; place-items: center; border: 0; border-radius: .5rem; background: transparent; color: var(--c-muted); cursor: pointer; }
 .lfx-icon svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
@@ -182,30 +194,172 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-btn:disabled { opacity: .45; cursor: default; filter: none; }
 .lfx-link { font: inherit; font-size: inherit; border: 0; background: none; padding: 0; color: var(--c-accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
-.lfx-settings { flex: 1; overflow-y: auto; padding: .9rem; display: flex; flex-direction: column; gap: .8rem; }
 .lfx-settings-sub { margin: 0; font-size: .75rem; font-weight: 600; color: var(--c-muted); text-transform: uppercase; letter-spacing: .04em; }
-.lfx-check { display: flex; gap: .55rem; align-items: flex-start; cursor: pointer; }
-.lfx-check input { margin-top: .2rem; accent-color: var(--c-accent); }
-.lfx-check small, .lfx-form label > small { display: block; color: var(--c-muted); font-size: .75rem; }
-.lfx-endpoints { list-style: none; margin: 0; padding: 0; border: 1px solid var(--c-line); border-radius: .6rem; }
-.lfx-endpoints:empty { display: none; }
-.lfx-endpoints li { display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem; font-size: .82rem; }
-.lfx-endpoints li + li { border-top: 1px solid var(--c-line); }
-.lfx-endpoints label { flex: 1; display: flex; gap: .55rem; align-items: center; min-width: 0; cursor: pointer; }
-.lfx-endpoints input { accent-color: var(--c-accent); }
-.lfx-endpoints label span { display: flex; flex-direction: column; min-width: 0; }
-.lfx-endpoints small { color: var(--c-muted); font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lfx-note { margin: 0; color: var(--c-muted); font-size: .75rem; }
 .lfx-row { display: flex; gap: .5rem; justify-content: flex-end; align-items: center; }
-.lfx-form { display: flex; flex-direction: column; gap: .75rem; }
-.lfx-form > label:not(.lfx-check) { display: flex; flex-direction: column; gap: .25rem; font-size: .8rem; }
-.lfx-form > label > span { font-weight: 500; }
-.lfx-form input:not([type="checkbox"]), .lfx-form select { font: inherit; font-size: .85rem; padding: .45rem .6rem; border-radius: .5rem; border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-fg); width: 100%; min-width: 0; }
-.lfx-form input:focus, .lfx-form select:focus { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
-.lfx-form .lfx-row { justify-content: stretch; }
-.lfx-form .lfx-row input { flex: 1; }
-.lfx-form .lfx-link { align-self: flex-start; font-size: .75rem; }
-.lfx-form > .lfx-row:last-child, .lfx-settings > .lfx-row:last-child { justify-content: flex-end; }
+
+/* ---- Assistant settings: grouped lists in the style of macOS System Settings ---- */
+.lfx-settings {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--c-pane);
+  font-size: 13px; -webkit-font-smoothing: antialiased;
+}
+.lfx-pane { flex: 1; overflow-y: auto; padding: .25rem .85rem 1.1rem; overscroll-behavior: contain; }
+.lfx-pane-intro { margin: .7rem .25rem .2rem; color: var(--c-muted); font-size: 12px; line-height: 1.4; }
+.lfx-pane-error { margin: .9rem .25rem 0; font-size: 12px; }
+.lfx-pane-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
+  padding: .65rem .85rem; border-top: 1px solid var(--c-line); background: var(--c-pane);
+}
+.lfx-spacer { flex: 1; }
+
+.lfx-navbar { position: relative; display: flex; align-items: center; justify-content: center; min-height: 2.6rem; padding: 0 2.6rem; flex: none; }
+.lfx-navbar h2 { margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lfx-back {
+  position: absolute; left: .55rem; top: 50%; transform: translateY(-50%);
+  width: 1.75rem; height: 1.75rem; display: grid; place-items: center; border: 0; border-radius: .4rem; background: transparent; color: var(--c-fg); cursor: pointer;
+}
+.lfx-back:hover { background: var(--c-hover); }
+.lfx-back svg { width: .55rem; height: .85rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.lfx-section { margin-top: 1.1rem; }
+.lfx-section h3 { margin: 0 .55rem .35rem; font-size: 11px; font-weight: 600; color: var(--c-muted); letter-spacing: .01em; }
+.lfx-section-foot { margin: .4rem .55rem 0; color: var(--c-muted); font-size: 11px; line-height: 1.4; }
+.lfx-section-foot code { background: var(--c-hover); padding: .05em .3em; border-radius: 4px; font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.lfx-section-foot .lfx-link { text-decoration: none; }
+.lfx-section-foot .lfx-link:hover { text-decoration: underline; }
+
+.lfx-group {
+  position: relative; margin: 0; padding: 0; list-style: none; border-radius: 10px; background: var(--c-group);
+  box-shadow: 0 0 0 .5px var(--c-group-edge), 0 .5px 1.5px rgba(0,0,0,.05);
+}
+.lfx-list { overflow: hidden; }
+.lfx-group > * + *::before {
+  content: ""; position: absolute; left: .75rem; right: 0; top: 0; height: 1px; transform: scaleY(.5); transform-origin: top; background: var(--c-sep);
+}
+.lfx-list > li + li::before { left: 3.1rem; }
+.lfx-group > * { position: relative; }
+
+.lfx-row-cell { display: flex; align-items: center; gap: .75rem; min-height: 2.5rem; padding: .4rem .75rem; }
+.lfx-row-cell > label { flex: none; max-width: 55%; cursor: default; }
+.lfx-row-control { flex: 1; min-width: 0; display: flex; justify-content: flex-end; }
+.lfx-row-control > input {
+  width: 100%; min-width: 0; border: 0; background: transparent; color: var(--c-fg); text-align: right;
+  font: inherit; padding: .25rem .4rem; margin-right: -.4rem; border-radius: 5px;
+}
+.lfx-row-control > input::placeholder, .lfx-combo input::placeholder { color: var(--c-placeholder); }
+.lfx-row-control > input:focus, .lfx-combo input:focus { outline: none; box-shadow: 0 0 0 3px var(--c-ring); background: var(--c-bg); text-align: left; }
+
+.lfx-switch-label { flex: 1 !important; max-width: none !important; display: flex; flex-direction: column; gap: .1rem; cursor: pointer !important; }
+.lfx-switch-label small { color: var(--c-muted); font-size: 11px; line-height: 1.35; }
+.lfx-switch {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; margin: 0; cursor: pointer;
+  width: 26px; height: 15px; border-radius: 999px; background: var(--c-switch-off);
+  box-shadow: inset 0 0 0 .5px rgba(0,0,0,.08); transition: background .18s ease;
+}
+.lfx-switch::after {
+  content: ""; position: absolute; top: 1px; left: 1px; width: 13px; height: 13px; border-radius: 50%; background: #fff;
+  box-shadow: 0 .5px 1.5px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.04); transition: transform .18s cubic-bezier(.3,.7,.4,1);
+}
+.lfx-switch:checked { background: var(--c-accent); }
+.lfx-switch:checked::after { transform: translateX(11px); }
+.lfx-switch:disabled { opacity: .5; cursor: default; }
+.lfx-switch:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--c-ring); }
+
+.lfx-cell {
+  width: 100%; display: flex; align-items: center; gap: .65rem; min-height: 2.75rem; padding: .45rem .75rem;
+  border: 0; background: transparent; color: var(--c-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.lfx-cell:hover:not(:disabled) { background: var(--c-hover); }
+.lfx-cell:active:not(:disabled) { background: var(--c-press); }
+.lfx-cell:disabled { cursor: default; }
+.lfx-cell:disabled .lfx-glyph, .lfx-cell:disabled .lfx-cell-text { opacity: .45; }
+.lfx-cell:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--c-ring-strong); }
+.lfx-cell-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .05rem; }
+.lfx-cell-text > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lfx-cell-text small { color: var(--c-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lfx-cell-value { color: var(--c-muted); font-size: 12px; }
+.lfx-cell-add { color: var(--c-accent); min-height: 2.5rem; }
+.lfx-add-icon { width: 1.6rem; height: 1.6rem; flex: none; display: grid; place-items: center; font-size: 1.15rem; font-weight: 400; line-height: 1; }
+.lfx-chevron { width: .45rem; height: .75rem; flex: none; fill: none; stroke: var(--c-placeholder); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.lfx-check-mark { width: .95rem; height: .95rem; flex: none; fill: none; stroke: var(--c-accent); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.lfx-cell-split { display: flex; align-items: stretch; }
+.lfx-cell-split .lfx-cell { flex: 1; min-width: 0; padding-right: .25rem; }
+.lfx-info { flex: none; width: 2.4rem; display: grid; place-items: center; border: 0; background: transparent; color: var(--c-muted); cursor: pointer; }
+.lfx-info:hover { color: var(--c-accent); }
+.lfx-info:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--c-ring-strong); }
+.lfx-info svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+
+.lfx-glyph {
+  width: 1.6rem; height: 1.6rem; flex: none; display: grid; place-items: center; border-radius: 7px; color: #fff;
+  background: linear-gradient(180deg, var(--g1), var(--g2)); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12), 0 .5px 1px rgba(0,0,0,.12);
+}
+.lfx-glyph svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.lfx-glyph-spark svg { fill: currentColor; stroke-width: 1; }
+.lfx-glyph-lg { width: 2.9rem; height: 2.9rem; border-radius: 12px; }
+.lfx-glyph-lg svg { width: 1.8rem; height: 1.8rem; }
+.lfx-glyph-local { --g1: #5b5b62; --g2: #3a3a40; }
+.lfx-glyph-lmstudio { --g1: #7a6cf5; --g2: #5443d9; }
+.lfx-glyph-llamacpp { --g1: #ffa63d; --g2: #f0770f; }
+.lfx-glyph-terminal { --g1: #44444a; --g2: #1f1f23; }
+.lfx-glyph-spark { --g1: #e58a6b; --g2: #cc5f3f; }
+.lfx-glyph-cloud { --g1: #3fc7a4; --g2: #109e7c; }
+.lfx-glyph-router { --g1: #6d8cf7; --g2: #3e5fd8; }
+.lfx-glyph-server { --g1: #a1a1aa; --g2: #74747c; }
+
+.lfx-hero { display: flex; gap: .8rem; align-items: center; margin: .5rem .25rem 0; }
+.lfx-hero strong { font-size: 15px; font-weight: 600; }
+.lfx-hero p { margin: .15rem 0 0; color: var(--c-muted); font-size: 11.5px; line-height: 1.4; }
+
+.lfx-popup {
+  appearance: none; -webkit-appearance: none; font: inherit; color: var(--c-fg); cursor: pointer; max-width: 100%;
+  padding: .2rem 1.5rem .2rem .55rem; border-radius: 6px; border: 0; background-color: var(--c-control);
+  box-shadow: 0 0 0 .5px var(--c-group-edge), 0 .5px 1px rgba(0,0,0,.1);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 16' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6l3-3 3 3M3 10l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right .4rem center; background-size: .5rem .7rem;
+}
+.lfx-popup:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--c-ring); }
+
+.lfx-combo { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; }
+.lfx-combo input {
+  flex: 1; min-width: 0; border: 0; background: transparent; color: var(--c-fg); text-align: right;
+  font: inherit; padding: .25rem .4rem; border-radius: 5px;
+}
+.lfx-combo-btn {
+  flex: none; width: 1.35rem; height: 1.35rem; margin-right: -.2rem; display: grid; place-items: center; border: 0; border-radius: 5px;
+  background: transparent; color: var(--c-muted); cursor: pointer;
+}
+.lfx-combo-btn:hover { background: var(--c-hover); color: var(--c-fg); }
+.lfx-combo-btn svg { width: .5rem; height: .7rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.lfx-combo-btn .lfx-spinner { width: .7rem; height: .7rem; border-width: 1.5px; }
+.lfx-menu {
+  position: absolute; top: calc(100% + .35rem); right: -.4rem; z-index: 10; width: min(17rem, 80vw); padding: .3rem;
+  background: var(--c-menu); color: var(--c-fg); border-radius: 9px;
+  -webkit-backdrop-filter: blur(24px) saturate(1.8); backdrop-filter: blur(24px) saturate(1.8);
+  box-shadow: 0 0 0 .5px var(--c-menu-edge), 0 10px 30px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.08);
+  animation: lfx-pop .12s ease-out;
+}
+@keyframes lfx-pop { from { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .lfx-menu { animation: none; } .lfx-switch, .lfx-switch::after { transition: none; } }
+.lfx-menu ul { list-style: none; margin: 0; padding: 0; max-height: 15rem; overflow-y: auto; }
+.lfx-menu li {
+  display: flex; align-items: center; gap: .15rem; padding: .22rem .45rem .22rem .2rem; border-radius: 5px; cursor: default;
+  font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lfx-menu li.lfx-hi { background: var(--c-accent); color: var(--c-accent-fg); }
+.lfx-menu-check { width: 1.1rem; flex: none; text-align: center; font-size: 11px; }
+.lfx-menu-empty { margin: 0; padding: .4rem .6rem; color: var(--c-muted); font-size: 12px; overflow-wrap: anywhere; }
+.lfx-menu-refresh {
+  display: block; width: 100%; margin-top: .25rem; padding: .3rem .45rem .3rem 1.35rem; border: 0; border-top: 1px solid var(--c-sep); border-radius: 0 0 5px 5px;
+  background: transparent; color: var(--c-fg); font: inherit; font-size: 13px; text-align: left; cursor: default;
+}
+.lfx-menu-refresh:hover:not(:disabled) { background: var(--c-accent); color: var(--c-accent-fg); border-radius: 5px; }
+.lfx-menu-refresh:disabled { color: var(--c-muted); }
+
+.lfx-settings .lfx-btn { font-size: 13px; padding: .28rem .9rem; border-radius: 6px; border: 0; background: var(--c-control); box-shadow: 0 0 0 .5px var(--c-group-edge), 0 .5px 1px rgba(0,0,0,.1); }
+.lfx-settings .lfx-btn:hover { background: var(--c-control); filter: brightness(.97); }
+.lfx-settings .lfx-primary { background: var(--c-accent); color: var(--c-accent-fg); box-shadow: 0 .5px 1px rgba(0,0,0,.15), inset 0 .5px 0 rgba(255,255,255,.18); }
+.lfx-settings .lfx-primary:hover { background: var(--c-accent); filter: brightness(1.06); }
+.lfx-btn-danger { color: var(--c-err) !important; }
 
 /* ---- Shapes / libraries ---------------------------------------------------- */
 .lfx-shapes { flex: 1; overflow-y: auto; padding: .8rem .9rem 1rem; display: flex; flex-direction: column; gap: .7rem; }

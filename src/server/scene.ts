@@ -572,7 +572,7 @@ const IMMUTABLE = new Set(["id", "type", "version", "versionNonce", "isDeleted",
 
 /** Properties an update may set: the simplified ones plus Excalidraw's own element fields. */
 const UPDATABLE = new Set([
-  "label", "text", "color", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle",
+  "label", "text", "color", "type", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle",
   "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness", "fontSize", "fontFamily", "textAlign",
   "verticalAlign", "link", "locked", "groupIds", "frameId", "points", "startArrowhead", "endArrowhead", "name",
   "customData", "lineHeight", "autoResize", "elbowed", "startBinding", "endBinding", "boundElements", "containerId",
@@ -631,12 +631,21 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
       patch.strokeColor = PALETTE[u.color].stroke;
       if (SHAPES.has(cur.type)) patch.backgroundColor = PALETTE[u.color].fill;
     }
+    // Shapes can swap type in place (keeping id, label and arrows); anything else can't.
+    if (typeof u.type === "string" && u.type !== cur.type) {
+      if (!SHAPES.has(cur.type) || !SHAPES.has(u.type)) {
+        throw new SceneError(`Can't turn a ${cur.type} into a ${u.type}: only rectangle, ellipse and diamond can be swapped`);
+      }
+      patch.type = u.type;
+      // Ellipses have no corners; keep rounded corners when swapping between the others.
+      patch.roundness = u.type === "ellipse" ? null : (cur.roundness ?? (u.type === "diamond" ? { type: 2 } : null));
+    }
     if (cur.type === "text" && typeof u.text === "string") {
       patch.originalText = u.text;
       if (!cur.containerId) Object.assign(patch, measureText(u.text, (patch.fontSize as number) ?? cur.fontSize, cur.fontFamily));
     }
     let next = bump(cur, patch);
-    if (["x", "y", "width", "height"].some((k) => k in patch)) moved.add(cur.id);
+    if (["x", "y", "width", "height", "type"].some((k) => k in patch)) moved.add(cur.id);
 
     // A longer label grows its shape (around the same centre) unless the caller sized it explicitly.
     if (u.label && SHAPES.has(cur.type) && u.width === undefined && u.height === undefined) {

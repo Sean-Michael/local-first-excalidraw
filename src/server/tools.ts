@@ -233,7 +233,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "update_elements",
       title: "Update elements",
       description:
-        "Changes existing elements by id: position, size, label (null removes it), text, color, or any raw property. Labels re-centre and bound arrows re-route automatically.",
+        "Changes existing elements by id: position, size, label (null removes it), text, color, type (switch between rectangle, ellipse and diamond in place), or any raw property. Labels re-centre and bound arrows re-route automatically. Prefer this over deleting and re-adding: it keeps the element's id, position and arrows.",
       input: {
         path: pathArg,
         updates: z

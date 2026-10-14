@@ -8,7 +8,7 @@ export const GUIDE = `# Local-first Excalidraw - element guide
 - **create_diagram** - nodes + edges, laid out automatically (LR or TB). Best default for architecture, flows, pipelines, dependency graphs. Groups become labelled frames.
 - **mermaid_to_drawing** - flowcharts / sequence / class diagrams from Mermaid source (needs the editor open; it is opened for you).
 - **add_elements** - hand-placed elements in the simplified format below (annotations, callouts, sketches).
-- **update_elements** - move/resize/recolour/relabel by id; labels stay centred and bound arrows follow.
+- **update_elements** - move/resize/recolour/relabel by id, or swap a shape between rectangle, ellipse and diamond; labels stay centred and bound arrows follow.
 - **delete_elements** - removes elements with their labels; arrows bound to them are detached.
 - **read_drawing** - compact listing: \`[id] type at (x,y) size WxH "label" fill=...\`, arrows as \`[id] arrow from -> to\`.
 - **render_drawing** - PNG of the drawing so you can check your work visually. Do this after non-trivial edits.

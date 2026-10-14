@@ -148,7 +148,7 @@ Paths in that mode are relative to the mounted workspace.
 | `create_diagram` | Nodes + edges (+ groups → frames), layered auto-layout, LR or TB. The fastest way to an architecture/flow diagram. |
 | `mermaid_to_drawing` | Mermaid flowchart / sequence / class diagram → editable Excalidraw elements. |
 | `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
-| `update_elements` | Move, resize, relabel or recolour by id. Labels re-centre and bound arrows re-route. |
+| `update_elements` | Move, resize, relabel, recolour, or swap rectangle ↔ ellipse ↔ diamond by id. Labels re-centre and bound arrows re-route. |
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
 | `read_drawing` | Compact listing: `[id] type at (x,y) size WxH "label" fill=…`, arrows as `from -> to`. Raw JSON on request. |
 | `render_drawing` | PNG for the agent to look at. |

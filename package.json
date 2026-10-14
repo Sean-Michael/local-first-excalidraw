@@ -1,6 +1,6 @@
 {
   "name": "local-first-excalidraw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first, offline, secure Excalidraw with an MCP server for coding agents",
   "license": "MIT",
   "type": "module",

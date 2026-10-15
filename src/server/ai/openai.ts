@@ -74,21 +74,34 @@ export class OpenAIProvider implements Provider {
     const body: Record<string, unknown> = {
       model: this.o.model,
       stream: true,
+      stream_options: { include_usage: true },
       messages: [{ role: "system", content: req.system }, ...toWire(req.messages, !!this.o.vision)],
     };
     if (req.tools.length) {
       body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
     }
-    const res = await fetch(`${this.o.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: headers(this.o.apiKey),
-      body: JSON.stringify(body),
-      signal: req.signal,
-    });
+    const post = () =>
+      fetch(`${this.o.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: headers(this.o.apiKey),
+        body: JSON.stringify(body),
+        signal: req.signal,
+      });
+    let res = await post();
+    if (res.status === 400 || res.status === 422) {
+      const err = await errorOf(res);
+      if (!/stream_options|include_usage/i.test(err.message)) throw err;
+      // Some compatible servers reject usage reporting; ask again without it.
+      delete body.stream_options;
+      res = await post();
+    }
     if (!res.ok || !res.body) throw await errorOf(res);
 
     let text = "";
     let finish: string | undefined;
+    let usage: TurnResult["usage"];
+    let model: string | undefined;
+    let responseId: string | undefined;
     const calls: { id: string; name: string; args: string }[] = [];
     for await (const data of sse(res.body, req.signal)) {
       if (data === "[DONE]") break;
@@ -99,6 +112,13 @@ export class OpenAIProvider implements Provider {
         continue;
       }
       if (chunk.error) throw new ProviderError(String(chunk.error.message ?? chunk.error));
+      model ??= chunk.model;
+      responseId ??= chunk.id;
+      // With include_usage the totals arrive in a final chunk that has no choices.
+      if (chunk.usage) {
+        const cached = chunk.usage.prompt_tokens_details?.cached_tokens;
+        usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0, ...(cached ? { cacheRead: cached } : {}) };
+      }
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       const d = choice.delta ?? {};
@@ -123,7 +143,7 @@ export class OpenAIProvider implements Provider {
       .filter((c) => c && c.name)
       .map((c, i) => ({ id: c.id || `call_${Date.now().toString(36)}_${i}`, name: c.name, args: c.args }));
     const stop = finish === "length" ? "length" : finish === "content_filter" ? "refusal" : toolCalls.length ? "tool" : "end";
-    return { text, toolCalls, stop };
+    return { text, toolCalls, stop, usage, model, responseId, finish };
   }
 }
 

@@ -15,7 +15,7 @@ Drawings are plain `.excalidraw` JSON files in the repo (default folder `docs/di
 | Sequence or class diagrams, or the user gave you Mermaid | `mermaid_to_drawing` |
 | Annotations, callouts, free-form sketches, precise placement | `add_elements` (call `excalidraw_guide` once first) |
 | Change existing elements | `read_drawing` to get ids, then `update_elements` / `delete_elements` |
-| Check your work | `render_drawing` (returns a PNG you can look at) |
+| Check your work | `render_drawing` (returns a PNG you can look at; `element_ids` or `region` for a full-size close-up) |
 | Show the user | `open_drawing` |
 | Put it in docs/README | `export_drawing` writes `name.excalidraw.svg`, which is viewable and still editable |
 
@@ -28,7 +28,7 @@ Drawings are plain `.excalidraw` JSON files in the repo (default folder `docs/di
    - Colours carry meaning: blue = services, green = data stores, orange = external/3rd-party, violet = AI/processing, yellow = decisions/notes, red = failure paths, gray = infra.
    - Diamonds for decisions, ellipses for actors/start/end, rectangles for everything else.
    - Keep labels short (1-4 words). Put details in a separate `text` note via `add_elements`.
-3. **Render and inspect** with `render_drawing`. Fix overlaps, unreadable labels and arrows crossing boxes using `update_elements` (move with `x`/`y`; arrows and labels follow automatically).
+3. **Render and inspect** with `render_drawing`. Fix overlaps, unreadable labels and arrows crossing boxes using `update_elements` (move with `x`/`y`; arrows and labels follow automatically). On a big drawing, render close-ups of each frame with `element_ids` before judging small text. For a full readability pass, use the diagram-review skill.
 4. **Show it**: `open_drawing` (or `create_diagram` with `open: true`), and tell the user the file path.
 5. If the user wants it in documentation, `export_drawing` and add the returned Markdown image link.
 

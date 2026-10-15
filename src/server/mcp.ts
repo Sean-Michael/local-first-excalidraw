@@ -5,12 +5,12 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { DaemonClient, DaemonError, openInBrowser } from "./client.js";
 import { type Config, VERSION } from "./config.js";
 import { SERVER_INSTRUCTIONS } from "./guide.js";
+import { contentAttrs, contextFromEnv, markError, withSpan } from "./telemetry.js";
 import { drawingTools, type ToolContext, type ToolOutput } from "./tools.js";
 
 function toResult(out: ToolOutput): CallToolResult {
-  const content: CallToolResult["content"] = out.image
-    ? [{ type: "image", data: out.image.data, mimeType: out.image.mime }]
-    : [{ type: "text", text: out.text }];
+  const content: CallToolResult["content"] = [{ type: "text", text: out.text }];
+  if (out.image) content.push({ type: "image", data: out.image.data, mimeType: out.image.mime });
   return { content };
 }
 
@@ -35,10 +35,20 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
       throw e;
     }));
 
-  const op = async (body: Record<string, unknown>) => {
+  /** Calls the daemon, starting it again if it stopped since (idle, or the app quit). */
+  const call = async <T>(f: () => Promise<T>): Promise<T> => {
     await ensure();
-    return client.request<Record<string, unknown>>("POST", "/api/op", body);
+    try {
+      return await f();
+    } catch (e) {
+      if (e instanceof DaemonError || (await client.healthy())) throw e;
+      ready = undefined;
+      await ensure();
+      return f();
+    }
   };
+
+  const op = (body: Record<string, unknown>) => call(() => client.request<Record<string, unknown>>("POST", "/api/op", body));
 
   /** Runs a browser-backed op, opening the editor first if no tab is connected. */
   const withEditor = async (file: string, body: Record<string, unknown>) => {
@@ -76,8 +86,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
   };
 
   const openMsg = async (file: string) => {
-    await ensure();
-    const url = await client.loginUrl(file);
+    const url = await call(() => client.loginUrl(file));
     const r = path.relative(projectRoot, file);
     const name = r.startsWith("..") ? file : r;
     return openInBrowser(url)
@@ -92,13 +101,14 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
     op,
     withEditor,
     list: async (root) => {
-      await ensure();
-      const { drawings } = await client.request<{ drawings: { path: string; mtime: number; size: number }[] }>("POST", "/api/list", { root });
+      const { drawings } = await call(() => client.request<{ drawings: { path: string; mtime: number; size: number }[] }>("POST", "/api/list", { root }));
       return drawings;
     },
     open: openMsg,
   };
 
+  // Started by the in-app assistant (through Claude Code), tool spans join the turn's trace.
+  const parent = contextFromEnv();
   for (const def of drawingTools({ currentDrawing: false })) {
     server.registerTool(
       def.name,
@@ -108,12 +118,30 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
         inputSchema: def.input,
         annotations: def.readOnly ? { readOnlyHint: true } : def.destructive ? { destructiveHint: true } : undefined,
       },
-      async (args: Record<string, unknown>) => {
-        try {
-          return toResult(await def.run(args, ctx));
-        } catch (e) {
-          return fail(e);
-        }
+      (args: Record<string, unknown>) => {
+        const attrs = {
+          "gen_ai.operation.name": "execute_tool",
+          "openinference.span.kind": "TOOL",
+          "gen_ai.tool.name": def.name,
+          "tool.name": def.name,
+          "gen_ai.tool.type": "function",
+          ...contentAttrs({ "gen_ai.tool.call.arguments": args, "input.value": args }),
+        };
+        return withSpan(
+          `execute_tool ${def.name}`,
+          attrs,
+          async (span) => {
+            try {
+              const out = await def.run(args, ctx);
+              span.setAttributes({ "lfx.tool.result_chars": out.text.length, "lfx.tool.image": !!out.image, ...contentAttrs({ "gen_ai.tool.call.result": out.text, "output.value": out.text }) });
+              return toResult(out);
+            } catch (e) {
+              markError(span, "tool_error", (e as Error).message);
+              return fail(e);
+            }
+          },
+          { parent },
+        );
       },
     );
   }

@@ -169,6 +169,18 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-starters button { font: inherit; font-size: .85rem; text-align: left; padding: .5rem .7rem; border-radius: .5rem; border: 1px solid var(--c-line); background: var(--c-bg); color: var(--c-fg); cursor: pointer; }
 .lfx-starters button:hover { background: var(--c-soft); border-color: var(--c-accent); }
 
+.lfx-chat-note { margin: 0 .9rem .5rem; padding: .45rem .7rem; border-radius: .5rem; background: var(--c-soft); color: var(--c-muted); font-size: .8rem; }
+
+.lfx-sessions { list-style: none; margin: 0; gap: .25rem; }
+.lfx-sessions li { display: flex; align-items: center; gap: .25rem; border-radius: .5rem; }
+.lfx-sessions li:hover, .lfx-sessions li.lfx-sel { background: var(--c-soft); }
+.lfx-sessions li .lfx-icon { opacity: 0; }
+.lfx-sessions li:hover .lfx-icon, .lfx-sessions li .lfx-icon:focus-visible { opacity: 1; }
+.lfx-session { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1rem; text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: .45rem .6rem; cursor: pointer; border-radius: .5rem; }
+.lfx-session:focus-visible { outline: 2px solid var(--c-accent); }
+.lfx-session-title { display: flex; align-items: center; gap: .4rem; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lfx-session .lfx-muted { font-size: .72rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
 .lfx-chat-error { margin: 0 .9rem .5rem; padding: .45rem .7rem; border-radius: .5rem; background: var(--c-err); color: #fff; font-size: .8rem; cursor: pointer; }
 
 .lfx-composer { position: relative; border-top: 1px solid var(--c-line); padding: .6rem .7rem .55rem; display: flex; flex-direction: column; gap: .4rem; }
@@ -431,3 +443,4 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-catalog-list li > div { min-width: 0; }
 .lfx-catalog-list small { display: block; color: var(--c-muted); font-size: .72rem; }
 .lfx-catalog-list p { margin: .2rem 0 0; color: var(--c-muted); font-size: .76rem; }
+@media (hover: none) { .lfx-sessions li .lfx-icon { opacity: 1; } }

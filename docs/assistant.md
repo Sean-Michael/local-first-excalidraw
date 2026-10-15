@@ -60,6 +60,12 @@ Each message carries:
 
 With **Read project files** on (the default), the model can also list, search and read files in the drawing's git repository on its own. File access is read-only, never leaves the repository, skips dependencies and `.gitignore`d paths, and refuses anything that looks like a secret (`.env`, keys, credentials).
 
+## Chats and history
+
+**+** starts a new chat; the previous one stays under the clock icon, newest first, so you can reopen it and carry on where you left off, or delete it. Each chat remembers its model: switching the model picker changes the open chat and becomes the default for new ones, so chats on other drawings keep the model they started with. If a chat switches between Claude Code and another endpoint, the earlier turns are passed along as text.
+
+Chats on different drawings reply at the same time. On one drawing, only one chat replies at a time, so each reply's changes can still be reverted on their own.
+
 ## Undo a reply
 
 The assistant's edits go on the canvas undo stack, so ⌘Z takes them back. Each reply also has **Revert changes**, which restores everything that reply changed except elements you've edited since.
@@ -68,4 +74,4 @@ The assistant's edits go on the canvas undo stack, so ⌘Z takes them back. Each
 
 The local daemon makes every model request; the page only talks to the daemon. The panel always shows the destination, for example `→ localhost:11434 · gpt-oss:20b` or `→ Claude Code · sonnet`.
 
-Keys are stored in `~/.local-first-excalidraw/ai.json` (mode 0600) and are never sent back to the browser. Changing an endpoint's URL drops its stored key, so a key can't be redirected to another host. Conversations are kept per drawing in `~/.local-first-excalidraw/chats/`.
+Keys are stored in `~/.local-first-excalidraw/ai.json` (mode 0600) and are never sent back to the browser. Changing an endpoint's URL drops its stored key, so a key can't be redirected to another host. Chats are kept per drawing in `~/.local-first-excalidraw/chats/`, one file per chat.

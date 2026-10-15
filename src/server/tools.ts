@@ -389,21 +389,43 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
     {
       name: "render_drawing",
       title: "Render drawing",
-      description: "Returns a PNG of the drawing so you can check layout and readability. Rendered by the local editor tab (opened if needed).",
+      description:
+        "Returns a PNG of the drawing so you can check layout and readability. Rendered by the local editor tab (opened if needed). " +
+        "Big drawings are scaled down to fit max_size, so small text may be unreadable in the overview; pass element_ids or region to render a close-up at full size.",
       input: {
         path: pathArg,
+        element_ids: z
+          .array(z.string())
+          .optional()
+          .describe("Render only these elements, plus their labels, the rest of their group, a frame's children, and arrows attached to any of them"),
+        region: z
+          .object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() })
+          .optional()
+          .describe("Render only elements overlapping this canvas rectangle (coordinates as in read_drawing)"),
         max_size: z.number().int().min(200).max(4000).optional().describe("Longest side in px (default 1600)"),
         dark: z.boolean().optional(),
       },
       readOnly: true,
-      run: async ({ path: p, max_size, dark }, ctx) => {
+      run: async ({ path: p, element_ids, region, max_size, dark }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const r = (await ctx.withEditor(file, {
           op: "render",
           path: file,
+          elementIds: element_ids,
+          region,
           opts: { format: "png", maxSize: max_size ?? 1600, dark: !!dark },
-        })) as { data: string; mime: string };
-        return { text: `Rendered ${relPath(ctx, file)}.`, image: { data: r.data, mime: r.mime } };
+        })) as { data: string; mime: string; scale?: number; minFont?: number; missing?: string[]; elements?: number };
+        const close = element_ids?.length || region;
+        const lines = [`Rendered ${close ? `${r.elements ?? "some"} elements of ` : ""}${relPath(ctx, file)}${r.scale ? ` at ${+r.scale.toFixed(2)}x` : ""}.`];
+        if (r.missing?.length) lines.push(`Not found: ${r.missing.join(", ")}.`);
+        if (r.scale && r.minFont) {
+          const px = r.minFont * r.scale;
+          lines.push(
+            `Smallest text is ${r.minFont}px, about ${+px.toFixed(1)}px in this image.` +
+              (px < 10 ? " That's too small to judge here: render a close-up with element_ids or region before calling text unreadable." : ""),
+          );
+        }
+        return { text: lines.join(" "), image: { data: r.data, mime: r.mime } };
       },
     },
     {

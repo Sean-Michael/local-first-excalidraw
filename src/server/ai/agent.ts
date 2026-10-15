@@ -1,29 +1,53 @@
 /**
- * The in-app drawing assistant. Owns one conversation per drawing, runs the tool loop
- * against the configured endpoint, streams progress to every tab showing that drawing,
- * and can revert the edits of a single turn.
+ * The in-app drawing assistant. Keeps chat sessions per drawing (one open, the rest in its
+ * history), runs the tool loop against each session's endpoint, streams progress to every
+ * tab showing that drawing, and can revert the edits of a single turn.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { applyChatEvent, type AssistantItem, type ChatEvent, type ChatItem, type ChatRequest, endpointHost, endpointLabel, type UserItem } from "../../shared/chat.js";
+import {
+  applyChatEvent,
+  type AssistantItem,
+  type ChatEvent,
+  type ChatItem,
+  type ChatRequest,
+  type ChatSessionInfo,
+  endpointHost,
+  endpointLabel,
+  type UserItem,
+} from "../../shared/chat.js";
 import { readJson, writeFileAtomic } from "../config.js";
 import { CodeError, readFile } from "../code.js";
 import { bump, describe, type El, randInt } from "../scene.js";
 import type { DocStore } from "../store.js";
+import {
+  activeContext,
+  activeSpan,
+  contentAttrs,
+  markError,
+  type Span,
+  type SpanContext,
+  SpanKind,
+  startSpan,
+  traceEnv,
+  withSpan,
+} from "../telemetry.js";
 import { codeTools, drawingTools, jsonSchema, relPath, type ToolContext, type ToolDef } from "../tools.js";
 import { AnthropicProvider, DEFAULT_ANTHROPIC_MODEL } from "./anthropic.js";
 import { runClaudeCode } from "./claude-code.js";
 import { OllamaProvider } from "./ollama.js";
 import { OpenAIProvider } from "./openai.js";
 import { apiKeyFor, type Endpoint, findClaude, type SettingsStore } from "./settings.js";
-import type { Msg, Part, Provider, ToolResult } from "./types.js";
+import { type Msg, type Part, type Provider, ProviderError, type ToolCall, type ToolResult, type Usage } from "./types.js";
 
 const MAX_STEPS = 40;
 const MAX_DRAWING_CHARS = 6_000;
 const MAX_MENTION_CHARS = 40_000;
 const MAX_TOOL_TEXT = 30_000;
+/** `gen_ai.agent.name` on the assistant's spans. */
+const AGENT = "lfx-assistant";
 
 export interface AssistantDeps {
   stateDir: string;
@@ -34,7 +58,7 @@ export interface AssistantDeps {
   /** Resolves a drawing path inside the allowed roots (throws otherwise). */
   safe(p: string): string;
   projectRootFor(file: string): string;
-  emit(drawing: string, ev: ChatEvent): void;
+  emit(drawing: string, session: string | undefined, ev: ChatEvent): void;
   /** Drawings with a turn in progress; the daemon tags their edits as the assistant's. */
   agentPaths: Set<string>;
   /** Environment for `lfx mcp` when spawned by Claude Code. */
@@ -44,15 +68,55 @@ export interface AssistantDeps {
 interface Snapshot {
   before: Map<string, El>;
   after: Map<string, El>;
+  /** The turn's span, linked from a later revert. */
+  span?: SpanContext;
+}
+
+/** Running totals for the turn in progress, reported on its span. */
+interface TurnStats {
+  steps: number;
+  toolCalls: number;
+  toolErrors: number;
+  usage: Usage;
+  reply: string;
+  attrs: Record<string, number | undefined>;
 }
 
 interface Conversation {
+  id: string;
   path: string;
+  title: string;
+  created: number;
+  updated: number;
+  /** Endpoint id; unset until the first message, which pins the default. */
+  endpoint?: string;
   items: ChatItem[];
   messages: Msg[];
   claudeSession?: string;
+  /** `messages.length` when Claude Code last saw this conversation; later turns went to another endpoint. */
+  claudeSeen?: number;
   abort?: AbortController;
   snapshots: Map<string, Snapshot>;
+  turn?: TurnStats;
+}
+
+/** A drawing's sessions: the one open in its tabs, and the saved ones. */
+interface DrawingChats {
+  open: string;
+  sessions: Map<string, Conversation>;
+}
+
+interface SavedSession {
+  id?: string;
+  path?: string;
+  title?: string;
+  created?: number;
+  updated?: number;
+  endpoint?: string;
+  items?: ChatItem[];
+  messages?: Msg[];
+  claudeSession?: string;
+  claudeSeen?: number;
 }
 
 export class AssistantError extends Error {}
@@ -73,7 +137,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "- Call read_drawing before editing parts of the drawing the context doesn't describe.",
     "- For icons or a house style (people, cloud services, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape (next_to places it beside an existing element). Don't imitate an icon with plain boxes when the library has it.",
     "- Join two existing elements with connect_elements rather than drawing a free arrow.",
-    o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix overlaps or cramped labels." : "",
+    o.vision ? "- After non-trivial edits, look at the result with render_drawing and fix what hurts readability: overlapping or covered text, labels overflowing their shapes, arrows running through unrelated shapes or left unbound, needless crossings, ragged alignment, and a flow that doesn't read in one direction. On a large drawing the overview is scaled down, so check small text with a close-up (element_ids or region) before changing it. Re-render what you changed." : "",
     o.code
       ? "- You can explore the user's project read-only with " +
         (o.claudeCode ? "Read, Grep and Glob" : "list_files, search_files and read_file") +
@@ -101,78 +165,337 @@ function changedIds(s: Snapshot): string[] {
   return out;
 }
 
+const modelOf = (ep: Endpoint) => ep.model || (ep.kind === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : undefined);
+
+/** GenAI semantic-convention attributes describing the endpoint. */
+function endpointAttrs(ep: Endpoint) {
+  return {
+    "gen_ai.provider.name": ep.kind === "claude-code" ? "anthropic" : ep.kind,
+    "gen_ai.request.model": modelOf(ep),
+    "llm.model_name": modelOf(ep),
+    "server.address": ep.kind === "claude-code" ? undefined : endpointHost(ep),
+    "lfx.endpoint.kind": ep.kind,
+    "lfx.endpoint.name": ep.name,
+  };
+}
+
+function usageAttrs(u: Usage | undefined) {
+  if (!u) return {};
+  return {
+    "gen_ai.usage.input_tokens": u.input,
+    "gen_ai.usage.output_tokens": u.output,
+    "gen_ai.usage.cache_read.input_tokens": u.cacheRead,
+    "gen_ai.usage.cache_creation.input_tokens": u.cacheWrite,
+    "llm.token_count.prompt": u.input,
+    "llm.token_count.completion": u.output,
+    "llm.token_count.total": u.input + u.output,
+  };
+}
+
+function addUsage(t: TurnStats, u: Usage | undefined) {
+  if (!u) return;
+  t.usage.input += u.input;
+  t.usage.output += u.output;
+  t.usage.cacheRead = (t.usage.cacheRead ?? 0) + (u.cacheRead ?? 0);
+  t.usage.cacheWrite = (t.usage.cacheWrite ?? 0) + (u.cacheWrite ?? 0);
+}
+
+/** Messages in the GenAI semantic-convention shape, for traces. Images are summarised, not sent. */
+function traceMessages(msgs: (Msg | { role: "assistant"; text: string; toolCalls: ToolCall[] })[]) {
+  const part = (p: Part) =>
+    p.type === "text" ? { type: "text", content: p.text } : { type: "blob", modality: "image", mime_type: p.mime, content: `(${Math.round((p.data.length * 3) / 4 / 1024)} KB not recorded)` };
+  return msgs.map((m) =>
+    m.role === "user"
+      ? { role: "user", parts: m.content.map(part) }
+      : m.role === "assistant"
+        ? { role: "assistant", parts: [...(m.text ? [{ type: "text", content: m.text }] : []), ...m.toolCalls.map((c) => ({ type: "tool_call", id: c.id, name: c.name, arguments: c.args }))] }
+        : { role: "tool", parts: m.results.map((r) => ({ type: "tool_call_response", id: r.id, response: r.content.map(part) })) },
+  );
+}
+
+function titleText(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > 60 ? `${t.slice(0, 57)}…` : t;
+}
+
+function titleOf(items: ChatItem[]): string {
+  const first = items.find((i) => i.kind === "user");
+  return first ? titleText(first.text) : "";
+}
+
+/** Earlier turns as plain text, for an endpoint that didn't see them (the session switched endpoints). */
+function transcript(msgs: Msg[]): string {
+  const out: string[] = [];
+  for (const m of msgs) {
+    if (m.role === "user") {
+      const text = m.content.map((p) => (p.type === "text" ? p.text : "")).join("").replace(/<context>[\s\S]*?<\/context>\s*/, "").trim();
+      if (text && !text.startsWith("(Your last tool call")) out.push(`User: ${text}`);
+    } else if (m.role === "assistant") {
+      const calls = m.toolCalls.map((t) => t.name);
+      const text = [m.text.trim(), calls.length ? `[used ${calls.join(", ")}]` : ""].filter(Boolean).join(" ");
+      if (text) out.push(`Assistant: ${text}`);
+    }
+  }
+  return clip(out.join("\n"), 20_000, "older turns left out");
+}
+
 /** Mermaid fences in a reply, for endpoints without tool calling. */
 export function mermaidBlocks(text: string): string[] {
   return [...text.matchAll(/```mermaid\s*\n([\s\S]*?)```/g)].map((m) => m[1].trim()).filter(Boolean);
 }
 
 export class Assistant {
-  private convs = new Map<string, Conversation>();
+  private drawings = new Map<string, DrawingChats>();
   private dir: string;
 
   constructor(private d: AssistantDeps) {
     this.dir = path.join(d.stateDir, "chats");
   }
 
-  private file(p: string) {
-    return path.join(this.dir, crypto.createHash("sha256").update(p).digest("hex").slice(0, 24) + ".json");
+  /** A stable id for a drawing's conversations that doesn't reveal its path. */
+  private convId(p: string) {
+    return crypto.createHash("sha256").update(p).digest("hex").slice(0, 24);
   }
 
-  private load(p: string): Conversation {
-    let c = this.convs.get(p);
-    if (c) return c;
-    const saved = readJson<{ items?: ChatItem[]; messages?: Msg[]; claudeSession?: string }>(this.file(p), {});
-    c = {
+  /** chats/<drawing id>/<session id>.json, plus open.json naming the open session. */
+  private drawingDir(p: string) {
+    return path.join(this.dir, this.convId(p));
+  }
+
+  private file(c: Conversation) {
+    return path.join(this.drawingDir(c.path), `${c.id}.json`);
+  }
+
+  private fresh(p: string): Conversation {
+    const now = Date.now();
+    return { id: crypto.randomUUID(), path: p, title: "", created: now, updated: now, items: [], messages: [], snapshots: new Map() };
+  }
+
+  private revive(p: string, saved: SavedSession): Conversation {
+    const now = Date.now();
+    return {
+      id: saved.id && /^[\w-]{1,64}$/.test(saved.id) ? saved.id : crypto.randomUUID(),
       path: p,
+      title: saved.title ?? titleOf(saved.items ?? []),
+      created: saved.created ?? now,
+      updated: saved.updated ?? now,
+      endpoint: saved.endpoint,
       // Snapshots don't survive a restart, so older turns can no longer be reverted.
       items: (saved.items ?? []).map((it) => (it.kind === "assistant" ? { ...it, revertable: false, status: it.status === "running" ? "stopped" : it.status } : it)),
       messages: saved.messages ?? [],
       claudeSession: saved.claudeSession,
+      claudeSeen: saved.claudeSeen ?? (saved.claudeSession ? (saved.messages ?? []).length : undefined),
       snapshots: new Map(),
     };
-    this.convs.set(p, c);
+  }
+
+  private chats(p: string): DrawingChats {
+    let dc = this.drawings.get(p);
+    if (dc) return dc;
+    const dir = this.drawingDir(p);
+    const sessions = new Map<string, Conversation>();
+    // Before sessions, a drawing had one conversation in chats/<drawing id>.json.
+    const legacy = path.join(this.dir, `${this.convId(p)}.json`);
+    if (fs.existsSync(legacy)) {
+      const c = this.revive(p, readJson<SavedSession>(legacy, {}));
+      if (c.items.length) {
+        sessions.set(c.id, c);
+        this.save(c);
+      }
+      fs.rmSync(legacy, { force: true });
+    }
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && n !== "open.json");
+    } catch {
+      // no sessions yet
+    }
+    for (const n of names) {
+      const c = this.revive(p, { id: n.slice(0, -5), ...readJson<SavedSession>(path.join(dir, n), {}) });
+      if (c.items.length) sessions.set(c.id, c);
+    }
+    const open = readJson<{ id?: string }>(path.join(dir, "open.json"), {}).id;
+    dc = { open: "", sessions };
+    this.drawings.set(p, dc);
+    const latest = [...sessions.values()].sort((a, b) => b.updated - a.updated)[0];
+    if (open && sessions.has(open)) dc.open = open;
+    else if (latest) dc.open = latest.id;
+    else this.newSession(dc, p);
+    return dc;
+  }
+
+  private session(p: string, id?: string): Conversation {
+    const dc = this.chats(p);
+    const c = dc.sessions.get(id ?? dc.open);
+    if (!c) throw new AssistantError("That chat no longer exists");
     return c;
   }
 
   private save(c: Conversation) {
-    fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    const dir = this.drawingDir(c.path);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!c.items.length) {
-      fs.rmSync(this.file(c.path), { force: true });
+      fs.rmSync(this.file(c), { force: true });
       return;
     }
-    writeFileAtomic(this.file(c.path), JSON.stringify({ path: c.path, items: c.items, messages: c.messages, claudeSession: c.claudeSession }), 0o600);
+    writeFileAtomic(
+      this.file(c),
+      JSON.stringify({
+        id: c.id,
+        path: c.path,
+        title: c.title,
+        created: c.created,
+        updated: c.updated,
+        endpoint: c.endpoint,
+        items: c.items,
+        messages: c.messages,
+        claudeSession: c.claudeSession,
+        claudeSeen: c.claudeSeen,
+      }),
+      0o600,
+    );
+  }
+
+  private saveOpen(p: string) {
+    const dc = this.chats(p);
+    const dir = this.drawingDir(p);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileAtomic(path.join(dir, "open.json"), JSON.stringify({ id: dc.open }), 0o600);
   }
 
   private push(c: Conversation, ev: ChatEvent) {
     c.items = applyChatEvent(c.items, ev);
-    this.d.emit(c.path, ev);
+    this.d.emit(c.path, c.id, ev);
   }
 
-  history(p: string): { items: ChatItem[]; busy: boolean } {
-    const c = this.load(p);
-    return { items: c.items, busy: !!c.abort };
+  private info(c: Conversation): ChatSessionInfo {
+    return {
+      id: c.id,
+      title: c.title,
+      created: c.created,
+      updated: c.updated,
+      endpoint: c.endpoint,
+      messages: c.items.filter((i) => i.kind === "user").length,
+      busy: !!c.abort,
+    };
   }
 
-  stop(p: string) {
-    this.convs.get(p)?.abort?.abort();
+  /** Saved sessions, newest first. The open one is listed even while empty. */
+  sessions(p: string): ChatSessionInfo[] {
+    const dc = this.chats(p);
+    return [...dc.sessions.values()]
+      .filter((c) => c.items.length || c.id === dc.open)
+      .sort((a, b) => b.updated - a.updated)
+      .map((c) => this.info(c));
   }
 
-  reset(p: string) {
-    const c = this.load(p);
-    if (c.abort) throw new AssistantError("Wait for the current reply to finish, or stop it first");
-    c.items = [];
-    c.messages = [];
-    c.claudeSession = undefined;
-    c.snapshots.clear();
+  private emitSessions(p: string) {
+    this.d.emit(p, undefined, { type: "sessions", sessions: this.sessions(p) });
+  }
+
+  /** The open session of a drawing, as a `history` event. */
+  history(p: string): Extract<ChatEvent, { type: "history" }> {
+    const c = this.session(p);
+    return { type: "history", session: c.id, endpoint: c.endpoint, items: c.items, busy: !!c.abort, sessions: this.sessions(p) };
+  }
+
+  /** True while any reply is being written, so the daemon doesn't stop for being idle. */
+  busy(): boolean {
+    for (const dc of this.drawings.values()) for (const c of dc.sessions.values()) if (c.abort) return true;
+    return false;
+  }
+
+  private emitHistory(p: string) {
+    const h = this.history(p);
+    this.d.emit(p, h.session, h);
+  }
+
+  /** Shows a saved session in every tab of the drawing. A reply in progress elsewhere keeps going. */
+  open(p: string, id: string) {
+    const dc = this.chats(p);
+    if (!dc.sessions.has(id)) throw new AssistantError("That chat no longer exists");
+    this.dropEmpty(dc, id);
+    dc.open = id;
+    this.saveOpen(p);
+    this.emitHistory(p);
+  }
+
+  /** Starts a new chat; the current one stays in the history. */
+  openNew(p: string) {
+    const dc = this.chats(p);
+    const cur = dc.sessions.get(dc.open);
+    if (!cur || cur.items.length) this.newSession(dc, p);
+    this.saveOpen(p);
+    this.emitHistory(p);
+  }
+
+  /** Opens an empty session; it is only written to disk once it has a message. */
+  private newSession(dc: DrawingChats, p: string): Conversation {
+    this.dropEmpty(dc);
+    const c = this.fresh(p);
+    dc.sessions.set(c.id, c);
+    dc.open = c.id;
+    return c;
+  }
+
+  /** Forgets the open session when it's empty and another is being opened. */
+  private dropEmpty(dc: DrawingChats, keep?: string) {
+    const cur = dc.sessions.get(dc.open);
+    if (cur && cur.id !== keep && !cur.items.length && !cur.abort) dc.sessions.delete(cur.id);
+  }
+
+  delete(p: string, id: string) {
+    const dc = this.chats(p);
+    const c = dc.sessions.get(id);
+    if (!c) return;
+    if (c.abort) throw new AssistantError("Stop this chat's reply before deleting it");
+    startSpan("lfx.assistant.delete_session", { "gen_ai.conversation.id": c.id, "lfx.history.messages": c.messages.length }).end();
+    dc.sessions.delete(id);
+    fs.rmSync(this.file(c), { force: true });
+    if (dc.open === id) {
+      const next = [...dc.sessions.values()].filter((s) => s.items.length).sort((a, b) => b.updated - a.updated)[0];
+      if (next) dc.open = next.id;
+      else this.newSession(dc, p);
+      this.saveOpen(p);
+      this.emitHistory(p);
+    } else this.emitSessions(p);
+  }
+
+  /** Points a session at another endpoint; the next message goes there. */
+  setEndpoint(p: string, id: string, endpoint: string) {
+    const c = this.session(p, id);
+    if (!this.d.settings.get().endpoints.some((e) => e.id === endpoint)) throw new AssistantError("Unknown endpoint");
+    c.endpoint = endpoint;
     this.save(c);
-    this.d.emit(p, { type: "reset" });
+    this.emitSessions(p);
+  }
+
+  stop(p: string, id?: string) {
+    const dc = this.drawings.get(p);
+    if (!dc) return;
+    if (id) dc.sessions.get(id)?.abort?.abort();
+    else for (const c of dc.sessions.values()) c.abort?.abort();
   }
 
   /** Undoes one turn's edits, except elements someone has changed since. */
-  revert(p: string, turnId: string): { restored: number; skipped: number } {
-    const c = this.load(p);
+  revert(p: string, sessionId: string | undefined, turnId: string): { restored: number; skipped: number } {
+    const c = this.session(p, sessionId);
     const snap = c.snapshots.get(turnId);
     if (!snap) throw new AssistantError("That reply can no longer be reverted");
+    // A revert is the clearest sign a turn went wrong: link it to that turn's trace.
+    const span = startSpan(
+      "lfx.assistant.revert",
+      { "gen_ai.conversation.id": c.id, "lfx.turn.id": turnId },
+      { links: snap.span ? [{ context: snap.span }] : [] },
+    );
+    try {
+      return this.restore(c, p, turnId, snap, span);
+    } finally {
+      span.end();
+    }
+  }
+
+  private restore(c: Conversation, p: string, turnId: string, snap: Snapshot, span: Span): { restored: number; skipped: number } {
     const current = new Map(this.d.store.get(p).scene.elements.map((e) => [e.id, e]));
     const restore: El[] = [];
     let skipped = 0;
@@ -196,6 +519,7 @@ export class Assistant {
       }
     }
     c.snapshots.delete(turnId);
+    span.setAttributes({ "lfx.revert.restored": restore.length, "lfx.revert.skipped": skipped });
     this.push(c, { type: "reverted", id: turnId, restored: restore.length, skipped });
     this.save(c);
     return { restored: restore.length, skipped };
@@ -253,12 +577,19 @@ export class Assistant {
   async send(req: ChatRequest): Promise<void> {
     const p = this.d.safe(req.path);
     req = { ...req, path: p, text: String(req.text ?? "").slice(0, 20_000), selection: (req.selection ?? []).slice(0, 2000), mentions: (req.mentions ?? []).slice(0, 20) };
-    const c = this.load(p);
+    const c = this.session(p, req.session);
     if (c.abort) throw new AssistantError("The assistant is still working on the previous message");
+    // One reply at a time per drawing: two turns editing the same canvas couldn't be reverted separately.
+    for (const other of this.chats(p).sessions.values()) {
+      if (other.abort) throw new AssistantError(`Another chat on this drawing ("${other.title || "New chat"}") is still working. Wait for it, or stop it first.`);
+    }
     const settings = this.d.settings.get();
-    const ep = this.d.settings.active();
+    const ep = this.d.settings.endpoint(c.endpoint);
     if (!ep) throw new AssistantError("The assistant isn't set up yet. Open its settings to choose a model.");
     if (!req.text.trim()) throw new AssistantError("Empty message");
+    c.endpoint = ep.id;
+    c.updated = Date.now();
+    if (!c.title) c.title = titleText(req.text);
 
     const root = this.d.projectRootFor(p);
     const code = settings.codeAccess;
@@ -277,8 +608,34 @@ export class Assistant {
     };
     this.push(c, { type: "user", item: user });
     const turnId = crypto.randomUUID();
-    this.push(c, { type: "turn-start", id: turnId, endpoint: endpointLabel({ ...ep, model: ep.model || (ep.kind === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : ep.model) }) });
+    this.push(c, { type: "turn-start", id: turnId, endpoint: endpointLabel({ ...ep, model: modelOf(ep) }) });
+    this.emitSessions(p);
 
+    const attrs = {
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.agent.name": AGENT,
+      "gen_ai.conversation.id": c.id,
+      "session.id": c.id,
+      "openinference.span.kind": "AGENT",
+      ...endpointAttrs(ep),
+      "lfx.turn.id": turnId,
+      "lfx.drawing": relPath({ projectRoot: root } as ToolContext, p),
+      "lfx.code_access": code,
+      "lfx.endpoint.vision": !!ep.vision,
+      "lfx.endpoint.tools": ep.tools !== false,
+      "lfx.selection.count": req.selection.length,
+      "lfx.mentions.count": req.mentions.length,
+      "lfx.image": user.context.image,
+      "lfx.history.messages": c.messages.length,
+      ...contentAttrs({ "input.value": req.text }),
+    };
+    await withSpan(`invoke_agent ${AGENT}`, attrs, (span) => this.turn(c, req, ep, root, code, turnId, abort, span));
+  }
+
+  private async turn(c: Conversation, req: ChatRequest, ep: Endpoint, root: string, code: boolean, turnId: string, abort: AbortController, span: Span) {
+    const p = c.path;
+    const stats: TurnStats = { steps: 0, toolCalls: 0, toolErrors: 0, usage: { input: 0, output: 0 }, reply: "", attrs: {} };
+    c.turn = stats;
     const before = elementMap(this.d.store.get(p).scene.elements);
     this.d.agentPaths.add(p);
     let status: AssistantItem["status"] = "done";
@@ -298,16 +655,30 @@ export class Assistant {
     } finally {
       this.d.agentPaths.delete(p);
       c.abort = undefined;
+      c.turn = undefined;
     }
     if (abort.signal.aborted) {
       status = "stopped";
       error = undefined;
     }
-    const snap: Snapshot = { before, after: elementMap(this.d.store.get(p).scene.elements) };
+    const snap: Snapshot = { before, after: elementMap(this.d.store.get(p).scene.elements), span: span.spanContext() };
     const changed = changedIds(snap).length;
     if (changed) c.snapshots.set(turnId, snap);
+    span.setAttributes({
+      "lfx.turn.status": status,
+      "lfx.turn.steps": stats.steps,
+      "lfx.turn.tool_calls": stats.toolCalls,
+      "lfx.turn.tool_errors": stats.toolErrors,
+      "lfx.turn.elements_changed": changed,
+      ...usageAttrs(stats.usage.input || stats.usage.output ? stats.usage : undefined),
+      ...stats.attrs,
+      ...contentAttrs({ "output.value": stats.reply || undefined }),
+    });
+    if (error) markError(span, "turn_error", error);
+    c.updated = Date.now();
     this.push(c, { type: "turn-end", id: turnId, status, error, revertable: changed > 0, changed });
     this.save(c);
+    this.emitSessions(p);
   }
 
   private async runLoop(
@@ -337,22 +708,68 @@ export class Assistant {
     if (req.image && ep.vision) content.push({ type: "image", data: req.image.data, mime: req.image.mime });
     c.messages.push({ role: "user", content });
 
+    const turnSpan = activeSpan();
+    const stats = c.turn!;
+    // Each model span records only what's new since the previous call: the user message, then tool results.
+    let seen = c.messages.length - 1;
     let retries = 0;
     for (let step = 0; step < MAX_STEPS; step++) {
       let partial = "";
       let res;
+      const input = c.messages.slice(seen);
+      const system = SYSTEM({ vision: !!ep.vision, code, mermaidOnly: !useTools, claudeCode: false });
+      stats.steps = step + 1;
       try {
-        res = await provider.turn(
+        res = await withSpan(
+          `chat ${modelOf(ep) ?? ep.kind}`,
           {
-            system: SYSTEM({ vision: !!ep.vision, code, mermaidOnly: !useTools, claudeCode: false }),
-            messages: c.messages,
-            tools: useTools ? specs : [],
-            signal,
+            "gen_ai.operation.name": "chat",
+            "openinference.span.kind": "LLM",
+            ...endpointAttrs(ep),
+            "lfx.step": step,
+            "lfx.tools.offered": useTools ? specs.length : 0,
+            "lfx.messages.total": c.messages.length,
+            ...contentAttrs({
+              "gen_ai.system_instructions": step === 0 ? [{ type: "text", content: system }] : undefined,
+              "gen_ai.input.messages": traceMessages(input),
+              "input.value": traceMessages(input),
+              "input.mime_type": "application/json",
+            }),
           },
-          (ev) => {
-            if (ev.type === "text") partial += ev.text;
-            this.push(c, { type: "delta", id: turnId, part: ev.type, text: ev.text });
+          async (span) => {
+            const t0 = performance.now();
+            let first = true;
+            try {
+              const r = await provider.turn({ system, messages: c.messages, tools: useTools ? specs : [], signal }, (ev) => {
+                if (first) {
+                  first = false;
+                  span.setAttribute("lfx.ttft_ms", Math.round(performance.now() - t0));
+                }
+                if (ev.type === "text") partial += ev.text;
+                this.push(c, { type: "delta", id: turnId, part: ev.type, text: ev.text });
+              });
+              addUsage(stats, r.usage);
+              span.setAttributes({
+                ...usageAttrs(r.usage),
+                "gen_ai.response.model": r.model,
+                "gen_ai.response.id": r.responseId,
+                "gen_ai.response.finish_reasons": r.finish ? [r.finish] : undefined,
+                "lfx.stop": r.stop,
+                "lfx.tool_calls": r.toolCalls.map((t) => t.name),
+                ...Object.fromEntries(Object.entries(r.timings ?? {}).map(([k, v]) => [`lfx.server.${k}_ms`, v])),
+                ...contentAttrs({
+                  "gen_ai.output.messages": traceMessages([{ role: "assistant", text: r.text, toolCalls: r.toolCalls }]),
+                  "output.value": traceMessages([{ role: "assistant", text: r.text, toolCalls: r.toolCalls }]),
+                  "output.mime_type": "application/json",
+                }),
+              });
+              return r;
+            } catch (e) {
+              if (e instanceof ProviderError && e.status) span.setAttribute("http.response.status_code", e.status);
+              throw e;
+            }
           },
+          { kind: SpanKind.CLIENT },
         );
       } catch (e) {
         if (partial) c.messages.push({ role: "assistant", text: partial, toolCalls: [] });
@@ -362,6 +779,7 @@ export class Assistant {
         const parseError = /error parsing tool call|invalid (tool|function) call|failed to parse tool/i.test((e as Error).message);
         if (parseError && retries < 2) {
           retries++;
+          turnSpan?.addEvent("lfx.tool_call_parse_retry", { "lfx.step": step });
           c.messages.push({
             role: "user",
             content: [{ type: "text", text: `(Your last tool call could not be parsed: ${(e as Error).message.slice(0, 400)}. Call the tool again with valid JSON arguments.)` }],
@@ -371,12 +789,15 @@ export class Assistant {
         // Some local models can't call tools at all; fall back to Mermaid replies.
         if (useTools && step === 0 && /does not support tools|tool(s)? (are |is )?not supported|tool_choice/i.test((e as Error).message)) {
           useTools = false;
+          turnSpan?.addEvent("lfx.mermaid_fallback");
           this.push(c, { type: "delta", id: turnId, part: "reasoning", text: "This model can't call tools, so it will answer in Mermaid instead.\n" });
           continue;
         }
         throw e;
       }
       c.messages.push({ role: "assistant", text: res.text, toolCalls: res.toolCalls, native: res.native });
+      seen = c.messages.length;
+      if (res.text) stats.reply = res.text;
 
       if (!useTools) {
         for (const src of mermaidBlocks(res.text)) await this.runTool(c, turnId, byName, ctx, { id: crypto.randomUUID(), name: "mermaid_to_drawing", args: JSON.stringify({ mermaid: src }) });
@@ -400,6 +821,7 @@ export class Assistant {
       c.messages.push({ role: "tool", results });
       if (signal.aborted) return undefined;
     }
+    turnSpan?.addEvent("lfx.max_steps");
     return `Stopped after ${MAX_STEPS} steps.`;
   }
 
@@ -410,31 +832,54 @@ export class Assistant {
     ctx: ToolContext,
     call: { id: string; name: string; args: string },
   ): Promise<ToolResult> {
-    this.push(c, { type: "tool-start", id: turnId, callId: call.id, name: call.name, args: call.args });
-    const fail = (msg: string): ToolResult => {
-      this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: false, result: msg });
-      return { id: call.id, name: call.name, content: [{ type: "text", text: msg }], isError: true };
+    const attrs = {
+      "gen_ai.operation.name": "execute_tool",
+      "openinference.span.kind": "TOOL",
+      "gen_ai.tool.name": call.name,
+      "tool.name": call.name,
+      "gen_ai.tool.call.id": call.id,
+      "gen_ai.tool.type": "function",
+      "lfx.tool.args_chars": call.args.length,
+      ...contentAttrs({ "gen_ai.tool.call.arguments": call.args, "input.value": call.args }),
     };
-    const def = byName.get(call.name);
-    if (!def) return fail(`Unknown tool ${call.name}. Available: ${[...byName.keys()].join(", ")}`);
-    let raw: unknown;
-    try {
-      raw = call.args.trim() ? JSON.parse(call.args) : {};
-    } catch {
-      return fail(`Invalid JSON arguments: ${call.args.slice(0, 500)}`);
-    }
-    const parsed = z.object(def.input).safeParse(raw);
-    if (!parsed.success) return fail(`Invalid arguments: ${z.prettifyError(parsed.error)}`);
-    try {
-      const out = await def.run(parsed.data, ctx);
-      const text = clip(out.text, MAX_TOOL_TEXT, "narrow the request");
-      this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: true, result: text.slice(0, 4000), drawing: out.drawing });
-      const content: Part[] = [{ type: "text", text }];
-      if (out.image) content.push({ type: "image", data: out.image.data, mime: out.image.mime });
-      return { id: call.id, name: call.name, content };
-    } catch (e) {
-      return fail(e instanceof CodeError ? e.message : `Error: ${(e as Error).message}`);
-    }
+    return withSpan(`execute_tool ${call.name}`, attrs, async (span) => {
+      const stats = c.turn;
+      if (stats) stats.toolCalls++;
+      this.push(c, { type: "tool-start", id: turnId, callId: call.id, name: call.name, args: call.args });
+      const fail = (type: string, msg: string): ToolResult => {
+        if (stats) stats.toolErrors++;
+        markError(span, type, msg);
+        span.setAttributes(contentAttrs({ "gen_ai.tool.call.result": msg, "output.value": msg }));
+        this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: false, result: msg });
+        return { id: call.id, name: call.name, content: [{ type: "text", text: msg }], isError: true };
+      };
+      const def = byName.get(call.name);
+      if (!def) return fail("unknown_tool", `Unknown tool ${call.name}. Available: ${[...byName.keys()].join(", ")}`);
+      let raw: unknown;
+      try {
+        raw = call.args.trim() ? JSON.parse(call.args) : {};
+      } catch {
+        return fail("invalid_json", `Invalid JSON arguments: ${call.args.slice(0, 500)}`);
+      }
+      const parsed = z.object(def.input).safeParse(raw);
+      if (!parsed.success) return fail("invalid_arguments", `Invalid arguments: ${z.prettifyError(parsed.error)}`);
+      try {
+        const out = await def.run(parsed.data, ctx);
+        const text = clip(out.text, MAX_TOOL_TEXT, "narrow the request");
+        span.setAttributes({
+          "lfx.tool.result_chars": out.text.length,
+          "lfx.tool.truncated": out.text.length > MAX_TOOL_TEXT,
+          "lfx.tool.image": !!out.image,
+          ...contentAttrs({ "gen_ai.tool.call.result": text, "output.value": text }),
+        });
+        this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: true, result: text.slice(0, 4000), drawing: out.drawing });
+        const content: Part[] = [{ type: "text", text }];
+        if (out.image) content.push({ type: "image", data: out.image.data, mime: out.image.mime });
+        return { id: call.id, name: call.name, content };
+      } catch (e) {
+        return fail("tool_error", e instanceof CodeError ? e.message : `Error: ${(e as Error).message}`);
+      }
+    });
   }
 
   private async runClaudeCode(
@@ -449,6 +894,18 @@ export class Assistant {
   ): Promise<string | undefined> {
     const bin = findClaude();
     if (!bin) throw new AssistantError("Claude Code (`claude`) was not found. Install it, or set LFX_CLAUDE_BIN to its path.");
+    const stats = c.turn!;
+    // Claude Code reports its model calls and tool calls on stdout; spans are built from those.
+    // Its drawing tools run in the `lfx mcp` child, which reports them into this trace itself.
+    const parent = activeContext();
+    let chat: Span | undefined;
+    const tools = new Map<string, Span>();
+    // Turns this session ran on other endpoints are in `messages` but not in Claude Code's session.
+    const prompt = (sessionId?: string) => {
+      const missed = transcript(sessionId ? c.messages.slice(c.claudeSeen ?? c.messages.length) : c.messages);
+      const earlier = missed ? `<earlier_conversation>\n${missed}\n</earlier_conversation>\n\n` : "";
+      return `${earlier}${contextBlock}\n\n${req.text}`;
+    };
     const run = (sessionId?: string) =>
       runClaudeCode(
         {
@@ -458,15 +915,48 @@ export class Assistant {
           effort: ep.effort,
           sessionId,
           systemPrompt: SYSTEM({ vision: true, code, mermaidOnly: false, claudeCode: true }),
-          mcpEnv: this.d.mcpEnv,
+          mcpEnv: { ...this.d.mcpEnv, ...traceEnv() },
           codeAccess: code,
           signal,
         },
-        `${contextBlock}\n\n${req.text}`,
+        prompt(sessionId),
         (ev) => {
-          if (ev.type === "text" || ev.type === "reasoning") this.push(c, { type: "delta", id: turnId, part: ev.type, text: ev.text });
-          else if (ev.type === "tool-start") this.push(c, { type: "tool-start", id: turnId, callId: ev.callId, name: ev.name, args: ev.args });
-          else this.push(c, { type: "tool-end", id: turnId, callId: ev.callId, ok: ev.ok, result: ev.result });
+          if (ev.type === "text" || ev.type === "reasoning") {
+            if (ev.type === "text") stats.reply += ev.text;
+            this.push(c, { type: "delta", id: turnId, part: ev.type, text: ev.text });
+          } else if (ev.type === "model-start") {
+            chat?.end();
+            stats.steps++;
+            chat = startSpan(
+              `chat ${ev.model ?? modelOf(ep) ?? "claude"}`,
+              { "gen_ai.operation.name": "chat", "openinference.span.kind": "LLM", ...endpointAttrs(ep), "gen_ai.response.model": ev.model, "gen_ai.response.id": ev.id, "lfx.step": stats.steps - 1 },
+              { kind: SpanKind.CLIENT, parent },
+            );
+          } else if (ev.type === "model-end") {
+            addUsage(stats, ev.usage);
+            chat?.setAttributes({ ...usageAttrs(ev.usage), "gen_ai.response.finish_reasons": ev.stop ? [ev.stop] : undefined });
+            chat?.end();
+            chat = undefined;
+          } else if (ev.type === "result") {
+            Object.assign(stats.attrs, { "lfx.claude_code.cost_usd": ev.costUsd, "lfx.claude_code.turns": ev.turns, "lfx.claude_code.api_ms": ev.apiMs });
+          } else if (ev.type === "tool-start") {
+            stats.toolCalls++;
+            if (!ev.mcp) {
+              const attrs = { "gen_ai.operation.name": "execute_tool", "openinference.span.kind": "TOOL", "gen_ai.tool.name": ev.name, "tool.name": ev.name, "gen_ai.tool.call.id": ev.callId };
+              tools.set(ev.callId, startSpan(`execute_tool ${ev.name}`, { ...attrs, ...contentAttrs({ "gen_ai.tool.call.arguments": ev.args, "input.value": ev.args }) }, { parent }));
+            }
+            this.push(c, { type: "tool-start", id: turnId, callId: ev.callId, name: ev.name, args: ev.args });
+          } else {
+            if (!ev.ok) stats.toolErrors++;
+            const span = tools.get(ev.callId);
+            if (span) {
+              if (!ev.ok) markError(span, "tool_error", ev.result);
+              span.setAttributes(contentAttrs({ "gen_ai.tool.call.result": ev.result, "output.value": ev.result }));
+              span.end();
+              tools.delete(ev.callId);
+            }
+            this.push(c, { type: "tool-end", id: turnId, callId: ev.callId, ok: ev.ok, result: ev.result });
+          }
         },
       );
     let r = await run(c.claudeSession);
@@ -475,6 +965,13 @@ export class Assistant {
       r = await run();
     }
     if (r.sessionId) c.claudeSession = r.sessionId;
+    // Keep the provider-neutral history complete, so the session can switch to another endpoint.
+    c.messages.push({ role: "user", content: [{ type: "text", text: `${contextBlock}\n\n${req.text}` }] });
+    if (stats.reply) c.messages.push({ role: "assistant", text: stats.reply, toolCalls: [] });
+    c.claudeSeen = c.messages.length;
+    // Calls cut short by a stop or a crash.
+    chat?.end();
+    for (const span of tools.values()) span.end();
     return r.error;
   }
 }

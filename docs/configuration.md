@@ -11,9 +11,12 @@
 | `LFX_PROJECT_ROOT` | MCP root, `$CLAUDE_PROJECT_DIR`, or cwd | Project root for the MCP server (same as `lfx mcp --root`) |
 | `LFX_LOCK_ROOTS` | unset | `1` refuses registration of extra roots |
 | `LFX_NO_BROWSER` | unset | `1` prints links instead of opening a browser |
+| `LFX_IDLE_EXIT_MIN` | `30` when started on demand | The daemon stops after this many minutes with no editor open, no request and no reply in progress. Unset for `lfx serve` |
+| `LFX_PARENT_PID` | set by the macOS app | The daemon stops when this process exits |
 | `LFX_CLAUDE_BIN` | `claude` on `PATH` | Claude Code binary for the assistant |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | unset | Used when an endpoint for that service has no stored key |
 | `LFX_HOST`, `LFX_ALLOWED_HOSTS` | `127.0.0.1` | Bind address and extra allowed `Host` headers, for containers only |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `LFX_TRACE_FILE` | unset | Send traces of the assistant to an OTLP receiver or a file; see [Tracing](tracing.md) |
 
 ## ai.json
 

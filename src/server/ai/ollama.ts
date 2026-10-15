@@ -91,6 +91,7 @@ export class OllamaProvider implements Provider {
 
     let text = "";
     let doneReason: string | undefined;
+    let final: any;
     const toolCalls: ToolCall[] = [];
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -117,7 +118,10 @@ export class OllamaProvider implements Provider {
           args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
         });
       }
-      if (chunk.done) doneReason = chunk.done_reason;
+      if (chunk.done) {
+        doneReason = chunk.done_reason;
+        final = chunk;
+      }
     };
     try {
       while (!req.signal.aborted) {
@@ -136,7 +140,20 @@ export class OllamaProvider implements Provider {
       reader.cancel().catch(() => {});
     }
     const stop = doneReason === "length" ? "length" : toolCalls.length ? "tool" : "end";
-    return { text, toolCalls, stop };
+    // Ollama reports durations in nanoseconds on the final chunk.
+    const timings: Record<string, number> = {};
+    for (const [k, f] of [["load", "load_duration"], ["prompt", "prompt_eval_duration"], ["generate", "eval_duration"], ["total", "total_duration"]]) {
+      if (typeof final?.[f] === "number") timings[k] = Math.round(final[f] / 1e6);
+    }
+    return {
+      text,
+      toolCalls,
+      stop,
+      usage: final?.eval_count !== undefined ? { input: final.prompt_eval_count ?? 0, output: final.eval_count } : undefined,
+      model: final?.model,
+      finish: doneReason,
+      timings,
+    };
   }
 }
 

@@ -561,6 +561,52 @@ export function bounds(els: El[]): { minX: number; minY: number; maxX: number; m
   return { minX, minY, maxX, maxY };
 }
 
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The part of a scene to render for a close-up. `ids` brings along each element's label,
+ * the rest of its group, a frame's children, and arrows bound to any of those (with labels); `region` takes every
+ * element whose bounds overlap it. Scene order is kept so stacking doesn't change.
+ */
+export function selectForRender(els: El[], o: { ids?: string[]; region?: Region }): { elements: El[]; missing: string[] } {
+  const ls = live(els);
+  const byId = new Map(ls.map((e) => [e.id, e]));
+  const keep = new Set<string>();
+  const missing: string[] = [];
+  for (const id of o.ids ?? []) {
+    const e = byId.get(id);
+    if (!e) missing.push(id);
+    // A selected label stands for its container.
+    else keep.add(e.containerId && byId.has(e.containerId) ? e.containerId : id);
+  }
+  if (o.ids?.length) {
+    // Whole groups (library shapes are groups), then frame children, then arrows touching any of it.
+    const groups = new Set([...keep].map((id) => byId.get(id)!.groupIds?.at(-1)).filter(Boolean));
+    for (const e of ls) if (groups.has(e.groupIds?.at(-1))) keep.add(e.id);
+    const frames = new Set(keep);
+    for (const e of ls) if (e.frameId && frames.has(e.frameId)) keep.add(e.id);
+    const roots = new Set(keep);
+    for (const e of ls) {
+      if (LINEAR.has(e.type) && (roots.has(e.startBinding?.elementId) || roots.has(e.endBinding?.elementId))) keep.add(e.id);
+    }
+  }
+  if (o.region) {
+    const { x, y, width, height } = o.region;
+    for (const e of ls) {
+      const b = bounds([e]);
+      if (b && b.maxX >= x && b.minX <= x + width && b.maxY >= y && b.minY <= y + height) keep.add(e.id);
+    }
+  }
+  // Labels follow their containers (shapes and arrows alike).
+  for (const e of ls) if (e.containerId && keep.has(e.containerId)) keep.add(e.id);
+  return { elements: ls.filter((e) => keep.has(e.id)), missing };
+}
+
 // ---------------------------------------------------------------------------
 // Updates and deletes
 // ---------------------------------------------------------------------------

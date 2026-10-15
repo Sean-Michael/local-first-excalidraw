@@ -42,11 +42,27 @@ export interface TurnRequest {
   signal: AbortSignal;
 }
 
+/** Token counts for one model call. `input` includes cached tokens. */
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
 export interface TurnResult {
   text: string;
   toolCalls: ToolCall[];
   stop: "end" | "tool" | "length" | "refusal";
   native?: { kind: string; content: unknown };
+  /** What the server reported, when it did. */
+  usage?: Usage;
+  model?: string;
+  responseId?: string;
+  /** The server's raw stop reason. */
+  finish?: string;
+  /** Server-side timings in milliseconds (Ollama reports load, prompt and generation time). */
+  timings?: Record<string, number>;
 }
 
 export interface Provider {

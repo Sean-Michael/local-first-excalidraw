@@ -63,7 +63,7 @@ final class AppModel {
 
     func shutdown() {
         pollTask?.cancel()
-        if !UserDefaults.standard.bool(forKey: Prefs.keepDaemonRunning) { daemon.stopIfOwned() }
+        if !UserDefaults.standard.bool(forKey: Prefs.keepDaemonRunning) { daemon.stop() }
     }
 
     /// Agents and other editors create drawings too, so keep the sidebar current while the app is in front.

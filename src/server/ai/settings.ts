@@ -154,6 +154,13 @@ export class SettingsStore {
     return data.endpoints.find((e) => e.id === data.active) ?? data.endpoints[0];
   }
 
+  /** The endpoint a chat session picked, or the default one if it picked none or it was removed. */
+  endpoint(id: string | undefined): Endpoint | undefined {
+    const data = this.get();
+    if (!data.enabled) return undefined;
+    return (id && data.endpoints.find((e) => e.id === id)) || this.active();
+  }
+
   public(claudeCode: { available: boolean; path?: string }): PublicSettings {
     const data = this.get();
     return {

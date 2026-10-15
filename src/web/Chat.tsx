@@ -3,6 +3,7 @@ import {
   type AssistantItem,
   applyChatEvent,
   type ChatItem,
+  type ChatSessionInfo,
   endpointLabel,
   type Mention,
   type PublicSettings,
@@ -136,6 +137,75 @@ function AssistantTurn({ item, onRevert }: { item: AssistantItem; onRevert: () =
   );
 }
 
+function when(t: number): string {
+  const d = new Date(t);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const days = Math.round((now.getTime() - t) / 86_400_000);
+  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+}
+
+function SessionList({
+  sessions,
+  current,
+  endpoints,
+  onOpen,
+  onDelete,
+}: {
+  sessions: ChatSessionInfo[];
+  current: string;
+  endpoints: PublicSettings["endpoints"];
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const saved = sessions.filter((s) => s.messages > 0);
+  if (!saved.length) {
+    return (
+      <div className="lfx-chat-log">
+        <div className="lfx-empty-chat">
+          <p className="lfx-empty-title">No past chats</p>
+          <p>Chats about this drawing are kept here, so you can come back to them.</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <ul className="lfx-chat-log lfx-sessions">
+      {saved.map((s) => {
+        const ep = endpoints.find((e) => e.id === s.endpoint);
+        return (
+          <li key={s.id} className={s.id === current ? "lfx-sel" : ""}>
+            <button type="button" className="lfx-session" onClick={() => onOpen(s.id)}>
+              <span className="lfx-session-title">
+                {s.busy && <span className="lfx-spinner" aria-label="Working" />}
+                {s.title || "Untitled chat"}
+              </span>
+              <span className="lfx-muted">
+                {[when(s.updated), `${s.messages} message${s.messages === 1 ? "" : "s"}`, ep ? (ep.model ? `${ep.name} · ${ep.model}` : ep.name) : ""].filter(Boolean).join(" · ")}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="lfx-icon"
+              title={s.busy ? "Stop this chat's reply first" : "Delete chat"}
+              aria-label={`Delete ${s.title || "chat"}`}
+              disabled={s.busy}
+              onClick={() => {
+                if (confirm(`Delete "${s.title || "this chat"}"? This can't be undone.`)) onDelete(s.id);
+              }}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden>
+                <path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" />
+              </svg>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 const STARTERS = [
   "Draw the architecture of this project",
   "Tidy up the selected items and align them",
@@ -157,8 +227,10 @@ export function Chat({
   onClose: () => void;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
+  const [session, setSession] = useState("");
+  const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
-  const [view, setView] = useState<"chat" | "settings" | "shapes">("chat");
+  const [view, setView] = useState<"chat" | "history" | "settings" | "shapes">("chat");
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<Suggestion[]>([]);
   const [useSelection, setUseSelection] = useState(true);
@@ -170,7 +242,14 @@ export function Chat({
   const stick = useRef(true);
 
   const busy = pending || items.some((i) => i.kind === "assistant" && i.status === "running");
-  const active = settings?.enabled ? settings.endpoints.find((e) => e.id === settings.active) : undefined;
+  // One reply at a time per drawing: another chat's reply blocks sending here.
+  const otherBusy = sessions.find((s) => s.busy && s.id !== session);
+  const pinned = sessions.find((s) => s.id === session)?.endpoint;
+  const active = settings?.enabled
+    ? (settings.endpoints.find((e) => e.id === pinned) ?? settings.endpoints.find((e) => e.id === settings.active) ?? settings.endpoints[0])
+    : undefined;
+  // Events are tagged with their session; only the one shown here applies to the log.
+  const sessionRef = useRef("");
 
   useEffect(() => {
     api<PublicSettings>("GET", "/api/ai/settings").then(setSettings, (e: Error) => setError(e.message));
@@ -180,8 +259,22 @@ export function Chat({
     () =>
       bridge.subscribe((m) => {
         if (m.t === "chat") {
-          setItems((prev) => applyChatEvent(prev, m.ev));
-          if (m.ev.type === "user" || m.ev.type === "history") setPending(false);
+          const ev = m.ev;
+          if (ev.type === "history") {
+            sessionRef.current = ev.session;
+            setSession(ev.session);
+            setSessions(ev.sessions);
+            setItems(ev.items);
+            setPending(false);
+            return;
+          }
+          if (ev.type === "sessions") {
+            setSessions(ev.sessions);
+            return;
+          }
+          if (m.session !== sessionRef.current) return;
+          setItems((prev) => applyChatEvent(prev, ev));
+          if (ev.type === "user") setPending(false);
         } else if (m.t === "chat-error") {
           setPending(false);
           setError(m.message);
@@ -238,7 +331,7 @@ export function Chat({
   const submit = useCallback(
     async (value = text) => {
       const body = value.trim();
-      if (!body || busy) return;
+      if (!body || busy || otherBusy) return;
       setError(null);
       setPending(true);
       const selection = useSelection ? bridge.selection() : [];
@@ -247,6 +340,7 @@ export function Chat({
       bridge.send({
         t: "chat-send",
         path,
+        session,
         text: body,
         selection,
         mentions: mentions.map((m) => ({ kind: m.kind, path: m.path })),
@@ -256,7 +350,7 @@ export function Chat({
       setText("");
       setMentions([]);
     },
-    [text, busy, useSelection, bridge, active, mentions, path],
+    [text, busy, otherBusy, useSelection, bridge, active, mentions, path, session],
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -292,15 +386,18 @@ export function Chat({
     <aside className="lfx-chat" aria-label="Assistant">
       <header className="lfx-chat-head">
         <div className="lfx-chat-title">
-          <strong>{view === "shapes" ? "Shapes" : view === "settings" ? "Assistant Settings" : "Assistant"}</strong>
+          <strong>{view === "shapes" ? "Shapes" : view === "settings" ? "Assistant Settings" : view === "history" ? "Chats" : "Assistant"}</strong>
           {configured && view === "chat" && (
             <select
               className="lfx-endpoint"
               value={active!.id}
-              title="Where requests go"
+              title="Where this chat's requests go"
               onChange={async (e) => {
-                const s = await api<PublicSettings>("PUT", "/api/ai/settings", { active: e.target.value });
-                setSettings(s);
+                const id = e.target.value;
+                // This chat switches; new chats start with the last model picked.
+                bridge.send({ t: "chat-endpoint", session, endpoint: id });
+                setSessions((list) => list.map((s) => (s.id === session ? { ...s, endpoint: id } : s)));
+                setSettings(await api<PublicSettings>("PUT", "/api/ai/settings", { active: id }));
               }}
             >
               {settings!.endpoints.map((ep) => (
@@ -312,13 +409,34 @@ export function Chat({
           )}
         </div>
         <div className="lfx-chat-actions">
-          {view === "chat" && items.length > 0 && (
-            <button type="button" className="lfx-icon" title="New chat" aria-label="New chat" disabled={busy} onClick={() => bridge.send({ t: "chat-reset" })}>
+          {(view === "history" || (view === "chat" && items.length > 0)) && (
+            <button
+              type="button"
+              className="lfx-icon"
+              title="New chat"
+              aria-label="New chat"
+              onClick={() => {
+                bridge.send({ t: "chat-new" });
+                setView("chat");
+              }}
+            >
               <svg viewBox="0 0 20 20" aria-hidden>
                 <path d="M10 4v12M4 10h12" />
               </svg>
             </button>
           )}
+          <button
+            type="button"
+            className={`lfx-icon${view === "history" ? " lfx-on" : ""}`}
+            title="Past chats"
+            aria-label="Past chats"
+            onClick={() => setView(view === "history" ? "chat" : "history")}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden>
+              <circle cx="10" cy="10" r="7" />
+              <path d="M10 6v4l2.5 2.5" />
+            </svg>
+          </button>
           <button
             type="button"
             className={`lfx-icon${view === "shapes" ? " lfx-on" : ""}`}
@@ -355,6 +473,17 @@ export function Chat({
 
       {view === "shapes" ? (
         <Shapes path={path} dark={dark} onAddToCanvas={bridge.addToLibrary} />
+      ) : view === "history" ? (
+        <SessionList
+          sessions={sessions}
+          current={session}
+          endpoints={settings?.endpoints ?? []}
+          onOpen={(id) => {
+            if (id !== session) bridge.send({ t: "chat-open", session: id });
+            setView("chat");
+          }}
+          onDelete={(id) => bridge.send({ t: "chat-delete", session: id })}
+        />
       ) : view === "settings" && settings ? (
         <ChatSettings settings={settings} onSaved={setSettings} onClose={() => setView("chat")} />
       ) : (
@@ -384,7 +513,7 @@ export function Chat({
                 <p>Select items on the canvas to ask about them, or type @ to mention a file or another drawing.</p>
                 <div className="lfx-starters">
                   {STARTERS.map((s) => (
-                    <button type="button" key={s} onClick={() => submit(s)} disabled={busy}>
+                    <button type="button" key={s} onClick={() => submit(s)} disabled={busy || !!otherBusy}>
                       {s}
                     </button>
                   ))}
@@ -407,11 +536,20 @@ export function Chat({
                     )}
                   </div>
                 ) : (
-                  <AssistantTurn key={it.id} item={it} onRevert={() => bridge.send({ t: "chat-revert", id: it.id })} />
+                  <AssistantTurn key={it.id} item={it} onRevert={() => bridge.send({ t: "chat-revert", session, id: it.id })} />
                 ),
               )
             )}
           </div>
+
+          {otherBusy && !busy && (
+            <p className="lfx-chat-note">
+              Another chat on this drawing is working ({otherBusy.title || "New chat"}).{" "}
+              <button type="button" className="lfx-link" onClick={() => bridge.send({ t: "chat-open", session: otherBusy.id })}>
+                Show it
+              </button>
+            </p>
+          )}
 
           {error && (
             <p className="lfx-chat-error" role="alert" onClick={() => setError(null)}>
@@ -476,11 +614,11 @@ export function Chat({
             <div className="lfx-composer-foot">
               <span className="lfx-muted">{active ? `→ ${endpointLabel(active)}` : ""}</span>
               {busy ? (
-                <button type="button" className="lfx-btn" onClick={() => bridge.send({ t: "chat-stop" })}>
+                <button type="button" className="lfx-btn" onClick={() => bridge.send({ t: "chat-stop", session })}>
                   Stop
                 </button>
               ) : (
-                <button type="button" className="lfx-btn lfx-primary" disabled={!configured || !text.trim()} onClick={() => submit()}>
+                <button type="button" className="lfx-btn lfx-primary" disabled={!configured || !text.trim() || !!otherBusy} onClick={() => submit()}>
                   Send
                 </button>
               )}

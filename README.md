@@ -10,7 +10,7 @@ The Excalidraw editor running entirely on your machine, with a drawing assistant
 - **Live in both directions.** An agent's edit shows up in your open tab immediately. Your edits are saved within about 250 ms. A change on disk (an editor, `git checkout`) updates the tab too.
 - **An assistant that reads your code.** Ask for a diagram of part of the project and it searches and reads the repository (read-only), then draws with real library shapes. Select items to ask about just those. It works with Ollama, LM Studio, llama.cpp, any OpenAI-compatible server, the Anthropic API, or your local Claude Code login.
 - **Tools for coding agents.** Claude Code, Cursor, VS Code and other MCP clients get the same tools the assistant uses: graph to auto-laid-out diagram, Mermaid to Excalidraw, library shapes, bound arrows, plus a text description and a PNG render so they can check their work.
-- **No network by default.** No CDN, telemetry, share links or collaboration server. The page can only talk to the local daemon, which listens on `127.0.0.1`.
+- **No network by default.** No CDN, telemetry, share links or collaboration server. [Tracing](docs/tracing.md) is opt-in and meant for a receiver on your machine. The page can only talk to the local daemon, which listens on `127.0.0.1`.
 
 ## Quick start
 
@@ -28,9 +28,21 @@ brew trust sean-michael/local-first-excalidraw
 brew install --cask local-first-excalidraw
 ```
 
-Open **Local Excalidraw** from Applications. You get a sidebar of drawings, native open and save panels, and `.excalidraw` files open from Finder. The app reuses a daemon that's already running and otherwise starts its own, which it stops on quit unless you turn on **Keep the daemon running after quitting** in Settings. If macOS blocks the first launch (releases before 0.1.1 aren't notarized), open **System Settings → Privacy & Security** and click **Open Anyway**.
+Open **Local Excalidraw** from Applications. You get a sidebar of drawings, native open and save panels, and `.excalidraw` files open from Finder. The app reuses a daemon that's already running and otherwise starts its own. Quitting the app (or a crash) stops the daemon unless you turn on **Keep the daemon running after quitting** in Settings; a daemon started on demand by `lfx` or a coding agent stops itself after 30 idle minutes. If macOS blocks the first launch (releases before 0.1.1 aren't notarized), open **System Settings → Privacy & Security** and click **Open Anyway**.
 
 The cask also puts `lfx` on your PATH, so the agent setup below works without cloning the repo.
+
+To update, upgrade the cask. `brew update` alone only refreshes the tap's metadata; it doesn't install anything.
+
+```bash
+brew update && brew upgrade --cask local-first-excalidraw
+```
+
+Homebrew quits the app before replacing it. A daemon that's still running (kept after quitting, or started by an agent) keeps serving the old version until it stops, so stop it and the next client starts the new one:
+
+```bash
+lfx stop
+```
 
 ### From source
 
@@ -89,6 +101,7 @@ This diagram was drawn with the project's own MCP tools and is a normal drawing:
 - [About the architecture](docs/architecture.md): components, the assistant's loop, concurrent editing
 - [Security model](docs/security.md): threats considered, defences, and the egress-isolated Docker setup
 - [Configuration](docs/configuration.md): environment variables and `ai.json`
+- [Tracing](docs/tracing.md): OpenTelemetry traces of the assistant's model calls, tools and edits
 - [Development](docs/development.md): building, testing, the macOS app, and releases
 
 The editor is the official [`@excalidraw/excalidraw`](https://github.com/excalidraw/excalidraw) package (MIT), the same editor as excalidraw.com, without the hosted app's sharing and collaboration services. MIT licensed.

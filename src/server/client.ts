@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { baseUrl, type Config, ensureStateDir, loadOrCreateToken } from "./config.js";
+import { traceHeaders } from "./telemetry.js";
 
 export class DaemonError extends Error {
   constructor(
@@ -28,6 +29,7 @@ export class DaemonClient {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
+        ...traceHeaders(),
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -52,7 +54,7 @@ export class DaemonClient {
     }
   }
 
-  /** Starts the daemon in the background if it isn't already running. */
+  /** Starts the daemon in the background if it isn't already running. It stops itself once idle. */
   async ensure(): Promise<void> {
     if (await this.healthy()) return;
     if (process.env.LFX_URL) throw new Error(`Daemon at ${this.url} is not reachable`);
@@ -62,7 +64,7 @@ export class DaemonClient {
     const child = spawn(process.execPath, [cli, "serve"], {
       detached: true,
       stdio: ["ignore", log, log],
-      env: process.env,
+      env: { LFX_IDLE_EXIT_MIN: "30", ...process.env },
     });
     child.unref();
     for (let i = 0; i < 40; i++) {

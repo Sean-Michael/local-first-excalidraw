@@ -26,6 +26,10 @@ Editor code and fonts are bundled. The build strips Excalidraw's CDN fallback an
 
 Links in Excalidraw's Help dialog and the library catalog open external sites, but only when you click them. Installing a library from the catalog is the only download the app makes.
 
+## Tracing
+
+[Tracing](tracing.md) is off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT` or `LFX_TRACE_FILE` in the daemon's environment; the page can't turn it on. Spans hold counts, timings and tool names by default. Prompts, replies, file contents and tool results are recorded only with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, so send traces only to a receiver you trust, ideally on your machine.
+
 ## Assistant
 
 The assistant is off by default. Model requests come from the daemon, never the page. API keys are write-only from the page, and changing an endpoint's URL drops its stored key so a key can't be redirected to another host.
@@ -36,7 +40,7 @@ Project-file tools are read-only, stay inside the drawing's git repository, skip
 
 ## Supply chain
 
-Dependencies are pinned to exact versions and `.npmrc` sets `ignore-scripts=true`. Browser-only packages are devDependencies, so the runtime installs four packages: `@modelcontextprotocol/sdk`, `ws`, `zod` and `@anthropic-ai/sdk` (used only with the Anthropic API endpoint).
+Dependencies are pinned to exact versions and `.npmrc` sets `ignore-scripts=true`. Browser-only packages are devDependencies, so the runtime installs `@modelcontextprotocol/sdk`, `ws`, `zod`, `@anthropic-ai/sdk` (used only with the Anthropic API endpoint) and four OpenTelemetry packages (they export nothing unless tracing is on).
 
 ## Egress-isolated Docker
 

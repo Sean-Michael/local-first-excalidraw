@@ -49,6 +49,7 @@ import {
   SECURITY_HEADERS,
 } from "./security.js";
 import { DocStore, listDrawings, type SceneChange } from "./store.js";
+import { contextFromHeaders, runIn, shutdownTelemetry, withSpan } from "./telemetry.js";
 
 const MAX_BODY = 60 * 1024 * 1024;
 const SESSION_COOKIE = "lfx_session";
@@ -165,7 +166,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     [...clients.values()].filter((c) => c.ws.readyState === c.ws.OPEN).sort((a, b) => b.lastActive - a.lastActive)[0];
 
   /** Ask a connected editor tab to do something only a real browser can (render, mermaid). */
-  const rpc = async (msg: Record<string, unknown>, waitMs: number): Promise<unknown> => {
+  const rpc = (msg: Record<string, unknown>, waitMs: number): Promise<unknown> =>
+    withSpan(`lfx.editor ${String(msg.t)}`, { "lfx.editor.request": String(msg.t), "lfx.editor.wait_ms": waitMs }, () => editorRpc(msg, waitMs));
+
+  const editorRpc = async (msg: Record<string, unknown>, waitMs: number): Promise<unknown> => {
     const c = await waitForClient(waitMs);
     if (!c) {
       throw new HttpError(409, "No editor is open. Open the drawing in the browser first (open_drawing / `lfx open`).", {
@@ -202,7 +206,27 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   // Drawings with an assistant turn in progress: their edits are tagged so the canvas can undo them.
   const agentPaths = new Set<string>();
 
-  const op = async (body: Record<string, unknown>) => {
+  /** One drawing operation, from the HTTP API (MCP agents) or the assistant's tools. */
+  const op = (body: Record<string, unknown>) =>
+    withSpan(`lfx.op ${String(body.op)}`, { "lfx.op": String(body.op) }, async (span) => {
+      const out = (await runOp(body)) as Record<string, unknown>;
+      const p = String(out.path ?? body.path);
+      let rel = path.basename(p);
+      try {
+        rel = path.relative(projectRootFor(p), p) || rel;
+      } catch {
+        // outside every root: keep the file name
+      }
+      span.setAttributes({
+        "lfx.drawing": rel,
+        "lfx.op.assistant": agentPaths.has(p),
+        "lfx.scene.rev": typeof out.rev === "number" ? out.rev : undefined,
+        "lfx.op.created": Array.isArray(out.created) ? out.created.length : undefined,
+      });
+      return out;
+    });
+
+  const runOp = async (body: Record<string, unknown>) => {
     const p = safe(body.path);
     const { scene } = store.get(p);
     const origin = agentPaths.has(p) ? "agent" : undefined;
@@ -406,8 +430,12 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     return allowed;
   };
 
-  const broadcastChat = (p: string, ev: ChatEvent) => {
-    for (const c of clients.values()) if (c.path === p) send(c, { t: "chat", path: p, ev });
+  const broadcastChat = (p: string, session: string | undefined, ev: ChatEvent) => {
+    for (const c of clients.values()) if (c.path === p) send(c, { t: "chat", path: p, session, ev });
+  };
+  const sendHistory = (c: Client, p: string) => {
+    const ev = assistant.history(p);
+    send(c, { t: "chat", path: p, session: ev.session, ev });
   };
 
   const assistant = new Assistant({
@@ -711,7 +739,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     if (pathname === "/api/shutdown" && method === "POST") {
       bearerOnly();
       json(res, 200, { ok: true });
-      setTimeout(() => process.exit(0), 50);
+      setTimeout(() => void shutdownTelemetry().finally(() => process.exit(0)), 50);
       return;
     }
     throw new HttpError(404, "Not found");
@@ -727,8 +755,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     throw new HttpError(403, "Directory is outside the allowed roots");
   };
 
+  // Anything that talks to the daemon keeps an idle daemon alive (see LFX_IDLE_EXIT_MIN below).
+  let lastActivity = Date.now();
+
   const server = http.createServer((req, res) => {
-    handle(req, res).catch((e: unknown) => {
+    lastActivity = Date.now();
+    // `lfx mcp` passes its tool span along, so the operations it asks for join that trace.
+    runIn(contextFromHeaders(req.headers), () => handle(req, res)).catch((e: unknown) => {
       if (res.headersSent) return res.end();
       if (e instanceof HttpError) return json(res, e.status, { error: e.message, ...e.extra });
       if (e instanceof SceneError || e instanceof PathError || e instanceof LibraryError) return json(res, 400, { error: e.message });
@@ -758,7 +791,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const c: Client = { id: crypto.randomUUID(), ws, lastActive: Date.now() };
       clients.set(c.id, c);
       ws.on("message", (raw) => {
-        c.lastActive = Date.now();
+        c.lastActive = lastActivity = Date.now();
         let msg: Record<string, unknown>;
         try {
           msg = JSON.parse(raw.toString());
@@ -787,7 +820,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         c.unwatch = store.watch(p);
         const doc = store.get(p);
         send(c, { t: "scene", path: p, rev: doc.rev, exists: doc.exists, scene: doc.scene });
-        send(c, { t: "chat", path: p, ev: { type: "history", ...assistant.history(p) } });
+        sendHistory(c, p);
         return;
       }
       case "chat-send": {
@@ -799,17 +832,24 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return;
       }
       case "chat-history":
-        if (c.path) send(c, { t: "chat", path: c.path, ev: { type: "history", ...assistant.history(c.path) } });
+        if (c.path) sendHistory(c, c.path);
         return;
       case "chat-stop":
-        if (c.path) assistant.stop(c.path);
+        if (c.path) assistant.stop(c.path, typeof msg.session === "string" ? msg.session : undefined);
         return;
-      case "chat-reset":
+      case "chat-new":
+      case "chat-open":
+      case "chat-delete":
+      case "chat-endpoint":
       case "chat-revert":
         if (!c.path) return;
         try {
-          if (msg.t === "chat-reset") assistant.reset(c.path);
-          else assistant.revert(c.path, String(msg.id));
+          const session = String(msg.session ?? "");
+          if (msg.t === "chat-new") assistant.openNew(c.path);
+          else if (msg.t === "chat-open") assistant.open(c.path, session);
+          else if (msg.t === "chat-delete") assistant.delete(c.path, session);
+          else if (msg.t === "chat-endpoint") assistant.setEndpoint(c.path, session, String(msg.endpoint ?? ""));
+          else assistant.revert(c.path, session || undefined, String(msg.id));
         } catch (e) {
           send(c, { t: "chat-error", message: (e as Error).message });
         }
@@ -850,5 +890,36 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     server.once("error", reject);
     server.listen(cfg.port, cfg.host, () => resolve());
   });
+
+  // ---- lifetime ------------------------------------------------------------------------------
+  const exit = (why: string) => {
+    console.error(`Stopping: ${why}.`);
+    void shutdownTelemetry().finally(() => process.exit(0));
+  };
+  // Started by the macOS app: go when it goes, even if it crashed or was force-quit.
+  const parent = Number(process.env.LFX_PARENT_PID) || 0;
+  if (parent) {
+    setInterval(() => {
+      if (!processAlive(parent)) exit(`parent process ${parent} exited`);
+    }, 1000).unref();
+  }
+  // Started on demand by the CLI or an agent: go once nothing has used it for a while.
+  const idleMin = Number(process.env.LFX_IDLE_EXIT_MIN) || 0;
+  if (idleMin > 0) {
+    setInterval(() => {
+      if (clients.size || assistant.busy() || Date.now() - lastActivity < idleMin * 60_000) return;
+      exit(`idle for ${idleMin} minutes`);
+    }, 30_000).unref();
+  }
   return server;
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: it exists but belongs to someone else.
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
 }

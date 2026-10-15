@@ -1,6 +1,7 @@
 /**
  * Chat transcript shared by the daemon and the web UI. The daemon owns the transcript and
- * streams events; every tab applies them with the same reducer, so they stay in step.
+ * streams events tagged with their session; every tab applies the events of the session it
+ * shows with the same reducer, so they stay in step.
  * Pure data, no I/O: imported by both the Node build and the Vite build.
  */
 
@@ -43,16 +44,33 @@ export interface AssistantItem {
 
 export type ChatItem = UserItem | AssistantItem;
 
+/** One conversation about a drawing. A drawing keeps every past session; one is open at a time. */
+export interface ChatSessionInfo {
+  id: string;
+  /** From the first message. */
+  title: string;
+  created: number;
+  updated: number;
+  /** Id of the endpoint this session talks to; unset means the default endpoint. */
+  endpoint?: string;
+  /** User messages so far. */
+  messages: number;
+  /** A reply is being written. */
+  busy: boolean;
+}
+
 export type ChatEvent =
-  | { type: "history"; items: ChatItem[]; busy: boolean }
+  /** The open session, sent on connect and whenever another session is opened. */
+  | { type: "history"; session: string; endpoint?: string; items: ChatItem[]; busy: boolean; sessions: ChatSessionInfo[] }
+  /** The drawing's session list changed (a title, a session starting or finishing a reply). */
+  | { type: "sessions"; sessions: ChatSessionInfo[] }
   | { type: "user"; item: UserItem }
   | { type: "turn-start"; id: string; endpoint: string }
   | { type: "delta"; id: string; part: "text" | "reasoning"; text: string }
   | { type: "tool-start"; id: string; callId: string; name: string; args: string }
   | { type: "tool-end"; id: string; callId: string; ok: boolean; result: string; drawing?: string }
   | { type: "turn-end"; id: string; status: AssistantItem["status"]; error?: string; revertable: boolean; changed: number }
-  | { type: "reverted"; id: string; restored: number; skipped: number }
-  | { type: "reset" };
+  | { type: "reverted"; id: string; restored: number; skipped: number };
 
 export interface Mention {
   kind: "file" | "drawing";
@@ -63,6 +81,8 @@ export interface Mention {
 /** What the page sends with a chat message. */
 export interface ChatRequest {
   path: string;
+  /** Session to continue; the drawing's open session when omitted. */
+  session?: string;
   text: string;
   selection: string[];
   mentions: Mention[];
@@ -103,8 +123,8 @@ export function applyChatEvent(items: ChatItem[], ev: ChatEvent): ChatItem[] {
   switch (ev.type) {
     case "history":
       return ev.items;
-    case "reset":
-      return [];
+    case "sessions":
+      return items;
     case "user":
       return [...items, ev.item];
     case "turn-start":

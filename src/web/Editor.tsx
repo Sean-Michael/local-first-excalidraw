@@ -248,7 +248,7 @@ export function Editor({ path }: { path: string }) {
           const isFirst = first;
           first = false;
           chain = chain.then(() => applyRemote(m.scene, isFirst, !!m.agent)).catch((e: Error) => setError(e.message));
-        } else if (m.t === "chat" || m.t === "chat-error") {
+        } else if ((m.t === "chat" && m.path === path) || m.t === "chat-error") {
           for (const fn of chatListeners.current) fn(m);
         } else if (m.t === "render") reply(m.id, render(m.scene, m.opts));
         else if (m.t === "mermaid") reply(m.id, mermaid(m.text));

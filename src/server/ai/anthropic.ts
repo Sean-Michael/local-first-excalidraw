@@ -116,7 +116,19 @@ export class AnthropicProvider implements Provider {
       .map((b) => ({ id: b.id as string, name: b.name as string, args: JSON.stringify(b.input ?? {}) }));
     const sr = final.stop_reason;
     const stop = sr === "max_tokens" ? "length" : sr === "refusal" ? "refusal" : sr === "tool_use" ? "tool" : "end";
-    return { text, toolCalls, stop, native: { kind: `anthropic:${model}`, content } };
+    const u = final.usage ?? {};
+    const cacheRead = u.cache_read_input_tokens ?? 0;
+    const cacheWrite = u.cache_creation_input_tokens ?? 0;
+    return {
+      text,
+      toolCalls,
+      stop,
+      native: { kind: `anthropic:${model}`, content },
+      usage: { input: (u.input_tokens ?? 0) + cacheRead + cacheWrite, output: u.output_tokens ?? 0, cacheRead, cacheWrite },
+      model: final.model,
+      responseId: final.id,
+      finish: sr ?? undefined,
+    };
   }
 }
 

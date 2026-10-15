@@ -54,11 +54,26 @@ final class Daemon: @unchecked Sendable {
         throw Failure(message: "The daemon failed to start. See \(logURL.path).\n\n\(logTail())")
     }
 
-    func stopIfOwned() {
-        guard let p = process, p.isRunning else { return }
-        p.terminate()
-        p.waitUntilExit()
-        process = nil
+    /// Stops the daemon, including one the CLI or an agent started that this app adopted.
+    /// Agents start it again on demand.
+    func stop() {
+        if let p = process, p.isRunning {
+            p.terminate()
+            p.waitUntilExit()
+            process = nil
+            return
+        }
+        guard let token else { return }
+        var req = URLRequest(url: apiBase.appending(path: "/api/shutdown"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 2
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data("{}".utf8)
+        // Called while the app terminates, so wait for the request instead of returning early.
+        let done = DispatchSemaphore(value: 0)
+        session.dataTask(with: req) { _, _, _ in done.signal() }.resume()
+        _ = done.wait(timeout: .now() + 2.5)
     }
 
     func healthy() async throws -> Bool {
@@ -90,6 +105,11 @@ final class Daemon: @unchecked Sendable {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = Runtime.searchPath
         env["LFX_NO_BROWSER"] = "1"
+        env.removeValue(forKey: "LFX_IDLE_EXIT_MIN")
+        // Unless the user wants it kept, the daemon exits with this app, even after a crash or force quit.
+        if !UserDefaults.standard.bool(forKey: Prefs.keepDaemonRunning) {
+            env["LFX_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        }
         p.environment = env
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = log

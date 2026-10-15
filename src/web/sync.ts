@@ -2,7 +2,7 @@ import type { ChatEvent } from "../shared/chat";
 
 export type ServerMsg =
   | { t: "scene"; path: string; rev: number; exists?: boolean; scene: SceneData; agent?: boolean }
-  | { t: "chat"; path: string; ev: ChatEvent }
+  | { t: "chat"; path: string; session?: string; ev: ChatEvent }
   | { t: "chat-error"; message: string }
   | { t: "render"; id: string; scene: SceneData; opts: RenderOpts }
   | { t: "mermaid"; id: string; text: string }

@@ -198,7 +198,7 @@ struct SettingsView: View {
         Form {
             Section {
                 Toggle("Keep the daemon running after quitting", isOn: $keepRunning)
-                Text("Agents start the daemon on demand either way. Keeping it running lets them render and export without the app open in a browser tab.")
+                Text("Off: quitting stops the daemon, whoever started it. Coding agents start it again when they need it, and it stops itself after 30 idle minutes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

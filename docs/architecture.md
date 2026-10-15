@@ -35,7 +35,7 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 | Providers | `src/server/ai/openai.ts`, `ollama.ts`, `anthropic.ts`, `claude-code.ts` | One streaming interface per endpoint kind |
 | AI settings | `src/server/ai/settings.ts` | `ai.json`, write-only keys, hot reload |
 | Editor | `src/web/Editor.tsx`, `sync.ts` | Excalidraw, scene sync, selection snapshots, undo integration |
-| Chat panel | `src/web/Chat.tsx`, `ChatSettings.tsx`, `Shapes.tsx` | Conversation, settings, shape libraries |
+| Chat panel | `src/web/Chat.tsx`, `ChatSettings.tsx`, `Shapes.tsx` | Chats and chat history, settings, shape libraries |
 
 ## How the assistant handles a message
 
@@ -47,7 +47,7 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 2. `Assistant.send` builds a context block: a compact description of the drawing, the selection, and the mentioned files and drawings. It snapshots the drawing so the turn can be reverted.
 3. `runLoop` calls the provider, streaming text and tool calls back to every tab showing the drawing. It runs at most 40 steps.
 4. `runTool` validates each call against the tool's schema and runs it. Drawing edits go through the same `op()` path as MCP edits, tagged as the assistant's so the canvas puts them on the undo stack.
-5. When the model stops calling tools, the turn ends and the conversation is saved per drawing.
+5. When the model stops calling tools, the turn ends and the chat session is saved under its drawing.
 
 Claude Code endpoints skip the loop. The daemon runs the `claude` CLI with read-only file tools and an MCP config pointing at `lfx mcp`, and relays its stream to the panel. Claude Code runs its own loop and edits the drawing through MCP.
 
@@ -67,4 +67,4 @@ If a drawing is deleted or moved on disk while open, the tab stops saving and of
 
 ## Why the daemon runs the assistant
 
-Running the model calls from the page would have been simpler, but it would mean relaxing the page's `connect-src 'self'` policy and handing API keys to the browser. With the loop in the daemon, the page stays locked to its own origin, keys stay in a 0600 file, and local servers like Ollama are reachable without CORS. It also lets every tab on a drawing see the same conversation, and lets the assistant reuse the tool registry and the document store unchanged.
+Running the model calls from the page would have been simpler, but it would mean relaxing the page's `connect-src 'self'` policy and handing API keys to the browser. With the loop in the daemon, the page stays locked to its own origin, keys stay in a 0600 file, and local servers like Ollama are reachable without CORS. It also lets every tab on a drawing see the same chat, and lets the assistant reuse the tool registry and the document store unchanged.

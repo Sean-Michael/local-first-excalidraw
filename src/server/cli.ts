@@ -4,6 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { DaemonClient, openInBrowser } from "./client.js";
 import { baseUrl, loadConfig, VERSION } from "./config.js";
+import { initTelemetry, shutdownTelemetry } from "./telemetry.js";
 
 const HELP = `lfx ${VERSION} - local-first Excalidraw
 
@@ -20,7 +21,18 @@ Usage:
 Environment:
   LFX_PORT (7467)  LFX_STATE_DIR (~/.local-first-excalidraw)  LFX_ROOTS (~/Excalidraw)
   LFX_DEFAULT_DIR (docs/diagrams)  LFX_NO_BROWSER=1  LFX_LOCK_ROOTS=1
+  LFX_IDLE_EXIT_MIN  stop the daemon after this many idle minutes (30 when started on demand)
+  LFX_PARENT_PID     stop the daemon when this process exits
+  Tracing: OTEL_EXPORTER_OTLP_ENDPOINT (http/protobuf)  LFX_TRACE_FILE (JSON lines)
+           OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true  (record prompts and replies)
 `;
+
+/** Flushes traces, then exits on SIGINT/SIGTERM. */
+function exitOnSignals() {
+  const stop = () => void shutdownTelemetry().finally(() => process.exit(0));
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+}
 
 function argValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -33,6 +45,7 @@ async function main() {
 
   switch (cmd) {
     case "serve": {
+      initTelemetry("local-first-excalidraw");
       const { startDaemon } = await import("./daemon.js");
       try {
         await startDaemon(cfg);
@@ -44,12 +57,11 @@ async function main() {
         throw e;
       }
       console.error(`local-first-excalidraw ${VERSION} listening on ${baseUrl(cfg)} (state: ${cfg.stateDir})`);
-      const stop = () => process.exit(0);
-      process.on("SIGINT", stop);
-      process.on("SIGTERM", stop);
+      exitOnSignals();
       return;
     }
     case "mcp": {
+      if (initTelemetry("local-first-excalidraw-mcp")) exitOnSignals();
       const { runMcp } = await import("./mcp.js");
       await runMcp(cfg, { root: argValue(args, "--root") });
       return;

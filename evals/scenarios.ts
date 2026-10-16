@@ -25,6 +25,8 @@ export interface EdgeSpec {
   to: Synonyms;
   /** Accept the arrow in either direction. */
   undirected?: boolean;
+  /** Also accept a path through up to this many intermediate elements (e.g. a decision node). Default 0. */
+  via?: number;
 }
 
 export interface Checks {

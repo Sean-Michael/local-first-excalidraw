@@ -6,7 +6,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type El, measureText } from "../src/server/scene.js";
-import type { Checks, Synonyms } from "./scenarios.js";
+import type { Checks, EdgeSpec, Synonyms } from "./scenarios.js";
 
 export interface SceneLike {
   elements: El[];
@@ -275,14 +275,7 @@ export function grade(input: GradeInput): Grade {
     add("forbidden-labels", found.length === 0, found.length ? `still present: ${found.join(", ")}` : "none present");
   }
   if (c.requiredEdges) {
-    const missing = c.requiredEdges.filter(
-      (e) =>
-        !m.edges.some(
-          (a) =>
-            (matches(a.from, e.from) && matches(a.to, e.to)) ||
-            ((e.undirected || a.bidirectional) && matches(a.from, e.to) && matches(a.to, e.from)),
-        ),
-    );
+    const missing = c.requiredEdges.filter((e) => !hasPath(m.edges, e));
     add(
       "required-edges",
       missing.length === 0,
@@ -361,4 +354,22 @@ export function grade(input: GradeInput): Grade {
 
   const passed = out.filter((x) => x.pass).length;
   return { pass: passed === out.length, score: out.length ? passed / out.length : 0, checks: out, metrics: m, baselineMetrics: base };
+}
+
+/** Whether an arrow (or, with `via`, a chain through up to that many other elements) joins the two ends. */
+function hasPath(edges: { from: string; to: string; bidirectional?: boolean }[], e: EdgeSpec): boolean {
+  const steps: [string, string][] = [];
+  for (const a of edges) {
+    steps.push([a.from, a.to]);
+    if (e.undirected || a.bidirectional) steps.push([a.to, a.from]);
+  }
+  let frontier = new Set(steps.filter(([f]) => matches(f, e.from)).map(([, t]) => t));
+  const seen = new Set(frontier);
+  for (let hop = 0; hop <= (e.via ?? 0); hop++) {
+    if ([...frontier].some((t) => matches(t, e.to))) return true;
+    const next = new Set<string>();
+    for (const [f, t] of steps) if (frontier.has(f) && !seen.has(t)) (next.add(t), seen.add(t));
+    frontier = next;
+  }
+  return false;
 }

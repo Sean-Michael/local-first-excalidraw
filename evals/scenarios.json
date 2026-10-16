@@ -373,8 +373,8 @@
         "requiredLabels": [["pending"], ["paid"], ["payment_failed", "payment failed", "paymentFailed"]],
         "forbiddenLabels": ["shipped", "cancelled", "canceled", "delivered"],
         "requiredEdges": [
-          { "from": ["pending", "charge", "createCharge", "paylode"], "to": ["paid"] },
-          { "from": ["pending", "charge", "createCharge", "paylode"], "to": ["payment_failed", "payment failed", "paymentFailed"] }
+          { "from": ["pending", "charge", "createCharge", "paylode"], "to": ["paid"], "via": 1 },
+          { "from": ["pending", "charge", "createCharge", "paylode"], "to": ["payment_failed", "payment failed", "paymentFailed"], "via": 1 }
         ],
         "minArrows": 2,
         "minBoundRatio": 0.9,

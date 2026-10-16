@@ -340,3 +340,15 @@ test("every scenario's fixture and patch exist, and each patch applies to the fi
     }
   }
 });
+
+test("required edges can allow a chain through intermediate elements", () => {
+  const graph: GraphSpec = {
+    nodes: [{ id: "p", label: "pending" }, { id: "c", label: "charge ok?", shape: "diamond" }, { id: "d", label: "paid" }],
+    edges: [{ from: "p", to: "c" }, { from: "c", to: "d" }],
+  };
+  const final = { elements: addSkeletons([], layoutGraph(graph)).elements };
+  const edges = (via?: number) =>
+    grade({ final, checks: { requiredEdges: [{ from: ["pending"], to: ["paid"], via }] }, ...noFiles }).checks.find((c) => c.name === "required-edges")?.pass;
+  assert.equal(edges(), false);
+  assert.equal(edges(1), true);
+});

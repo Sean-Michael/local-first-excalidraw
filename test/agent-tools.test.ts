@@ -97,6 +97,18 @@ test("setting frameId on a shape brings its label into the frame", () => {
   assert.equal(label.frameId, "f");
 });
 
+test("moving a shape keeps its label's measured size; new label text is measured again", () => {
+  const { elements } = addSkeletons([], [{ type: "rectangle", id: "s", x: 0, y: 0, width: 150, height: 65, label: { text: "turnstile-gateway", fontSize: 16 } }]);
+  // As the Mermaid converter or the editor leaves it: measured with the real font.
+  const measured = elements.map((e) => (e.containerId === "s" ? { ...e, width: 111, height: 20 } : e));
+  const moved = updateElements(measured, [{ id: "s", x: 300 }]);
+  const label = moved.find((e) => e.containerId === "s")!;
+  assert.equal(label.width, 111);
+  assert.equal(label.x, 300 + (150 - 111) / 2);
+  const renamed = updateElements(measured, [{ id: "s", x: 300, label: "turnstile-gateway-v2" }]);
+  assert.notEqual(renamed.find((e) => e.containerId === "s")!.width, 111);
+});
+
 test("restoreElements outranks the current copies", () => {
   const els = three();
   const changed = updateElements(els, [{ id: "a", x: 999 }]);

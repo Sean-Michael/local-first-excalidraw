@@ -281,9 +281,14 @@ function addBound(container: El, ref: { id: string; type: "text" | "arrow" }): E
   return { ...container, boundElements: [...existing, ref] };
 }
 
-/** Places a container's bound text at its centre. */
-export function centerLabel(container: El, text: El): El {
-  const m = measureText(text.text, text.fontSize, text.fontFamily);
+/**
+ * Places a container's bound text at its centre. With `keepSize` (the text didn't change, only
+ * its container moved or resized) a size measured earlier with real fonts, by the editor or the
+ * Mermaid converter, is kept rather than replaced by the rough estimate.
+ */
+export function centerLabel(container: El, text: El, opts: { keepSize?: boolean } = {}): El {
+  const est = measureText(text.text, text.fontSize, text.fontFamily);
+  const m = opts.keepSize && text.width > 0 && text.height > 0 ? { width: text.width, height: text.height } : est;
   const width = Math.min(m.width, Math.max(20, container.width - 20));
   if (LINEAR.has(container.type)) {
     const [mx, my] = linearMidpoint(container);
@@ -757,6 +762,8 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
   const extra: El[] = [];
   const moved = new Set<string>();
   const shifts: { el: El; dx: number; dy: number }[] = [];
+  // Labels given new text this call: their size must be estimated again.
+  const textChanged = new Set<string>();
 
   for (const u of updates) {
     const cur = all.get(u.id);
@@ -809,6 +816,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
       } else if (old && !old.isDeleted) {
         const spec = labelSpec(u.label);
         all.set(old.id, centerLabel(next, bump(old, { text: spec.text, originalText: spec.text, ...(spec.fontSize ? { fontSize: spec.fontSize } : {}) })));
+        textChanged.add(old.id);
       } else {
         const t = makeLabel(next, u.label);
         next = addBound(next, { id: t.id, type: "text" });
@@ -849,7 +857,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
     for (const b of el.boundElements ?? []) {
       const t = all.get(b.id);
       if (!t || t.isDeleted) continue;
-      if (b.type === "text") all.set(t.id, centerLabel(el, bump(t)));
+      if (b.type === "text") all.set(t.id, centerLabel(el, bump(t), { keepSize: !textChanged.has(t.id) }));
     }
   }
   for (const e of all.values()) {
@@ -861,7 +869,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
       all.set(e.id, routed);
       for (const b of routed.boundElements ?? []) {
         const lbl = all.get(b.id);
-        if (lbl && b.type === "text") all.set(lbl.id, centerLabel(routed, bump(lbl)));
+        if (lbl && b.type === "text") all.set(lbl.id, centerLabel(routed, bump(lbl), { keepSize: true }));
       }
     }
   }
@@ -927,7 +935,7 @@ export function connectArrow(existing: El[], arrowId: string, fromId: string, to
   all.set(arrowId, routed);
   for (const b of routed.boundElements ?? []) {
     const lbl = all.get(b.id);
-    if (lbl && b.type === "text" && !lbl.isDeleted) all.set(lbl.id, centerLabel(routed, bump(lbl)));
+    if (lbl && b.type === "text" && !lbl.isDeleted) all.set(lbl.id, centerLabel(routed, bump(lbl), { keepSize: true }));
   }
   return existing.map((e) => all.get(e.id)!);
 }

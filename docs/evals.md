@@ -92,7 +92,7 @@ The graders in `evals/grade.ts` are deterministic and read only the `.excalidraw
 | `links` | At least `minLinked` elements link to files in the project (relative, absolute, `file://` or `vscode://file/`, with an optional `#L12` or `:12`), and with `allExist`, none link anywhere else |
 | `improves` | The chosen metrics (overlaps, bound-arrow share, smallest font, overflow) are better than the baseline's, or already perfect |
 
-Text sizes are estimated with the same metrics the server uses for layout, not with real fonts, so `text-fit` can be off by a few pixels.
+`text-fit` uses a label's stored size when it was measured with real fonts (by the editor or the Mermaid converter). Labels the server made, and ones clamped to their container's width, are estimated with the metrics the server uses for layout, which run wide for the hand-drawn font, so `text-fit` errs towards reporting an overflow.
 
 ### LLM judge
 

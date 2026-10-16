@@ -7,7 +7,7 @@ import { DaemonClient, DaemonError, openInBrowser } from "./client.js";
 import { type Config, VERSION } from "./config.js";
 import { SERVER_INSTRUCTIONS } from "./guide.js";
 import { contentAttrs, contextFromEnv, markError, withSpan } from "./telemetry.js";
-import { drawingTools, type ToolContext, type ToolOutput } from "./tools.js";
+import { drawingTools, sharedCodeTools, type ToolContext, type ToolOutput } from "./tools.js";
 
 function toResult(out: ToolOutput): CallToolResult {
   const content: CallToolResult["content"] = [{ type: "text", text: out.text }];
@@ -123,7 +123,8 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
 
   // Started by the in-app assistant (through Claude Code), tool spans join the turn's trace.
   const parent = contextFromEnv();
-  for (const def of drawingTools({ currentDrawing: false })) {
+  // Plus the two code tools coding agents lack: a project map and a git change summary.
+  for (const def of [...drawingTools({ currentDrawing: false }), ...sharedCodeTools()]) {
     server.registerTool(
       def.name,
       {

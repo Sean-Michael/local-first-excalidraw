@@ -7,6 +7,8 @@ description: Draw and edit Excalidraw diagrams that live as .excalidraw files in
 
 Drawings are plain `.excalidraw` JSON files in the repo (default folder `docs/diagrams/`). A local daemon serves the real Excalidraw editor on `localhost`; when you change a drawing through the MCP tools the user's open tab updates instantly, and their edits are saved straight back to the file. Nothing is sent over the network.
 
+For architecture and design diagrams (C4, sequence, state, ER, deployment, data flow), the architecture-diagrams skill helps you pick the diagram type and level, and has recipes for each one.
+
 ## Choosing a tool
 
 | Goal | Tool |

@@ -161,6 +161,18 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   const pos = new Map<string, number>();
   const reindex = () => layers.forEach((l) => l.forEach((id, i) => pos.set(id, i)));
   reindex();
+  // Edge crossings between neighbouring layers for the current order: pairs of edges whose ends swap places.
+  const crossings = () => {
+    let n = 0;
+    for (const l of layers) {
+      const es: [number, number][] = [];
+      for (const id of l) for (const s of succs.get(id)!) es.push([pos.get(id)!, pos.get(s)!]);
+      for (let i = 0; i < es.length; i++) for (let j = i + 1; j < es.length; j++) if ((es[i][0] - es[j][0]) * (es[i][1] - es[j][1]) < 0) n++;
+    }
+    return n;
+  };
+  // A sweep can undo what the one before got right, so keep the order with the fewest crossings.
+  let best = { n: crossings(), layers: layers.map((l) => [...l]) };
   for (let iter = 0; iter < 6; iter++) {
     const down = iter % 2 === 0;
     const seq = down ? layers.slice(1) : layers.slice(0, -1).reverse();
@@ -184,7 +196,11 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
       });
       reindex();
     }
+    const n = crossings();
+    if (n < best.n) best = { n, layers: layers.map((l) => [...l]) };
   }
+  best.layers.forEach((l, i) => (layers[i] = l));
+  reindex();
 
   // Bands: every group (and the ungrouped nodes) gets its own stretch of the cross axis in all
   // layers, ordered by where its members ended up on average.

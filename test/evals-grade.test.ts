@@ -41,6 +41,37 @@ test("text fit trusts a label's measured width unless the server clamped it", ()
   // At the clamp width (container - 20) the estimate decides.
   const clamped = { ...real, width: 130, text: "turnstile-gateway-and-more" };
   assert.equal(textOverflow([box, clamped]).length, 1);
+  // The Mermaid converter's `alt` tag: 16 px of measured text in a 26 px box fits exactly.
+  const tag = el("tag", "rectangle", 64, 397, 26, 30, { groupIds: [], boundElements: [{ id: "alt", type: "text" }] });
+  const alt = el("alt", "text", 69, 402, 15.99, 20, { groupIds: [], containerId: "tag", text: "alt", fontSize: 16, fontFamily: 5 });
+  assert.deepEqual(textOverflow([tag, alt]), []);
+});
+
+/** Pairs of arrows whose paths cross, by their bound ends. */
+function arrowCrossings(els: El[]): string[] {
+  const segs = (a: El) => {
+    const pts = (a.points as number[][]).map(([x, y]) => [a.x + x, a.y + y]);
+    return pts.slice(1).map((p, i) => [pts[i], p]);
+  };
+  const cross = ([[x1, y1], [x2, y2]]: number[][], [[x3, y3], [x4, y4]]: number[][]) => {
+    const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+    if (Math.abs(d) < 1e-9) return false;
+    const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+    const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+    return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
+  };
+  const arrows = els.filter((e) => e.type === "arrow");
+  const out: string[] = [];
+  for (let i = 0; i < arrows.length; i++)
+    for (let j = i + 1; j < arrows.length; j++)
+      if (segs(arrows[i]).some((s) => segs(arrows[j]).some((t) => cross(s, t)))) out.push(`${arrows[i].startBinding?.elementId}->${arrows[i].endBinding?.elementId} x ${arrows[j].startBinding?.elementId}->${arrows[j].endBinding?.elementId}`);
+  return out;
+}
+
+test("the code-change scenarios' starting drawing has no crossing arrows", () => {
+  // keymaster-auth -> shopapp-pg used to cross ledger-orders -> postbox-mq, capping readability for every run.
+  const graph = data.graphs["shopapp-arch"] as GraphSpec;
+  assert.deepEqual(arrowCrossings(addSkeletons([], layoutGraph(graph)).elements), []);
 });
 
 test("required frames match frame names only", () => {

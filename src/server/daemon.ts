@@ -26,6 +26,8 @@ import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
 import {
   addSkeletons,
   bounds,
+  cleared,
+  connectArrow,
   deleteElements,
   describe,
   type El,
@@ -48,7 +50,7 @@ import {
   safeEqual,
   SECURITY_HEADERS,
 } from "./security.js";
-import { DocStore, listDrawings, type SceneChange } from "./store.js";
+import { DocStore, InvalidDrawingError, listDrawings, type SceneChange } from "./store.js";
 import { contextFromHeaders, runIn, shutdownTelemetry, withSpan } from "./telemetry.js";
 
 const MAX_BODY = 60 * 1024 * 1024;
@@ -93,7 +95,7 @@ type Auth = "bearer" | "session" | null;
 export async function startDaemon(cfg: Config): Promise<http.Server> {
   ensureStateDir(cfg);
   const token = loadOrCreateToken(cfg);
-  const store = new DocStore();
+  const store = new DocStore({ stateDir: cfg.stateDir });
 
   // ---- persisted state -------------------------------------------------------
   const rootsFile = path.join(cfg.stateDir, "roots.json");
@@ -228,6 +230,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
 
   const runOp = async (body: Record<string, unknown>) => {
     const p = safe(body.path);
+    // Overwriting is how an unreadable file (e.g. with merge conflict markers) is recovered.
+    if (body.op === "create" && body.overwrite) store.discardInvalid(p);
     const { scene } = store.get(p);
     const origin = agentPaths.has(p) ? "agent" : undefined;
     switch (body.op) {
@@ -238,9 +242,31 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       }
       case "create": {
         if (store.exists(p) && !body.overwrite) throw new HttpError(409, `${p} already exists (pass overwrite: true to replace it)`);
-        const { elements, created } = addSkeletons([], (body.elements as SkeletonEl[]) ?? []);
+        // Built over tombstones of the old content, so reused ids outrank it.
+        const { elements, created } = addSkeletons(cleared(scene.elements), (body.elements as SkeletonEl[]) ?? []);
         const r = store.apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
         return { path: p, rev: r.rev, created };
+      }
+      case "connect": {
+        // Re-bind an existing arrow, or draw a new one.
+        const id = typeof body.id === "string" ? body.id : undefined;
+        const from = String(body.from);
+        const to = String(body.to);
+        const existing = id ? live(scene.elements).find((e) => e.id === id) : undefined;
+        if (!existing) {
+          const arrow = { type: "arrow", id, start: { id: from }, end: { id: to }, label: body.label, strokeStyle: body.style ?? "solid", startArrowhead: body.bidirectional ? "arrow" : null };
+          const { elements, created } = addSkeletons(scene.elements, [arrow as SkeletonEl]);
+          const r = store.apply(p, { elements }, origin);
+          return { path: p, rev: r.rev, id: created[0], rebound: false };
+        }
+        let elements = connectArrow(scene.elements, existing.id, from, to);
+        const style: ElementUpdate = { id: existing.id };
+        if (typeof body.label === "string") style.label = body.label;
+        if (typeof body.style === "string") style.strokeStyle = body.style;
+        if (typeof body.bidirectional === "boolean") style.startArrowhead = body.bidirectional ? "arrow" : null;
+        if (Object.keys(style).length > 1) elements = updateElements(elements, [style]);
+        const r = store.apply(p, { elements }, origin);
+        return { path: p, rev: r.rev, id: existing.id, rebound: true };
       }
       case "add": {
         const els = appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined);
@@ -263,9 +289,12 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           n.size = { w: Math.round(Math.max(shape.width * scale, label.width)), h: Math.round(shape.height * scale + label.height) };
           lib.set(n.shape, shape);
         }
-        const els = appendPlacement(scene, layoutGraph(spec), (body.placement as string) ?? "right");
+        // `replace` swaps the old content for the diagram in one write, so a failure leaves it intact.
+        const replace = body.replace === true;
+        const base = replace ? cleared(scene.elements) : scene.elements;
+        const els = replace ? layoutGraph(spec) : appendPlacement(scene, layoutGraph(spec), (body.placement as string) ?? "right");
         // Namespace ids when appending so repeated diagrams don't collide.
-        const taken = new Set(live(scene.elements).map((e) => e.id));
+        const taken = new Set(live(base).map((e) => e.id));
         let prefix = "";
         if (els.some((e) => e.id && taken.has(e.id))) prefix = `${crypto.randomBytes(2).toString("hex")}-`;
         const ren = (id?: string) => (id ? prefix + id : id);
@@ -293,7 +322,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           return placed.elements.map((el): SkeletonEl => ({ type: "placed", element: el }));
         });
         for (const e of expanded) if (e.type === "frame" && e.children) e.children = e.children.flatMap((c) => parts.get(c) ?? [c]);
-        const { elements, created } = addSkeletons(scene.elements, expanded);
+        const { elements, created } = addSkeletons(base, expanded);
         const r = store.apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created };
       }
@@ -764,6 +793,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     runIn(contextFromHeaders(req.headers), () => handle(req, res)).catch((e: unknown) => {
       if (res.headersSent) return res.end();
       if (e instanceof HttpError) return json(res, e.status, { error: e.message, ...e.extra });
+      if (e instanceof InvalidDrawingError) return json(res, 422, { error: e.message });
       if (e instanceof SceneError || e instanceof PathError || e instanceof LibraryError) return json(res, 400, { error: e.message });
       const err = e as NodeJS.ErrnoException;
       if (err.code === "ENOENT") return json(res, 404, { error: "Not found" });
@@ -864,6 +894,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         store.apply(
           c.path,
           {
+            fromEditor: true,
             elements: msg.elements as El[],
             appState: msg.appState as Record<string, unknown>,
             files: msg.files as Record<string, unknown>,

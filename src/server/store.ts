@@ -2,8 +2,9 @@ import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "./config.js";
+import { readJson, writeFileAtomic } from "./config.js";
 import {
+  assertFinite,
   emptyScene,
   type El,
   live,
@@ -12,9 +13,19 @@ import {
   type Scene,
   serializeScene,
   tombstonesFor,
+  wins,
 } from "./scene.js";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+// Deleted ids remembered across restarts, per drawing.
+const TOMBSTONE_TTL_MS = 7 * 24 * 3600 * 1000;
+const TOMBSTONE_MAX = 2000;
+
+/** The file exists but isn't a drawing we can read (e.g. git conflict markers). */
+export class InvalidDrawingError extends Error {}
+
+/** Drawing path -> element id -> [deleted version, time deleted]. */
+type Tombstones = Record<string, Record<string, [number, number]>>;
 
 interface Doc {
   path: string;
@@ -43,8 +54,71 @@ export interface SceneChange {
  */
 export class DocStore extends EventEmitter {
   private docs = new Map<string, Doc>();
+  private tombFile?: string;
+  private tombs: Tombstones = {};
 
-  private readDisk(p: string): { scene: Scene; hash: string } | null {
+  /**
+   * `stateDir` keeps a sidecar of recently deleted ids, so a stale editor tab can't bring
+   * deleted elements back after a daemon restart (files on disk hold no tombstones).
+   */
+  constructor(opts: { stateDir?: string } = {}) {
+    super();
+    if (opts.stateDir) {
+      this.tombFile = path.join(opts.stateDir, "tombstones.json");
+      this.tombs = readJson<Tombstones>(this.tombFile, {});
+    }
+  }
+
+  /** Records the drawing's deleted ids (and forgets ids that are live again), then persists. */
+  private remember(p: string, els: El[]): void {
+    if (!this.tombFile) return;
+    const t = (this.tombs[p] ??= {});
+    let dirty = false;
+    const now = Date.now();
+    for (const e of els) {
+      const known = t[e.id];
+      if (e.isDeleted && (!known || known[0] < e.version)) {
+        t[e.id] = [e.version, now];
+        dirty = true;
+      } else if (!e.isDeleted && known) {
+        delete t[e.id];
+        dirty = true;
+      }
+    }
+    if (!dirty) return;
+    // Prune: drop old entries, keep the newest per drawing.
+    for (const [file, ids] of Object.entries(this.tombs)) {
+      const kept = Object.entries(ids)
+        .filter(([, [, at]]) => now - at < TOMBSTONE_TTL_MS)
+        .sort((a, b) => b[1][1] - a[1][1])
+        .slice(0, TOMBSTONE_MAX);
+      if (kept.length) this.tombs[file] = Object.fromEntries(kept);
+      else delete this.tombs[file];
+    }
+    try {
+      writeFileAtomic(this.tombFile, JSON.stringify(this.tombs), 0o600);
+    } catch {
+      // Best effort: losing the sidecar only weakens protection against stale tabs.
+    }
+  }
+
+  /** Elements an editor sends that we deleted before a restart (so no longer hold) stay deleted. */
+  private bury(p: string, current: El[], incoming: El[]): El[] {
+    const t = this.tombs[p];
+    if (!t) return incoming;
+    const held = new Set(current.map((e) => e.id));
+    return incoming.map((e) => {
+      const dead = t[e.id];
+      if (held.has(e.id) || !dead || e.isDeleted || e.version > dead[0]) return e;
+      // Outrank the tab's copy so the tab drops it too.
+      return { ...e, isDeleted: true, version: Math.max(dead[0], e.version + 1) };
+    });
+  }
+
+  /** The file's scene and hash; just the hash (no parse) when it matches `known`. */
+  private readDisk(p: string): { scene: Scene; hash: string } | null;
+  private readDisk(p: string, known: string | null): { scene: Scene | null; hash: string } | null;
+  private readDisk(p: string, known?: string | null): { scene: Scene | null; hash: string } | null {
     let raw: string;
     try {
       const st = fs.statSync(p);
@@ -55,7 +129,33 @@ export class DocStore extends EventEmitter {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw e;
     }
-    return { scene: parseScene(raw), hash: sha(raw) };
+    const hash = sha(raw);
+    if (hash === known) return { scene: null, hash };
+    try {
+      return { scene: parseScene(raw), hash };
+    } catch (e) {
+      const conflict = /^(<{7}|>{7}|={7})( |$)/m.test(raw) ? " It has git conflict markers." : "";
+      throw new InvalidDrawingError(
+        `${p} is not valid Excalidraw JSON (merge conflict?): ${(e as Error).message}.${conflict} ` +
+          "Fix the file, or replace it with create_drawing overwrite: true.",
+      );
+    }
+  }
+
+  /**
+   * Forgets the content of a drawing that can't be parsed, so it can be overwritten.
+   * Does nothing for a readable or missing file.
+   */
+  discardInvalid(p: string): void {
+    try {
+      this.load(p);
+    } catch (e) {
+      if (!(e instanceof InvalidDrawingError)) throw e;
+      const diskHash = sha(fs.readFileSync(p, "utf8"));
+      const doc = this.docs.get(p);
+      if (doc) Object.assign(doc, { scene: emptyScene(), diskHash, rev: doc.rev + 1 });
+      else this.docs.set(p, { path: p, scene: emptyScene(), diskHash, rev: 0, watchers: 0 });
+    }
   }
 
   private load(p: string): Doc {
@@ -78,7 +178,7 @@ export class DocStore extends EventEmitter {
 
   /** Picks up edits made outside the daemon (agent Edit tool, git checkout, another editor). */
   private syncFromDisk(doc: Doc): boolean {
-    const disk = this.readDisk(doc.path);
+    const disk = this.readDisk(doc.path, doc.diskHash);
     if (!disk) {
       if (doc.diskHash === null) return false;
       // Deleted or moved on disk: forget our copy so nothing resurrects it implicitly.
@@ -88,7 +188,7 @@ export class DocStore extends EventEmitter {
       this.emit("deleted", doc.path);
       return false;
     }
-    if (disk.hash === doc.diskHash) return false;
+    if (!disk.scene) return false; // unchanged since we last read or wrote it
     const prev = doc.scene.elements;
     const next = disk.scene.elements;
     const prevById = new Map(prev.map((e) => [e.id, e]));
@@ -105,6 +205,7 @@ export class DocStore extends EventEmitter {
     };
     doc.diskHash = disk.hash;
     doc.rev++;
+    this.remember(doc.path, doc.scene.elements);
     return true;
   }
 
@@ -126,18 +227,30 @@ export class DocStore extends EventEmitter {
   /**
    * Merges `elements` into the document and persists it.
    * `replace` treats the incoming list as authoritative: missing elements are deleted.
+   * `fromEditor` marks a save from an editor tab, which may still hold elements deleted
+   * before a daemon restart; those stay deleted.
    */
   apply(
     p: string,
-    change: { elements?: El[]; appState?: Record<string, unknown>; files?: Record<string, unknown>; replace?: boolean },
+    change: {
+      elements?: El[];
+      appState?: Record<string, unknown>;
+      files?: Record<string, unknown>;
+      replace?: boolean;
+      fromEditor?: boolean;
+    },
     origin?: string,
   ): { rev: number; scene: Scene } {
     const doc = this.load(p);
     let elements = doc.scene.elements;
     if (change.elements) {
-      const incoming = change.replace
+      let incoming = change.replace
         ? [...change.elements, ...tombstonesFor(elements, change.elements)]
         : change.elements;
+      if (change.fromEditor) incoming = this.bury(p, elements, incoming);
+      // Only what changes is checked, so an old file with odd values can still be edited.
+      const byId = new Map(elements.map((e) => [e.id, e]));
+      assertFinite(incoming.filter((e) => byId.get(e.id)?.version !== e.version && wins(e, byId.get(e.id))));
       elements = mergeElements(elements, incoming);
     }
     doc.scene = {
@@ -151,6 +264,7 @@ export class DocStore extends EventEmitter {
     writeFileAtomic(p, raw);
     doc.diskHash = sha(raw);
     doc.rev++;
+    this.remember(p, doc.scene.elements);
     this.emit("change", { path: p, rev: doc.rev, scene: doc.scene, origin } satisfies SceneChange);
     return { rev: doc.rev, scene: doc.scene };
   }

@@ -103,4 +103,4 @@ Before you show the diagram, check that:
 - [ ] Acronyms are explained, or common for this audience.
 - [ ] There are at most ~7±2 items per boundary. Otherwise split it or zoom out a level.
 - [ ] Rendered and checked against the diagram-review rubric.
-- [ ] Nodes link to their source (`link`) where the diagram documents code, and the drawing path is mentioned in the related doc or ADR.
+- [ ] Nodes link to their source (`code` on the node) where the diagram documents code, and the drawing path is mentioned in the related doc or ADR.

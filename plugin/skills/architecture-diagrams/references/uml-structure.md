@@ -63,7 +63,7 @@ Then give the relationships their UML arrowheads. Excalidraw has `triangle_outli
 
 Mermaid `classDiagram` is the standard text form, but in this build `mermaid_to_drawing` brings it in as one uneditable image (the result says "Converted Mermaid into 1 elements"). Use it only when the user wants Mermaid's own rendering.
 
-Use the exact class and member names from the code. Afterwards, link each class box to its file with `update_elements` (`"link": "src/orders/order.ts"`). The ids come from `read_drawing`.
+Use the exact class and member names from the code. Link each class box to its file with `code` on the node (`"code": "src/orders/order.ts:12"`), or afterwards with `update_elements`.
 
 ### Common mistakes
 

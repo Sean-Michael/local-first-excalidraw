@@ -13,6 +13,7 @@ import { after, before, test } from "node:test";
 import { hashFile } from "../src/server/codelinks.js";
 import type { Config } from "../src/server/config.js";
 import { startDaemon } from "../src/server/daemon.js";
+import { GUIDE, SERVER_INSTRUCTIONS } from "../src/server/guide.js";
 import { listTopics, readTopic, referencesDir } from "../src/server/references.js";
 import { addSkeletons, arrangeElements, contentRev, describe, type El, emptyScene, findElements, live, restoreElements, updateElements } from "../src/server/scene.js";
 import { drawingTools, type ToolContext } from "../src/server/tools.js";
@@ -299,6 +300,19 @@ test("diagram_reference lists topics and serves one", async () => {
   assert.match(list.text, /- c4: /);
   assert.match(list.text, /- living-diagrams: /);
   assert.match((await run("diagram_reference", { topic: "living-diagrams" })).text, /^# Living diagrams/);
+});
+
+test("the guide and the excalidraw skill describe every drawing tool", () => {
+  const skill = fs.readFileSync(path.join(referencesDir()!, "..", "..", "excalidraw", "SKILL.md"), "utf8");
+  for (const name of Object.keys(tools)) {
+    if (name !== "excalidraw_guide") assert.ok(GUIDE.includes(`**${name}**`), `GUIDE mentions ${name}`);
+  }
+  for (const name of ["create_diagram", "read_drawing", "apply_changes", "render_drawing", "snapshot_drawing", "diagram_reference"]) {
+    assert.ok(SERVER_INSTRUCTIONS.includes(name), `SERVER_INSTRUCTIONS mentions ${name}`);
+  }
+  for (const name of ["create_diagram", "apply_changes", "arrange_elements", "restore_drawing", "if_rev"]) assert.ok(skill.includes(name), `skill mentions ${name}`);
+  // The same rules everywhere.
+  for (const text of [GUIDE, skill]) assert.match(text, /12 characters or fewer/);
 });
 
 test("mermaid_to_drawing says which diagram kinds stay editable", () => {

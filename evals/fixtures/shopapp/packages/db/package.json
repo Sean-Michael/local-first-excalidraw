@@ -1,0 +1,1 @@
+{ "name": "@shopapp/db", "version": "0.3.0", "main": "dist/pool.js", "dependencies": { "pg": "^8.12.0" } }

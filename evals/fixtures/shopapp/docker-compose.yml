@@ -1,0 +1,49 @@
+services:
+  turnstile-gateway:
+    build: ./services/turnstile-gateway
+    ports: ["8080:8080"]
+    environment:
+      KEYMASTER_URL: http://keymaster-auth:7001
+      LEDGER_URL: http://ledger-orders:7002
+    depends_on: [keymaster-auth, ledger-orders]
+
+  keymaster-auth:
+    build: ./services/keymaster-auth
+    environment:
+      DATABASE_URL: postgres://shop:shop@shopapp-pg:5432/shop
+      REDIS_URL: redis://token-cache:6379
+      SESSION_TTL_SECONDS: "3600"
+    depends_on: [shopapp-pg, token-cache]
+
+  ledger-orders:
+    build: ./services/ledger-orders
+    environment:
+      DATABASE_URL: postgres://shop:shop@shopapp-pg:5432/shop
+      AMQP_URL: amqp://postbox-mq:5672
+      PAYLODE_API_KEY: ${PAYLODE_API_KEY}
+      PAYLODE_BASE_URL: https://api.paylode.example/v2
+    depends_on: [shopapp-pg, postbox-mq]
+
+  courier-worker:
+    build: ./services/courier-worker
+    environment:
+      AMQP_URL: amqp://postbox-mq:5672
+      PIGEONPOST_API_KEY: ${PIGEONPOST_API_KEY}
+    depends_on: [postbox-mq]
+
+  shopapp-pg:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+
+  token-cache:
+    image: redis:7
+
+  postbox-mq:
+    image: rabbitmq:3.13-management
+
+volumes:
+  pgdata: {}

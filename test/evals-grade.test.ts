@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { assistantSettings, summariseChat } from "../evals/assistant.js";
 import { summariseTranscript } from "../evals/claude.js";
+import { SettingsStore } from "../src/server/ai/settings.js";
 import { grade, idPreservation, linkTarget, matches, measure, nonFinite, overlaps, textOverflow } from "../evals/grade.js";
 import { parseJudgeReply } from "../evals/judge.js";
 import { loadScenarios, REPO_ROOT } from "../evals/scenarios.js";
@@ -255,6 +257,50 @@ test("transcript summary counts tools, errors, skills and cost", () => {
   assert.equal(s.costUsd, 0.25);
   assert.equal(s.permissionDenials.length, 1);
   assert.equal(s.finalText, "Done");
+});
+
+test("--via assistant: settings load as one Claude Code endpoint, and chat events summarise like a transcript", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lfx-via-"));
+  fs.writeFileSync(path.join(dir, "ai.json"), JSON.stringify(assistantSettings("sonnet")));
+  const settings = new SettingsStore(dir).get();
+  assert.equal(settings.enabled, true);
+  assert.equal(settings.codeAccess, true);
+  assert.deepEqual(settings.endpoints.map((e) => [e.kind, e.model]), [["claude-code", "sonnet"]]);
+
+  const trace = path.join(dir, "trace.jsonl");
+  fs.writeFileSync(
+    trace,
+    [
+      { name: "execute_tool create_diagram", attributes: {} },
+      { name: "invoke_agent lfx-assistant", durationMs: 1200, attributes: { "lfx.claude_code.cost_usd": 0.25, "lfx.claude_code.turns": 7, "gen_ai.request.model": "sonnet" } },
+    ]
+      .map((s) => JSON.stringify(s))
+      .join("\n"),
+  );
+  const events = [
+    { type: "turn-start", id: "t" },
+    { type: "tool-start", id: "t", callId: "1", name: "Grep", args: '{"pattern":"status"}' },
+    { type: "tool-end", id: "t", callId: "1", ok: true, result: "" },
+    { type: "tool-start", id: "t", callId: "2", name: "project_overview", args: "{}" },
+    { type: "tool-start", id: "t", callId: "3", name: "create_diagram", args: "{}" },
+    { type: "tool-end", id: "t", callId: "3", ok: false, result: "Error: bad" },
+    { type: "delta", id: "t", part: "text", text: "Drew " },
+    { type: "delta", id: "t", part: "text", text: "it." },
+    { type: "turn-end", id: "t", status: "done" },
+  ].map((e) => JSON.stringify(e));
+  const s = summariseChat(events, trace);
+  assert.deepEqual(s.toolCounts, { Grep: 1, mcp__excalidraw__project_overview: 1, mcp__excalidraw__create_diagram: 1 });
+  assert.deepEqual(s.toolErrors, [{ name: "mcp__excalidraw__create_diagram", error: "Error: bad" }]);
+  assert.equal(s.finalText, "Drew it.");
+  assert.equal(s.costUsd, 0.25);
+  assert.equal(s.turns, 7);
+  assert.equal(s.model, "sonnet");
+});
+
+test("the judge gets the drawing's text listing as well as the picture", () => {
+  const src = fs.readFileSync(path.join(REPO_ROOT, "evals", "judge.ts"), "utf8");
+  assert.match(src, /op: "read"/);
+  assert.match(src, /checked separately by deterministic graders/);
 });
 
 test("judge replies are parsed from the first JSON object", () => {

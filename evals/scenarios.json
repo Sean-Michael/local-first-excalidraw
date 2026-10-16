@@ -360,6 +360,28 @@
         "minBoundRatio": 0.9,
         "maxOverlaps": 0
       }
+    },
+    {
+      "id": "reference-code-mention",
+      "title": "State diagram from a mentioned folder",
+      "skill": "excalidraw",
+      "prompt": "@services/ledger-orders/ Explain and diagram how an order's payment status changes.",
+      "expected_output": "A short explanation and a state diagram of an order's status with the status values from the code: pending (OrderRepository.insertPending) goes to paid (markPaid, when the Paylode charge succeeds) or to payment_failed (markPaymentFailed, when it is declined). Arrows are bound and labelled with the trigger, and there are no statuses the code doesn't have.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [["pending"], ["paid"], ["payment_failed", "payment failed", "paymentFailed"]],
+        "forbiddenLabels": ["shipped", "refunded", "cancelled", "canceled", "delivered"],
+        "requiredEdges": [
+          { "from": ["pending"], "to": ["paid"] },
+          { "from": ["pending"], "to": ["payment_failed", "payment failed", "paymentFailed"] }
+        ],
+        "minArrows": 2,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14
+      }
     }
   ]
 }

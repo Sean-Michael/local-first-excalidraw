@@ -99,6 +99,15 @@
       "files": [
         "evals/fixtures/shopapp"
       ]
+    },
+    {
+      "id": 10,
+      "name": "reference-code-mention",
+      "prompt": "@services/ledger-orders/ Explain and diagram how an order's payment status changes.",
+      "expected_output": "A short explanation and a state diagram of an order's status with the status values from the code: pending (OrderRepository.insertPending) goes to paid (markPaid, when the Paylode charge succeeds) or to payment_failed (markPaymentFailed, when it is declined). Arrows are bound and labelled with the trigger, and there are no statuses the code doesn't have.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ]
     }
   ]
 }

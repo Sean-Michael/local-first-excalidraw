@@ -79,7 +79,7 @@ export class EvalDaemon {
     throw new Error(`Daemon did not start; see ${logFile}`);
   }
 
-  private token(): string {
+  token(): string {
     return fs.readFileSync(path.join(this.stateDir, "token"), "utf8").trim();
   }
 

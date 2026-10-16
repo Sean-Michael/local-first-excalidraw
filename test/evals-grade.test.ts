@@ -33,6 +33,19 @@ test("the reference architecture graph passes the arch-overview checks", () => {
   assert.equal(g.score, 1);
 });
 
+test("required frames match frame names only", () => {
+  const checks = { requiredFrames: [["shopapp", "system"]] };
+  const framed = scene([
+    { type: "rectangle", id: "a", x: 0, y: 0, label: "api" },
+    { type: "frame", id: "f", name: "shopapp [Software System]", children: ["a"] },
+  ]);
+  assert.equal(grade({ final: framed, checks, ...noFiles }).pass, true);
+  const unframed = scene([{ type: "rectangle", id: "a", x: 0, y: 0, label: "shopapp system" }]);
+  const g = grade({ final: unframed, checks, ...noFiles });
+  assert.equal(g.pass, false);
+  assert.match(g.checks.find((c) => c.name === "required-frames")!.detail, /no frames/);
+});
+
 test("overlaps: partial overlaps count, containers and groups don't", () => {
   const els = [
     el("a", "rectangle", 0, 0, 100, 50, { groupIds: [] }),

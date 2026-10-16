@@ -30,6 +30,8 @@ export interface EdgeSpec {
 export interface Checks {
   /** Each entry must match some text in the drawing. */
   requiredLabels?: Synonyms[];
+  /** Each entry must match the name of some frame (a boundary or group). */
+  requiredFrames?: Synonyms[];
   /** No text in the drawing may match any of these. */
   forbiddenLabels?: string[];
   /** Arrows bound to elements whose labels match. */

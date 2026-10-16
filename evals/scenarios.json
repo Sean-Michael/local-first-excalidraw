@@ -68,6 +68,40 @@
       }
     },
     {
+      "id": "c4-container",
+      "title": "C4 container diagram",
+      "skill": "excalidraw",
+      "prompt": "Draw a C4 container diagram of this shop system for a new developer: the people who use it, the system boundary, each container with its technology, and the external systems it depends on.",
+      "expected_output": "A C4 container diagram: a Shopper person (ellipse or stick figure) outside a frame that marks the shopapp system boundary; inside it the containers turnstile-gateway, keymaster-auth, ledger-orders and courier-worker, the Postgres database shopapp-pg, the Redis token-cache and the RabbitMQ broker postbox-mq, each labelled with its technology (Node.js/TypeScript, Fastify, Postgres, Redis, RabbitMQ); Paylode and Pigeonpost outside the boundary as external systems. Arrows are bound and labelled with what flows, kept short.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [
+          ["shopper", "customer", "user"],
+          ["turnstile-gateway", "turnstile"],
+          ["keymaster-auth", "keymaster"],
+          ["ledger-orders", "ledger"],
+          ["courier-worker", "courier"],
+          ["postgres", "postgresql"],
+          ["redis"],
+          ["rabbitmq", "amqp"],
+          ["node", "nodejs", "typescript", "fastify"],
+          ["paylode"],
+          ["pigeonpost"]
+        ],
+        "requiredFrames": [["shopapp", "shop", "system", "software system"]],
+        "requiredEdges": [
+          { "from": ["shopper", "customer", "user"], "to": ["turnstile"] },
+          { "from": ["ledger"], "to": ["paylode"] },
+          { "from": ["courier"], "to": ["pigeonpost"] }
+        ],
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14
+      }
+    },
+    {
       "id": "request-flow",
       "title": "Request flow for placing an order",
       "skill": "excalidraw",
@@ -120,6 +154,43 @@
           { "from": ["stockroom", "inventory"], "to": ["shopapp-pg", "postgres"], "undirected": true }
         ],
         "minIdPreservation": 0.8,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0
+      }
+    },
+    {
+      "id": "sync-after-change",
+      "title": "/excalidraw:sync after a service is added",
+      "skill": "excalidraw",
+      "prompt": "/excalidraw:sync",
+      "expected_output": "The sync command finds the last commit (a new stockroom-inventory service) and updates docs/diagrams/architecture.excalidraw in place: a stockroom-inventory node with a code link to its source, an arrow from ledger-orders and one to Postgres, every existing id kept and the existing code links intact. It reports the code change and the edit it caused.",
+      "files": ["evals/fixtures/shopapp", "evals/fixtures/shopapp.patches/add-inventory-service.patch"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [
+        { "op": "diagram", "graph": "shopapp-arch" },
+        {
+          "op": "update",
+          "updates": [
+            { "id": "turnstile-gateway", "code": "services/turnstile-gateway/src/server.ts" },
+            { "id": "keymaster-auth", "code": "services/keymaster-auth/src/server.ts" },
+            { "id": "ledger-orders", "code": "services/ledger-orders/src/placeOrder.ts" },
+            { "id": "courier-worker", "code": "services/courier-worker/src/worker.ts" },
+            { "id": "shopapp-pg", "code": "packages/db/src/pool.ts" }
+          ]
+        }
+      ],
+      "commitSetup": true,
+      "patch": "add-inventory-service",
+      "checks": {
+        "requiredLabels": [["stockroom-inventory", "stockroom", "inventory"], ["turnstile-gateway"], ["keymaster-auth"], ["ledger-orders"], ["courier-worker"]],
+        "requiredEdges": [
+          { "from": ["ledger"], "to": ["stockroom", "inventory"] },
+          { "from": ["stockroom", "inventory"], "to": ["shopapp-pg", "postgres"], "undirected": true }
+        ],
+        "links": { "minLinked": 6, "allExist": true },
+        "minIdPreservation": 0.9,
         "minBoundRatio": 0.9,
         "maxOverlaps": 0,
         "maxOverflow": 0

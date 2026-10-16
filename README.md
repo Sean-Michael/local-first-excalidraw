@@ -38,7 +38,7 @@ To update, upgrade the cask. `brew update` alone only refreshes the tap's metada
 brew update && brew upgrade --cask local-first-excalidraw
 ```
 
-Homebrew quits the app before replacing it. A daemon that's still running (kept after quitting, or started by an agent) keeps serving the old version until it stops, so stop it and the next client starts the new one:
+Homebrew quits the app before replacing it. A daemon an agent or `lfx open` started is replaced by the next client of a newer version. A daemon you kept running after quitting the app, or started with `lfx serve`, isn't: clients refuse to use a daemon of another version and say so. Stop it and the next client starts the new one:
 
 ```bash
 lfx stop
@@ -64,7 +64,7 @@ The daemon starts in the background and your browser opens the drawing:
 
 ![The Excalidraw editor showing this project's architecture diagram](docs/images/editor.png)
 
-`lfx open` with no file shows the list of drawings. `lfx status` and `lfx stop` manage the daemon.
+`lfx open` with no file shows the list of drawings. `lfx status` and `lfx stop` manage the daemon; `lfx status` also flags a daemon whose version differs from the CLI's. `lfx roots` lists the folders the daemon may use, and `lfx roots remove DIR` forgets one.
 
 ## Turn on the assistant
 

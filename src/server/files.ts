@@ -96,11 +96,14 @@ export function moveToTrash(file: string, env: NodeJS.ProcessEnv = process.env, 
     return dest;
   }
   if (platform === "linux") {
-    try {
-      execFileSync("gio", ["trash", file], { timeout: 5_000, stdio: "ignore" });
-      if (!fs.existsSync(file)) return "trash";
-    } catch {
-      // no gio, or no trash on this volume: fall back to the XDG layout
+    const gio = (env.PATH ?? "").split(path.delimiter).filter(Boolean).map((d) => path.join(d, "gio")).find((p) => fs.existsSync(p));
+    if (gio) {
+      try {
+        execFileSync(gio, ["trash", file], { timeout: 5_000, stdio: "ignore", env });
+        if (!fs.existsSync(file)) return "trash";
+      } catch {
+        // no trash on this volume: fall back to the XDG layout
+      }
     }
     const home = env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
     const files = path.join(home, "Trash", "files");

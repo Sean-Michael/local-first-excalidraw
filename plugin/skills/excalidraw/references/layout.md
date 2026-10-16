@@ -25,6 +25,8 @@ These are the same rules `excalidraw_guide` returns. The diagram-review skill's 
 6. **Hand-placing what `create_diagram` can lay out,** and drawing an icon from plain boxes when `list_shapes` has it.
 7. **Redrawing to change something.** `replace: true` or delete-and-recreate throws away the user's layout, colours and notes. Edit in place and keep ids.
 8. **Decorative colour.** Each colour means one thing across the diagram.
+9. **Fixed sizes too small for the label.** Every shape you give a width, including legend swatches, needs at least 12 px per character of its longest line plus padding. Simplest: omit width and height.
+10. **Arrows in a legend.** A sample arrow in a legend is an unbound arrow that reads as a connection. Show line styles with `line` elements, or describe them in the legend text.
 
 ## Colours
 

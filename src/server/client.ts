@@ -37,6 +37,8 @@ export function compareVersions(a: string, b: string): number {
 export class DaemonClient {
   readonly url: string;
   private token: string;
+  /** The MCP client's name (e.g. "claude-code"), so the editor can say who edited. */
+  agent?: string;
 
   constructor(private cfg: Config) {
     this.url = process.env.LFX_URL ?? baseUrl(cfg);
@@ -48,6 +50,7 @@ export class DaemonClient {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
+        ...(this.agent ? { "X-Lfx-Agent": this.agent } : {}),
         ...traceHeaders(),
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },

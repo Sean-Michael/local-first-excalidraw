@@ -14,7 +14,7 @@ Use this when the code changed and a diagram documents it: `/excalidraw:sync`, "
 
 ## 2. Find the affected diagrams and elements
 
-- `list_drawings`, then `read_drawing` on each candidate. Keep each drawing's `rev`.
+- `list_drawings`, then `read_drawing` on each candidate. Keep each drawing's `rev`. Its last lines give the state of the code links: `check_code_links` lists the elements whose linked file changed or is gone since the link was made, which is where to look first.
 - `read_drawing` with `query` finds elements by label and by `code=` link: try the changed paths (`"services/ledger-orders"`) and names (`"ledger"`). The matches come with the arrows attached to them.
 - Map each change to elements: by `code=` link first, then by label. When nothing matches, find the element the new component talks to most; the new node goes beside it.
 
@@ -59,6 +59,10 @@ Deletes run first, then adds, then updates, all in one revision. If the call fai
 
 `render_drawing` with `element_ids` set to the changed ids and their neighbours, then the whole drawing. Go through the check in [layout.md](layout.md). New nodes often land on top of something: move them with `update_elements` and align them with `arrange_elements`.
 
-## 7. Report
+## 7. Mark the links reviewed
+
+`check_code_links` with `mark_reviewed: true` records the linked files' current state, so the diagram no longer shows them as changed. Do it only once the diagram matches the code.
+
+## 8. Report
 
 One line per code change and the diagram edit it caused ("Added stockroom-inventory, called by ledger-orders, writes to shopapp-pg"). Then anything you weren't sure of and anything stale you left alone. If the drawing has an exported `.excalidraw.svg` next to it, re-run `export_drawing` so the two match.

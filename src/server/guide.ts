@@ -24,6 +24,7 @@ export const GUIDE = `# Local-first Excalidraw: drawing guide
 - **read_drawing**: \`[id] type at (x,y) size WxH "label" fill=… in frame … code=…\`, arrows as \`[id] arrow from -> to\`, plus the drawing's \`rev\`. Filter with \`query\`, \`ids\` or \`type\`.
 - **render_drawing**: a PNG to check your work; \`element_ids\` or \`region\` for a full-size close-up, \`dark\` for dark mode.
 - **snapshot_drawing** / **list_snapshots** / **restore_drawing**: save and roll back a drawing.
+- **check_code_links**: which code-linked elements point at files that changed or are gone since the link was made; \`mark_reviewed\` once the diagram matches the code again.
 - **list_drawings** / **create_drawing** / **open_drawing**: find drawings, start one (empty or from elements), show one to the user.
 - **export_drawing**: \`name.excalidraw.svg\` (viewable in a README and still editable) or \`.png\`.
 - **diagram_reference**: which diagram answers which question, and recipes for C4, UML, DFD, ER, infrastructure and messaging.
@@ -85,12 +86,13 @@ If anything fails, say what you see ("I see the orders arrow crossing the cache 
 
 ## Update a diagram after a code change
 1. **Find what changed:** \`git diff\` / \`git log -p -1\`, or the files the user names. List only what is visible at the diagram's level: components added, removed or renamed; calls, events or dependencies added or removed; technology changes.
-2. **Find the diagrams:** list_drawings, then read_drawing. \`query\` with changed paths or names (\`"src/orders"\`, \`"ledger"\`) finds the affected elements by their \`code=\` links and labels.
+2. **Find the diagrams:** list_drawings, then read_drawing (it ends with the state of the code links; check_code_links lists the changed and missing ones). \`query\` with changed paths or names (\`"src/orders"\`, \`"ledger"\`) finds the affected elements by their \`code=\` links and labels.
 3. **snapshot_drawing** (name "before sync").
 4. **Plan one edit per change:** renamed → update the label and \`code\`, keep the id. New component → add a shape beside its main neighbour (same size and colour as its siblings, inside the right frame with \`frameId\`, with \`code\`), plus bound arrows. Removed → delete it and its arrows. New relationship → add a bound arrow. Moved boundary → update x/y and \`frameId\`.
 5. **Apply it as one apply_changes call with \`if_rev\`** set to the rev from read_drawing. Don't touch elements the change doesn't affect: the user's positions, colours and notes stay.
 6. **Render and check** the changed area (the changed ids and their neighbours), and fix what the check finds.
-7. **Report** each code change and the diagram edit it caused, and anything that looked stale but wasn't part of the change (don't silently fix it). Re-export \`.excalidraw.svg\` files next to the drawing.
+7. **check_code_links** with \`mark_reviewed: true\` once the diagram matches the code, so the links read as up to date.
+8. **Report** each code change and the diagram edit it caused, and anything that looked stale but wasn't part of the change (don't silently fix it). Re-export \`.excalidraw.svg\` files next to the drawing.
 
 ## Error recovery
 | Error says | Do |

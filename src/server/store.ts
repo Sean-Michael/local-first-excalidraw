@@ -305,7 +305,7 @@ export class DocStore extends EventEmitter {
   }
 }
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "target", ".venv", "venv", "__pycache__"]);
+export const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "target", ".venv", "venv", "__pycache__"]);
 
 export interface DrawingInfo {
   path: string;

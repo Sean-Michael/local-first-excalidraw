@@ -37,7 +37,7 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 
 .lfx-error {
   position: fixed; left: 50%; bottom: 4.5rem; transform: translateX(-50%); z-index: 10;
-  background: #e03131; color: #fff; padding: .5rem 1rem; border-radius: .5rem; cursor: pointer; font-size: .875rem;
+  background: #e03131; color: #fff; padding: .5rem 1rem; border-radius: .5rem; font-size: .875rem;
 }
 
 .lfx-browser { max-width: 52rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
@@ -444,3 +444,53 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-catalog-list small { display: block; color: var(--c-muted); font-size: .72rem; }
 .lfx-catalog-list p { margin: .2rem 0 0; color: var(--c-muted); font-size: .76rem; }
 @media (hover: none) { .lfx-sessions li .lfx-icon { opacity: 1; } }
+
+/* ---- Drawing list: row actions, git badges, dialogs ------------------------ */
+.lfx-browser li.lfx-row { display: flex; align-items: stretch; }
+.lfx-browser li.lfx-row > a { flex: 1; min-width: 0; }
+.lfx-name { display: inline-flex; align-items: baseline; gap: .4rem; }
+.lfx-git { font: 600 .65rem/1 ui-monospace, Menlo, monospace; padding: .15rem .3rem; border-radius: .25rem; color: #fff; }
+.lfx-git-modified { background: #e67700; }
+.lfx-git-untracked { background: #2f9e44; }
+.lfx-git-staged { background: #1971c2; }
+.lfx-git-conflict { background: #e03131; }
+.lfx-row-menu { position: relative; display: flex; align-items: center; padding-right: .4rem; }
+.lfx-browser button.lfx-more { background: transparent; border-color: transparent; color: var(--lfx-muted); padding: .2rem .55rem; font-size: 1.1rem; line-height: 1; }
+.lfx-browser button.lfx-more:hover, .lfx-browser button.lfx-more[aria-expanded="true"] { background: var(--lfx-hover); color: var(--lfx-fg); }
+.lfx-menu { position: absolute; right: .4rem; top: calc(100% - .2rem); z-index: 20; min-width: 11rem; display: flex; flex-direction: column; padding: .25rem; background: var(--lfx-bg); border: 1px solid var(--lfx-line); border-radius: .5rem; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.lfx-browser .lfx-menu button { background: transparent; border: 0; color: var(--lfx-fg); text-align: left; padding: .4rem .6rem; border-radius: .35rem; }
+.lfx-browser .lfx-menu button:hover, .lfx-browser .lfx-menu button:focus-visible { background: var(--lfx-hover); outline: none; }
+.lfx-browser .lfx-menu button.lfx-danger-text { color: #e03131; }
+.lfx-browser button.lfx-secondary { background: transparent; color: var(--lfx-accent); }
+.lfx-browser button.lfx-text-btn { background: transparent; border: 0; color: inherit; text-decoration: underline; padding: 0 .25rem; }
+.lfx-notice { color: var(--lfx-muted); }
+.lfx-browser ul:has(.lfx-menu) { overflow: visible; }
+
+.lfx-modal-back { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.3); display: grid; place-items: center; }
+.lfx-modal { width: min(26rem, calc(100vw - 2rem)); box-sizing: border-box; background: var(--lfx-bg); color: var(--lfx-fg); border-radius: .75rem; padding: 1.1rem 1.2rem 1rem; box-shadow: 0 16px 48px rgba(0,0,0,.25); display: flex; flex-direction: column; gap: .7rem; font: .9rem system-ui, -apple-system, "Segoe UI", sans-serif; }
+.lfx-modal h2 { margin: 0; font-size: 1rem; color: var(--lfx-fg); }
+.lfx-modal p { margin: 0; color: var(--lfx-muted); font-size: .85rem; overflow-wrap: anywhere; }
+.lfx-modal input, .lfx-modal select { font: inherit; padding: .45rem .6rem; border: 1px solid var(--lfx-line); border-radius: .4rem; background: var(--lfx-bg); color: var(--lfx-fg); }
+.lfx-modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .2rem; }
+.lfx-modal-actions button { font: inherit; padding: .4rem .9rem; border-radius: .4rem; border: 1px solid var(--lfx-accent); background: var(--lfx-accent); color: #fff; cursor: pointer; }
+.lfx-modal-actions button.lfx-modal-cancel { background: transparent; color: var(--lfx-fg); border-color: var(--lfx-line); }
+.lfx-modal-actions button.lfx-danger { background: #e03131; border-color: #e03131; }
+.lfx-modal button:focus-visible, .lfx-modal input:focus-visible, .lfx-modal select:focus-visible { outline: 2px solid var(--lfx-accent); outline-offset: 1px; }
+
+/* ---- Editor: code links, agent edits, banners ---------------------------- */
+.lfx-links { padding: 0 .25rem; gap: 0; }
+.lfx-links-btn { display: inline-flex; align-items: center; gap: .4rem; height: 1.75rem; padding: 0 .5rem; border: 0; border-radius: .35rem; background: transparent; color: var(--text-primary-color); font: inherit; font-size: .8rem; cursor: pointer; white-space: nowrap; }
+.lfx-links-btn:hover { background: var(--button-hover-bg, #f1f0ff); }
+.lfx-links-review { color: var(--color-primary, #6965db); }
+.lfx-kbd { font: .7rem ui-monospace, Menlo, monospace; color: var(--color-gray-50, #868e96); }
+.lfx-highlights { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+.lfx-highlight { position: absolute; border-radius: .5rem; border: 2px solid #7950f2; box-shadow: 0 0 0 4px rgba(121,80,242,.25), 0 0 18px rgba(121,80,242,.45); animation: lfx-glow 1.5s ease-out forwards; }
+@keyframes lfx-glow { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+.lfx-toast { position: absolute; left: 50%; bottom: 4.5rem; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: .6rem; padding: .45rem .55rem .45rem .9rem; border-radius: .5rem; background: var(--island-bg-color, #fff); color: var(--text-primary-color, #1e1e1e); box-shadow: var(--shadow-island); font-size: .85rem; white-space: nowrap; }
+.lfx-toast button { font: inherit; padding: .2rem .65rem; border-radius: .35rem; border: 1px solid var(--color-primary, #6965db); background: var(--color-primary, #6965db); color: #fff; cursor: pointer; }
+.lfx-toast button.lfx-toast-close { border: 0; background: transparent; color: var(--color-gray-50, #868e96); font-size: 1.1rem; padding: 0 .35rem; }
+.lfx-offline-banner { bottom: auto; top: 4.5rem; background: #495057; cursor: default; }
+.lfx-error button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.lfx-links-review svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 1280px) { .lfx-kbd { display: none; } }
+.lfx-editor[data-theme="dark"] .lfx-toast { background: #232329; color: #e3e3e8; }

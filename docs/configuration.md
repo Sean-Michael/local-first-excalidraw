@@ -18,6 +18,8 @@
 | `LFX_HEADLESS` | `auto` | Where render, export and Mermaid conversion run; see [Headless rendering](#headless-rendering) |
 | `LFX_BROWSER` | first one found | Chrome, Chromium, Edge or Brave binary for headless rendering |
 | `LFX_HEADLESS_IDLE_MIN` | `5` | Stop the headless browser after this many minutes without a request |
+| `LFX_EDITOR` | `editor` in `editor.json`, else `vscode` | The code editor that code links open in; see [Opening code](projects.md#opening-code) |
+| `LFX_TRASH_DIR` | the system trash | Folder that **Move to trash** moves drawings to |
 | `LFX_CLAUDE_BIN` | `claude` on `PATH` | Claude Code binary for the assistant |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | unset | Used when an endpoint for that service has no stored key |
 | `LFX_HOST`, `LFX_ALLOWED_HOSTS` | `127.0.0.1` | Bind address and extra allowed `Host` headers, for containers only |

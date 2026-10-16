@@ -625,6 +625,28 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         return { text: await ctx.open(file) };
       },
     },
+    // ---- code links (WS5) ----
+    {
+      name: "check_code_links",
+      title: "Check code links",
+      description:
+        "Reports each code-linked element (link like \"src/a.ts#L42\") as ok, changed (the file changed since the link was made or reviewed), missing (file gone or line past the end) or unknown. After updating the diagram for the change, pass mark_reviewed to record the files' current state.",
+      input: {
+        path: pathArg,
+        mark_reviewed: z.boolean().optional().describe("Record the linked files' current hashes as reviewed"),
+        ids: z.array(z.string()).optional().describe("With mark_reviewed: only these elements (default: all)"),
+      },
+      run: async ({ path: p, mark_reviewed, ids }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        let note = "";
+        if (mark_reviewed) {
+          const r = await ctx.op({ op: "review_links", path: file, ids });
+          note = `Marked ${r.reviewed as number} link${r.reviewed === 1 ? "" : "s"} as reviewed.\n`;
+        }
+        const r = await ctx.op({ op: "check_links", path: file });
+        return { text: `${relPath(ctx, file)}: ${note}${r.summary as string}`, drawing: mark_reviewed ? other(ctx, file) : undefined };
+      },
+    },
   ];
 }
 

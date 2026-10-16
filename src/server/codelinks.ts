@@ -66,3 +66,91 @@ export function linkState(root: string, ref: CodeRef): LinkState {
   if (!ref.sha) return "unknown";
   return sha === ref.sha ? "ok" : "changed";
 }
+
+type Linkable = { id: string; type?: string; link?: string | null; isDeleted?: boolean; customData?: Record<string, unknown>; version: number; versionNonce: number };
+
+const sameTarget = (a: CodeLink, b: CodeLink) => a.path === b.path && (a.line ?? 0) === (b.line ?? 0);
+
+const bump = <T extends Linkable>(e: T, customData: Record<string, unknown> | undefined): T => {
+  const out = { ...e, version: e.version + 1, versionNonce: Math.floor(Math.random() * 2 ** 31), updated: Date.now() } as T;
+  if (customData && Object.keys(customData).length) out.customData = customData;
+  else delete out.customData;
+  return out;
+};
+
+/**
+ * Keeps customData.lfxCode in step with each element's `link`: a new or retargeted code link
+ * records the file's current hash, and a link that is no longer a code link drops it. Returns
+ * the elements with the changed ones replaced (version bumped) and how many changed.
+ */
+export function stampCodeLinks<T extends Linkable>(elements: T[], root: string): { elements: T[]; stamped: number } {
+  let stamped = 0;
+  const out = elements.map((e) => {
+    if (e.isDeleted) return e;
+    const target = e.link ? parseCodeLink(e.link) : undefined;
+    const have = e.customData?.lfxCode as CodeRef | undefined;
+    if (!target) {
+      if (!have) return e;
+      stamped++;
+      const { lfxCode: _drop, ...rest } = e.customData ?? {};
+      return bump(e, rest);
+    }
+    if (have && typeof have.path === "string" && sameTarget(have, target) && have.sha) return e;
+    const file = path.resolve(root, target.path);
+    const sha = path.relative(root, file).startsWith("..") ? undefined : hashFile(file);
+    // A link to a file that doesn't exist yet gets its hash once it does.
+    if (have && sameTarget(have, target) && !sha) return e;
+    stamped++;
+    const ref: CodeRef = { ...target, ...(sha ? { sha } : {}) };
+    return bump(e, { ...e.customData, lfxCode: ref });
+  });
+  return { elements: out, stamped };
+}
+
+export interface LinkReport extends CodeRef {
+  id: string;
+  state: LinkState;
+}
+
+/** The state of every code link in a drawing. */
+export function checkLinks(elements: Linkable[], root: string): LinkReport[] {
+  const out: LinkReport[] = [];
+  for (const e of elements) {
+    if (e.isDeleted) continue;
+    const ref = codeRefOf(e);
+    if (!ref) continue;
+    out.push({ id: e.id, ...ref, state: linkState(root, ref) });
+  }
+  return out;
+}
+
+/** "3 links: 1 ok, 2 changed (a, b)" style one-liner for agents. */
+export function summarizeLinks(reports: LinkReport[]): string {
+  if (!reports.length) return "No code links.";
+  const by = (s: LinkState) => reports.filter((r) => r.state === s);
+  const parts = (["ok", "changed", "missing", "unknown"] as const)
+    .filter((s) => by(s).length)
+    .map((s) => `${by(s).length} ${s}`);
+  const lines = [`${reports.length} code link${reports.length === 1 ? "" : "s"}: ${parts.join(", ")}.`];
+  for (const r of reports) if (r.state !== "ok") lines.push(`[${r.id}] ${formatCodeLink(r)}: ${r.state}`);
+  return lines.join("\n");
+}
+
+/**
+ * "Mark as reviewed": re-records the current hash of the linked files, for the given ids or
+ * every code-linked element. Returns only the elements that changed.
+ */
+export function refreshLinks<T extends Linkable>(elements: T[], root: string, ids?: string[]): T[] {
+  const only = ids?.length ? new Set(ids) : undefined;
+  const out: T[] = [];
+  for (const e of elements) {
+    if (e.isDeleted || (only && !only.has(e.id))) continue;
+    const ref = codeRefOf(e);
+    if (!ref) continue;
+    const file = path.resolve(root, ref.path);
+    const sha = path.relative(root, file).startsWith("..") ? undefined : hashFile(file);
+    if (!sha || sha === ref.sha) continue;
+    out.push(bump(e, { ...e.customData, lfxCode: { path: ref.path, ...(ref.line ? { line: ref.line } : {}), sha } }));
+  }
+  return out;
+}

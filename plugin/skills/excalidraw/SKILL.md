@@ -39,7 +39,7 @@ Call `excalidraw_guide` once per session before your first edit. It has the elem
 
 ## After a code change
 
-When the code changed and a diagram should follow (`/excalidraw:sync`, "update the diagram"), follow [references/update-after-code-change.md](references/update-after-code-change.md). In short: diff, `read_drawing` with `query` to find the affected elements by `code=` link and label, `snapshot_drawing`, one `apply_changes` with `if_rev` that keeps ids, render and check, then report each code change and the edit it caused.
+When the code changed and a diagram should follow (`/excalidraw:sync`, "update the diagram"), follow [references/update-after-code-change.md](references/update-after-code-change.md). In short: diff, `read_drawing` with `query` (and `check_code_links`) to find the affected elements by `code=` link and label, `snapshot_drawing`, one `apply_changes` with `if_rev` that keeps ids, render and check, `check_code_links` with `mark_reviewed`, then report each code change and the edit it caused.
 
 ## Check after every batch
 

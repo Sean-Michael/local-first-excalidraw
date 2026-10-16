@@ -10,7 +10,8 @@ import { listAnthropicModels } from "./ai/anthropic.js";
 import { listOllamaModels } from "./ai/ollama.js";
 import { listOpenAIModels } from "./ai/openai.js";
 import { apiKeyFor, type Endpoint, findClaude, SettingsError, SettingsStore } from "./ai/settings.js";
-import { CodeError, suggestFiles } from "./code.js";
+import { CodeError, resolveInRoot, suggestFiles } from "./code.js";
+import { checkLinks, formatCodeLink, hashFile, parseCodeLink, refreshLinks, stampCodeLinks, summarizeLinks } from "./codelinks.js";
 import {
   baseUrl,
   type Config,
@@ -20,11 +21,12 @@ import {
   VERSION,
   writeFileAtomic,
 } from "./config.js";
+import { copyName, duplicateFile, FileOpError, listFolders, makeFolder, moveFile, moveToTrash } from "./files.js";
+import { drawingStatus } from "./git.js";
 import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
 import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
 import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
-import { formatCodeLink, hashFile, parseCodeLink } from "./codelinks.js";
 import {
   addSkeletons,
   type Align,
@@ -59,6 +61,7 @@ import {
   safeEqual,
   SECURITY_HEADERS,
 } from "./security.js";
+import { editorCommand, editorSetting, launch } from "./open-code.js";
 import { DocStore, InvalidDrawingError, listDrawings, type SceneChange } from "./store.js";
 import { contextFromHeaders, runIn, shutdownTelemetry, withSpan } from "./telemetry.js";
 
@@ -213,7 +216,18 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   store.on("change", (ch: SceneChange) => {
     for (const c of clients.values()) {
       if (c.path === ch.path && c.id !== ch.origin) {
-        send(c, { t: "scene", path: ch.path, rev: ch.rev, scene: ch.scene, agent: ch.origin === "agent" || undefined });
+        // "agent": the in-app assistant; "mcp:<client>": an MCP agent; "daemon": the daemon's own
+        // bookkeeping (code-link hashes), which the tab that saved also needs to see.
+        const mcp = ch.origin?.startsWith("mcp:") ? ch.origin.slice(4) : undefined;
+        send(c, {
+          t: "scene",
+          path: ch.path,
+          rev: ch.rev,
+          scene: ch.scene,
+          agent: ch.origin === "agent" || mcp !== undefined || undefined,
+          by: mcp ?? (ch.origin === "agent" ? "assistant" : undefined),
+          quiet: ch.origin === "daemon" || undefined,
+        });
       }
     }
   });
@@ -366,9 +380,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   const agentPaths = new Set<string>();
 
   /** One drawing operation, from the HTTP API (MCP agents) or the assistant's tools. */
-  const op = (body: Record<string, unknown>) =>
+  /** `via` tags edits from an MCP client ("mcp:<client name>") so its tabs can undo and highlight them. */
+  const op = (body: Record<string, unknown>, via?: string) =>
     withSpan(`lfx.op ${String(body.op)}`, { "lfx.op": String(body.op) }, async (span) => {
-      const out = (await runOp(body)) as Record<string, unknown>;
+      const out = (await runOp(body, via)) as Record<string, unknown>;
       const p = String(out.path ?? body.path);
       // Writes report the new content revision, so the caller can chain if_rev.
       if (WRITE_OPS.has(String(body.op)) && typeof out.rev === "number") out.contentRev = contentRev(store.get(p).scene.elements);
@@ -387,12 +402,25 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       return out;
     });
 
-  const runOp = async (body: Record<string, unknown>) => {
+  /** Records the hash of newly linked files (customData.lfxCode) on the way in. */
+  const stamped = (p: string, elements: El[]): { elements: El[]; stamped: number } => {
+    let root: string;
+    try {
+      root = projectRootFor(p);
+    } catch {
+      return { elements, stamped: 0 };
+    }
+    return stampCodeLinks(elements, root);
+  };
+  const apply = (p: string, change: Parameters<DocStore["apply"]>[1], origin?: string) =>
+    store.apply(p, change.elements ? { ...change, elements: stamped(p, change.elements).elements } : change, origin);
+
+  const runOp = async (body: Record<string, unknown>, via?: string) => {
     const p = safe(body.path);
     // Overwriting is how an unreadable file (e.g. with merge conflict markers) is recovered.
     if (body.op === "create" && body.overwrite) store.discardInvalid(p);
     const { scene } = store.get(p);
-    const origin = agentPaths.has(p) ? "agent" : undefined;
+    const origin = agentPaths.has(p) ? "agent" : via;
     // Read-modify-write safety: refuse the write if the drawing changed since the caller read it.
     if (typeof body.if_rev === "string" && body.if_rev && WRITE_OPS.has(String(body.op))) {
       const now = contentRev(scene.elements);
@@ -412,13 +440,20 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
         const filter = { query: body.query as string | undefined, ids: body.ids as string[] | undefined, type: body.type as string | undefined };
         const only = filter.query || filter.ids?.length || filter.type ? findElements(doc.scene.elements, filter) : undefined;
+        let summary = describe(doc.scene, only);
+        try {
+          const links = checkLinks(only ? doc.scene.elements.filter((e) => only.has(e.id)) : doc.scene.elements, projectRootFor(p));
+          if (links.length) summary += `\n${summarizeLinks(links)}`;
+        } catch {
+          // outside every root: no link check
+        }
         return {
           path: p,
           rev: doc.rev,
           contentRev: contentRev(doc.scene.elements),
           total: doc.scene.elements.filter((e) => !(e.type === "text" && e.containerId)).length,
           matched: only?.size,
-          summary: describe(doc.scene, only),
+          summary,
           scene: body.full ? (only ? { ...doc.scene, elements: doc.scene.elements.filter((e) => only.has(e.id) || only.has(e.containerId)) } : doc.scene) : undefined,
         };
       }
@@ -437,7 +472,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         }
         // Keep what is being replaced, so a restore can itself be undone.
         const before = snapshots.save(p, store.getLive(p).scene, `before restoring ${snap.info.name}`);
-        const r = store.apply(p, { elements: restoreElements(scene.elements, snap.elements), files: snap.files, replace: true }, origin);
+        const r = apply(p, { elements: restoreElements(scene.elements, snap.elements), files: snap.files, replace: true }, origin);
         return { path: p, rev: r.rev, restored: snap.info, saved: before };
       }
       case "apply": {
@@ -452,19 +487,33 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           ({ elements, created } = addSkeletons(elements, els));
         }
         if (Array.isArray(body.update) && body.update.length) elements = updateElements(elements, codeLinks(body.update as ElementUpdate[], root(), notes, elements));
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, deleted, notes };
       }
       case "arrange": {
         const elements = arrangeElements(scene.elements, (body.ids as string[]) ?? [], { align: body.align as Align | undefined, distribute: body.distribute as Distribute | undefined });
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev };
+      }
+      case "check_links": {
+        const doc = store.getLive(p);
+        if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
+        const links = checkLinks(doc.scene.elements, projectRootFor(p));
+        return { path: p, rev: doc.rev, links, summary: summarizeLinks(links) };
+      }
+      case "review_links": {
+        // "Mark as reviewed": the linked code was checked, so its current hash becomes the baseline.
+        const ids = Array.isArray(body.ids) ? (body.ids as string[]) : undefined;
+        const updated = refreshLinks(live(scene.elements), projectRootFor(p), ids);
+        if (!updated.length) return { path: p, rev: store.get(p).rev, reviewed: 0 };
+        const r = apply(p, { elements: updated }, origin);
+        return { path: p, rev: r.rev, reviewed: updated.length };
       }
       case "create": {
         if (store.exists(p) && !body.overwrite) throw new HttpError(409, `${p} already exists (pass overwrite: true to replace it)`);
         // Built over tombstones of the old content, so reused ids outrank it.
         const { elements, created } = addSkeletons(cleared(scene.elements), codeLinks((body.elements as SkeletonEl[]) ?? [], root(), notes));
-        const r = store.apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
+        const r = apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
         return { path: p, rev: r.rev, created, notes };
       }
       case "connect": {
@@ -476,7 +525,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         if (!existing) {
           const arrow = { type: "arrow", id, start: { id: from }, end: { id: to }, label: body.label, strokeStyle: body.style ?? "solid", startArrowhead: body.bidirectional ? "arrow" : null };
           const { elements, created } = addSkeletons(scene.elements, [arrow as SkeletonEl]);
-          const r = store.apply(p, { elements }, origin);
+          const r = apply(p, { elements }, origin);
           return { path: p, rev: r.rev, id: created[0], rebound: false };
         }
         let elements = connectArrow(scene.elements, existing.id, from, to);
@@ -485,13 +534,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         if (typeof body.style === "string") style.strokeStyle = body.style;
         if (typeof body.bidirectional === "boolean") style.startArrowhead = body.bidirectional ? "arrow" : null;
         if (Object.keys(style).length > 1) elements = updateElements(elements, [style]);
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, id: existing.id, rebound: true };
       }
       case "add": {
         const els = codeLinks(appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined), root(), notes);
         const { elements, created } = addSkeletons(scene.elements, els);
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, notes };
       }
       case "diagram": {
@@ -553,7 +602,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           return { ...e, element: { ...(e.element as El), link: withLink.link, customData: { ...(e.element as El).customData, ...(withLink.customData as object) } } };
         });
         const { elements, created } = addSkeletons(base, codeLinks(linked, root(), notes));
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, notes };
       }
       case "shapes": {
@@ -606,25 +655,25 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           else [x, y] = [t.maxX + gap, cy - probe.height / 2];
         }
         const placed = placeShape(shape, { x, y, scale, label, anchorId: id });
-        const r = store.apply(p, { elements: placed.elements }, origin);
+        const r = apply(p, { elements: placed.elements }, origin);
         return { path: p, rev: r.rev, shape: shape.key, anchor: placed.anchorId, created: placed.ids, bounds: placed.bounds };
       }
       case "update": {
         const elements = updateElements(scene.elements, codeLinks((body.updates as ElementUpdate[]) ?? [], root(), notes, scene.elements));
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, notes };
       }
       case "delete": {
         const { elements, deleted } = deleteElements(scene.elements, (body.ids as string[]) ?? []);
-        const r = store.apply(p, { elements }, origin);
+        const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, deleted };
       }
       case "replace": {
-        const r = store.apply(p, { elements: body.elements as El[], replace: true }, origin);
+        const r = apply(p, { elements: body.elements as El[], replace: true }, origin);
         return { path: p, rev: r.rev };
       }
       case "clear": {
-        const r = store.apply(p, { elements: [], replace: true }, origin);
+        const r = apply(p, { elements: [], replace: true }, origin);
         return { path: p, rev: r.rev };
       }
       case "render": {
@@ -660,7 +709,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         const b = bounds(scene.elements);
         const nb = bounds(incoming);
         if (b && nb) incoming = incoming.map((e) => ({ ...e, x: e.x + b.maxX + 120 - nb.minX, y: e.y + b.minY - nb.minY }));
-        const r = store.apply(p, { elements: [...scene.elements, ...incoming], files: conv.files }, origin);
+        const r = apply(p, { elements: [...scene.elements, ...incoming], files: conv.files }, origin);
         return { path: p, rev: r.rev, created: incoming.filter((e) => !e.containerId).map((e) => e.id) };
       }
       default:
@@ -803,6 +852,63 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     });
   };
 
+  /** Tells tabs showing `from` where their drawing went. */
+  const announceMove = (from: string, to: string) => {
+    for (const c of clients.values()) if (c.path === from) send(c, { t: "moved", path: from, to });
+  };
+
+  /** Drawing file management for the drawing list and editor menu. Every path is checked against the roots. */
+  const fileOp = async (name: string, method: string, req: IncomingMessage): Promise<unknown> => {
+    if (name === "git" && method === "GET") return { status: await drawingStatus(roots()) };
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    const body = await readBody(req);
+    try {
+      switch (name) {
+        case "rename":
+        case "move": {
+          const from = safe(body.path);
+          // `to` is a full new path; `dir` keeps the name and changes the folder.
+          const to = name === "move" ? safe(path.join(safeDir(String(body.dir ?? "")), path.basename(from))) : safe(body.to);
+          if (to === from) return { path: to };
+          if (!store.exists(from)) throw new HttpError(404, `No drawing at ${from}`);
+          announceMove(from, to);
+          moveFile(from, to);
+          store.get(from); // notices the file is gone
+          return { path: to };
+        }
+        case "duplicate": {
+          const from = safe(body.path);
+          const to = body.to ? safe(body.to) : copyName(from);
+          duplicateFile(from, safe(to));
+          return { path: to };
+        }
+        case "trash": {
+          const p = safe(body.path);
+          if (!store.exists(p)) throw new HttpError(404, `No drawing at ${p}`);
+          const trashed = moveToTrash(p);
+          store.get(p); // tabs on it get "deleted" and offer to restore
+          return { path: p, trashed };
+        }
+        case "folder": {
+          let dir: string;
+          try {
+            dir = resolveSafePath(String(body.path ?? ""), roots(), [""]);
+          } catch (e) {
+            if (e instanceof PathError) throw new HttpError(403, e.message);
+            throw e;
+          }
+          if (roots().some((r) => path.resolve(r) === dir)) throw new HttpError(409, "That folder already exists");
+          makeFolder(dir);
+          return { path: dir };
+        }
+      }
+    } catch (e) {
+      if (e instanceof FileOpError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
+    throw new HttpError(404, "Not found");
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (!hostAllowed(req, cfg.allowedHosts)) return json(res, 421, { error: "Host not allowed" });
     if (!originAllowed(req, cfg.allowedHosts)) return json(res, 403, { error: "Cross-origin request refused" });
@@ -859,7 +965,39 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
 
     if (pathname === "/api/files" && method === "GET") {
       const rs = roots();
-      return json(res, 200, { roots: rs, drawings: listDrawings(rs) });
+      return json(res, 200, { roots: rs, drawings: listDrawings(rs), folders: listFolders(rs) });
+    }
+    if (pathname.startsWith("/api/files/")) return json(res, 200, await fileOp(pathname.slice("/api/files/".length), method, req));
+    if (pathname === "/api/open-code" && method === "POST") {
+      // A code link clicked in the editor: open that file in the user's editor, never a browser tab.
+      const body = await readBody(req);
+      const drawing = safe(body.drawing);
+      const target = parseCodeLink(String(body.link ?? ""));
+      if (!target) throw new HttpError(400, "Not a code link (expected a project-relative path like src/a.ts#L42)");
+      let file: string;
+      try {
+        file = resolveInRoot(projectRootFor(drawing), target.path).abs;
+      } catch (e) {
+        if (e instanceof CodeError) throw new HttpError(/No such file/.test(e.message) ? 404 : 403, e.message);
+        throw e;
+      }
+      if (!fs.statSync(file).isFile()) throw new HttpError(400, `${target.path} is not a file`);
+      let l;
+      try {
+        l = editorCommand(file, target.line, editorSetting(cfg.stateDir));
+        await launch(l);
+      } catch (e) {
+        throw new HttpError(502, (e as Error).message);
+      }
+      return json(res, 200, { ok: true, file, line: target.line ?? null, editor: l.via });
+    }
+    if (pathname === "/api/links" && method === "GET") {
+      return json(res, 200, await op({ op: "check_links", path: url.searchParams.get("path") }));
+    }
+    if (pathname === "/api/links/review" && method === "POST") {
+      const body = await readBody(req);
+      // Only bookkeeping changes, so tabs take it quietly.
+      return json(res, 200, await op({ op: "review_links", path: body.path, ids: body.ids }, "daemon"));
     }
     if (pathname === "/api/scene" && method === "GET") {
       const p = safe(url.searchParams.get("path"));
@@ -979,7 +1117,9 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     // ---- local clients only (MCP server, CLI) ----
     if (pathname === "/api/op" && method === "POST") {
       bearerOnly();
-      return json(res, 200, await op(await readBody(req)));
+      // Edits from MCP clients go on the open tabs' undo stack, labelled with the client's name.
+      const agent = String(req.headers["x-lfx-agent"] ?? "").replace(/[^\w .@/-]/g, "").slice(0, 40);
+      return json(res, 200, await op(await readBody(req), `mcp:${agent}`));
     }
     if (pathname === "/api/list" && method === "POST") {
       bearerOnly();
@@ -1125,6 +1265,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
 
   const onMessage = (c: Client, msg: Record<string, unknown>) => {
     // The headless renderer only answers requests: it never opens, saves or chats.
+    if (msg.t === "ping") return send(c, { t: "pong" });
     if (c.renderer && msg.t !== "reply") return;
     switch (msg.t) {
       case "open": {
@@ -1175,15 +1316,17 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           send(c, { t: "deleted", path: c.path });
           return;
         }
+        // A link the user just typed gets its file's hash; the saving tab must then hear back.
+        const s = stamped(c.path, Array.isArray(msg.elements) ? (msg.elements as El[]) : []);
         store.apply(
           c.path,
           {
             fromEditor: true,
-            elements: msg.elements as El[],
+            elements: Array.isArray(msg.elements) ? s.elements : undefined,
             appState: msg.appState as Record<string, unknown>,
             files: msg.files as Record<string, unknown>,
           },
-          c.id,
+          s.stamped ? "daemon" : c.id,
         );
         return;
       }

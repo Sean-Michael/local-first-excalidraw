@@ -68,10 +68,11 @@ Relative drawing paths resolve against the project root. A bare name such as `au
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
 | `apply_changes` | `add`, `update` and `delete` in one call and one revision (deletes, then adds, then updates). If any part fails, nothing changes. |
 | `arrange_elements` | Aligns elements (left, center, right, top, middle, bottom) or distributes them evenly (horizontal, vertical) by id. Each moves with its label, its group or, for a frame, its children. |
-| `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=… code=src/a.ts#L4`, with arrows as `from -> to`, and the drawing's `rev`. `query` (label, text or link substring), `ids` and `type` filter it; matches bring the arrows attached to them. Raw JSON on request. |
+| `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=… code=src/a.ts#L4`, with arrows as `from -> to`, and the drawing's `rev`. `query` (label, text or link substring), `ids` and `type` filter it; matches bring the arrows attached to them. Raw JSON on request. Ends with the state of any code links. |
 | `snapshot_drawing` | Saves the drawing's current state in the state directory (not the project). Each drawing keeps its newest 20. |
 | `list_snapshots` | A drawing's snapshots, newest first. |
 | `restore_drawing` | Puts the drawing back to a snapshot (by id or name, default the newest) in one revision. It snapshots the current state first, so a restore can be undone. |
+| `check_code_links` | Each code-linked element (`link: "src/a.ts#L42"`) as ok, changed, missing or unknown. `mark_reviewed: true` records the linked files' current state once the diagram is up to date. See [Diagrams that reference code](projects.md#diagrams-that-reference-code). |
 | `render_drawing` | A PNG of the drawing for the agent to look at. `element_ids` or `region` renders a close-up of part of it at full size, and the result says how big the smallest text appears. |
 | `export_drawing` | Writes `name.excalidraw.svg` (scene embedded, so it's viewable on GitHub and still editable) or `.png`. |
 | `list_drawings` | Drawings in the project, most recently modified first. |

@@ -14,6 +14,7 @@ import {
 import type { ExcalidrawImperativeAPI, LibraryItems } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chat, type ChatBridge } from "./Chat";
+import { dirOf, files, folderOptions, useDialog } from "./FileActions";
 import { api, basename, type RenderOpts, type SceneData, type ServerMsg, type Status, Sync } from "./sync";
 
 const SAVE_DEBOUNCE_MS = 250;
@@ -82,6 +83,62 @@ async function normalize(elements: any[]): Promise<{ elements: any[]; fixed: num
   return { elements: out, fixed };
 }
 
+/** Live elements an incoming scene adds or changes, with bound labels folded into their containers. */
+function changedIds(local: any[], remote: any[]): string[] {
+  const before = new Map(local.map((e) => [e.id, e]));
+  const out = new Set<string>();
+  for (const e of remote) {
+    if (e.isDeleted) continue;
+    const old = before.get(e.id);
+    if (old && !old.isDeleted && old.version >= e.version) continue;
+    out.add(e.containerId && remote.some((c) => c.id === e.containerId) ? e.containerId : e.id);
+  }
+  return [...out];
+}
+
+const HIGHLIGHT_MS = 1500;
+const AGENT_TOAST_MS = 6000;
+const OFFLINE_BANNER_MS = 3000;
+const LINKS_REFRESH_MS = 10_000;
+
+/** "claude-code" -> "Claude Code"; the in-app assistant and unnamed clients get generic names. */
+export function agentName(by: string | undefined): string {
+  if (by === "assistant") return "The assistant";
+  if (!by) return "An agent";
+  if (/^claude[- ]code$/i.test(by)) return "Claude Code";
+  return by;
+}
+
+interface LinkReport {
+  id: string;
+  path: string;
+  line?: number;
+  state: "ok" | "changed" | "missing" | "unknown";
+}
+
+/** "3 links changed", "1 link missing", "2 links changed, 1 missing". */
+export function linksLabel(stale: Pick<LinkReport, "state">[]): string {
+  const changed = stale.filter((l) => l.state === "changed").length;
+  const missing = stale.filter((l) => l.state === "missing").length;
+  const n = (k: number) => `${k} link${k === 1 ? "" : "s"}`;
+  if (changed && missing) return `${n(changed)} changed, ${missing} missing`;
+  return changed ? `${n(changed)} changed` : `${n(missing)} missing`;
+}
+
+/** Scene-space box of an element, for the highlight overlay. */
+function sceneBox(e: any): { x: number; y: number; w: number; h: number } {
+  if (Array.isArray(e.points) && e.points.length) {
+    const xs = e.points.map((p: number[]) => p[0]);
+    const ys = e.points.map((p: number[]) => p[1]);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    return { x: e.x + minX, y: e.y + minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY };
+  }
+  return { x: e.x, y: e.y, w: e.width, h: e.height };
+}
+
+const isCodeLink = (link: string) => !!link && !/^[a-z][a-z0-9+.-]*:/i.test(link) && !link.startsWith("/") && !link.startsWith("#");
+
 export async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: string; mime: string; scale?: number }> {
   const elements = (await normalize(scene.elements)).elements.filter((e) => !e.isDeleted);
   if (!elements.length) throw new Error("The drawing is empty");
@@ -139,6 +196,107 @@ export function Editor({ path }: { path: string }) {
   const [selectionCount, setSelectionCount] = useState(0);
   const selectionKey = useRef("");
   const chatListeners = useRef(new Set<(m: ServerMsg) => void>());
+  const [offline, setOffline] = useState(false);
+  const [agentEdit, setAgentEdit] = useState<{ ids: string[]; who: string; key: number } | null>(null);
+  const [highlight, setHighlight] = useState<{ boxes: { x: number; y: number; w: number; h: number }[]; key: number } | null>(null);
+  const [view, setView] = useState({ scrollX: 0, scrollY: 0, zoom: 1 });
+  const [links, setLinks] = useState<LinkReport[]>([]);
+  const [dialog, ask] = useDialog();
+
+  // Stable entry points for the sync callbacks; the refs hold the current implementations.
+  const linksImpl = useRef<() => void>(() => {});
+  const refreshLinks = useCallback(() => linksImpl.current(), []);
+  const agentEditImpl = useRef<(ids: string[], by?: string) => void>(() => {});
+  const showAgentEdit = useCallback((ids: string[], by?: string) => agentEditImpl.current(ids, by), []);
+
+  const select = useCallback(
+    (ids: string[]) => {
+      if (!excalidraw || !ids.length) return;
+      const set = new Set(ids);
+      const els = excalidraw.getSceneElements().filter((e) => set.has(e.id));
+      excalidraw.updateScene({
+        appState: { selectedElementIds: Object.fromEntries(els.map((e) => [e.id, true])) } as any,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      if (els.length) excalidraw.scrollToContent(els, { fitToContent: els.length > 1, animate: true });
+    },
+    [excalidraw],
+  );
+
+  agentEditImpl.current = (ids, by) => {
+    if (!excalidraw) return;
+    const set = new Set(ids);
+    const boxes = excalidraw
+      .getSceneElements()
+      .filter((e) => set.has(e.id))
+      .map(sceneBox);
+    const st = excalidraw.getAppState();
+    setView({ scrollX: st.scrollX, scrollY: st.scrollY, zoom: st.zoom.value });
+    const key = Date.now();
+    setHighlight({ boxes, key });
+    setAgentEdit({ ids, who: agentName(by), key });
+  };
+
+  useEffect(() => {
+    if (!highlight) return;
+    const t = window.setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
+    return () => window.clearTimeout(t);
+  }, [highlight]);
+  useEffect(() => {
+    if (!agentEdit) return;
+    const t = window.setTimeout(() => setAgentEdit(null), AGENT_TOAST_MS);
+    return () => window.clearTimeout(t);
+  }, [agentEdit]);
+
+  // A short blip isn't worth a banner; a few seconds without the daemon is.
+  // (Keyed on live or not: reconnect attempts flip between offline and connecting.)
+  const live = status === "live";
+  useEffect(() => {
+    if (live) return setOffline(false);
+    const t = window.setTimeout(() => setOffline(true), OFFLINE_BANNER_MS);
+    return () => window.clearTimeout(t);
+  }, [live]);
+
+  // Code-link staleness: the linked files change outside the app, so poll while visible.
+  linksImpl.current = () => {
+    api<{ links: LinkReport[] }>("GET", `/api/links?path=${encodeURIComponent(path)}`)
+      .then((r) => setLinks(r.links))
+      .catch(() => {});
+  };
+  useEffect(() => {
+    const tick = () => document.visibilityState === "visible" && refreshLinks();
+    const timer = window.setInterval(tick, LINKS_REFRESH_MS);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", tick);
+    };
+  }, [refreshLinks]);
+  const stale = links.filter((l) => l.state === "changed" || l.state === "missing");
+
+  const reviewLinks = useCallback(async () => {
+    try {
+      const r = await api<{ reviewed: number }>("POST", "/api/links/review", { path, ids: stale.map((l) => l.id) });
+      excalidraw?.setToast({ message: `Marked ${r.reviewed} link${r.reviewed === 1 ? "" : "s"} as reviewed`, duration: 1500, closable: false });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    refreshLinks();
+  }, [excalidraw, path, stale, refreshLinks]);
+
+  const onLinkOpen = useCallback(
+    (element: any, event: CustomEvent<{ nativeEvent: MouseEvent | React.PointerEvent<HTMLCanvasElement> }>) => {
+      const link = String(element.link ?? "");
+      if (!isCodeLink(link)) return;
+      // A code link: open it in the user's editor rather than as a URL relative to this page.
+      event.preventDefault();
+      api<{ editor: string }>("POST", "/api/open-code", { drawing: path, link })
+        .then(() => excalidraw?.setToast({ message: `Opening ${link}`, duration: 1500, closable: false }))
+        .catch((e: Error) => setError(`Could not open ${link}: ${e.message}`));
+    },
+    [excalidraw, path],
+  );
+
 
   const toggleChat = useCallback((open?: boolean) => {
     setChatOpen((v) => {
@@ -152,10 +310,18 @@ export function Editor({ path }: { path: string }) {
     });
   }, []);
 
-  // The macOS app toggles the panel from its toolbar.
-  useEffect(() => {
-    (window as any).lfx = { toggleChat: () => toggleChat() };
+  // ⇧⌘A can reach both the macOS app's menu and this page; one press must toggle once.
+  const lastToggle = useRef(0);
+  const toggleOnce = useCallback(() => {
+    if (Date.now() - lastToggle.current < 300) return;
+    lastToggle.current = Date.now();
+    toggleChat();
   }, [toggleChat]);
+
+  // The macOS app toggles the panel from its toolbar and menu.
+  useEffect(() => {
+    (window as any).lfx = { toggleChat: toggleOnce };
+  }, [toggleOnce]);
 
   useEffect(() => {
     document.title = `${basename(path)} · Excalidraw`;
@@ -185,11 +351,12 @@ export function Editor({ path }: { path: string }) {
   }, [excalidraw, path]);
 
   const applyRemote = useCallback(
-    async (scene: SceneData, first: boolean, agent = false) => {
+    async (scene: SceneData, first: boolean, agent = false, by?: string, quiet = false) => {
       const x = excalidraw!;
       const { elements: remote, fixed } = await normalize(scene.elements);
       const local = x.getSceneElementsIncludingDeleted();
       const wasEmpty = !local.some((e) => !e.isDeleted);
+      const changed = agent && !first ? changedIds(local as any[], remote) : [];
       const merged = reconcileElements(local, remote as any, x.getAppState());
       const files = Object.values(scene.files ?? {}) as any[];
       for (const f of files) sentFiles.current.add(f.id);
@@ -209,14 +376,47 @@ export function Editor({ path }: { path: string }) {
           requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: false }));
         }
       } else if (!agent) {
-        x.setToast({ message: "Drawing updated", duration: 1200, closable: false });
-      } else if (wasEmpty && merged.some((e) => !e.isDeleted)) {
-        // The assistant just drew on a blank canvas: bring its work into view.
-        requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: true }));
+        if (!quiet) x.setToast({ message: "Drawing updated", duration: 1200, closable: false });
+      } else {
+        if (wasEmpty && merged.some((e) => !e.isDeleted)) {
+          // The agent just drew on a blank canvas: bring its work into view.
+          requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: true }));
+        }
+        if (changed.length) showAgentEdit(changed, by);
       }
       if (fixed > 0) flush();
+      refreshLinks();
     },
     [excalidraw, flush],
+  );
+
+  const fileAction = useCallback(
+    async (kind: "rename" | "duplicate" | "move" | "trash") => {
+      try {
+        if (kind === "rename") {
+          const v = await ask({ title: "Rename drawing", value: basename(path), confirm: "Rename" });
+          if (v && v !== basename(path)) await files.rename(path, v); // the daemon then tells this tab where it went
+        } else if (kind === "duplicate") {
+          const r = await files.duplicate(path);
+          window.open(`/?file=${encodeURIComponent(r.path)}`, "_blank");
+        } else if (kind === "move") {
+          const d = await files.list();
+          const options = folderOptions(d.roots, d.folders, dirOf(path));
+          if (!options.length) return setError("There is no other folder to move it to. Create one from All drawings.");
+          const v = await ask({ title: `Move ${basename(path)} to`, options, confirm: "Move" });
+          if (v) await files.move(path, v);
+        } else {
+          const ok = await ask({ title: `Move ${basename(path)} to the trash?`, message: "You can restore it from the system trash.", confirm: "Move to trash", danger: true });
+          if (ok) {
+            flush();
+            await files.trash(path);
+          }
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [ask, path, flush],
   );
 
   useEffect(() => {
@@ -247,7 +447,11 @@ export function Editor({ path }: { path: string }) {
           if (m.exists === false && first) createNext.current = true;
           const isFirst = first;
           first = false;
-          chain = chain.then(() => applyRemote(m.scene, isFirst, !!m.agent)).catch((e: Error) => setError(e.message));
+          chain = chain.then(() => applyRemote(m.scene, isFirst, !!m.agent, m.by, !!m.quiet)).catch((e: Error) => setError(e.message));
+        } else if (m.t === "moved" && m.path === path) {
+          // Renamed or moved from the drawing list or another tab: follow it.
+          deletedRef.current = true;
+          location.replace(`/?file=${encodeURIComponent(m.to)}`);
         } else if ((m.t === "chat" && m.path === path) || m.t === "chat-error") {
           for (const fn of chatListeners.current) fn(m);
         } else if (m.t === "render") reply(m.id, render(m.scene, m.opts));
@@ -264,10 +468,18 @@ export function Editor({ path }: { path: string }) {
         libraryHash.current = JSON.stringify(libraryItems ?? []);
         return excalidraw.updateLibrary({ libraryItems: libraryItems ?? [], merge: false });
       })
-      .catch(() => {});
+      .catch((e: Error) => excalidraw.setToast({ message: `Could not load your library: ${e.message}`, duration: 6000, closable: true }));
+    refreshLinks();
 
     // Cmd/Ctrl+S: we autosave, so just flush and confirm instead of opening a save dialog.
     const onKey = (e: KeyboardEvent) => {
+      // ⇧⌘A / Ctrl+Shift+A: show or hide the assistant, even from inside it.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOnce();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && !e.shiftKey) {
         // Editors in the side panel (settings JSON) save themselves.
         if ((e.target as Element | null)?.closest?.("[data-lfx-own-save]")) return;
@@ -288,7 +500,7 @@ export function Editor({ path }: { path: string }) {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("beforeunload", onUnload);
     };
-  }, [excalidraw, path, applyRemote, flush]);
+  }, [excalidraw, path, applyRemote, flush, toggleOnce, refreshLinks]);
 
   const onChange = useCallback(
     (_els: readonly unknown[], appState: any) => {
@@ -362,8 +574,12 @@ export function Editor({ path }: { path: string }) {
     const s = JSON.stringify(items);
     if (s === libraryHash.current) return;
     libraryHash.current = s;
-    api("PUT", "/api/library", { libraryItems: items }).catch(() => {});
-  }, []);
+    api("PUT", "/api/library", { libraryItems: items }).catch((e: Error) => {
+      // Forget the hash so the next change retries the save.
+      libraryHash.current = "";
+      excalidraw?.setToast({ message: `Could not save your library: ${e.message}`, duration: 6000, closable: true });
+    });
+  }, [excalidraw]);
 
   return (
     <div className={`lfx-editor${chatOpen ? " lfx-with-chat" : ""}`} data-theme={liveTheme}>
@@ -373,6 +589,8 @@ export function Editor({ path }: { path: string }) {
         initialData={{ appState: { theme } }}
         onChange={onChange}
         onLibraryChange={onLibraryChange}
+        onLinkOpen={onLinkOpen}
+        onScrollChange={(scrollX, scrollY, zoom) => highlight && setView({ scrollX, scrollY, zoom: zoom.value })}
         aiEnabled={false}
         validateEmbeddable={() => false}
         UIOptions={{
@@ -386,6 +604,30 @@ export function Editor({ path }: { path: string }) {
                 {basename(path)}
               </a>
             </div>
+            {stale.length > 0 && (
+              <div className="lfx-badge lfx-links" role="group" aria-label="Code links">
+                <button
+                  type="button"
+                  className="lfx-links-btn"
+                  onClick={() => select(stale.map((l) => l.id))}
+                  title={stale.map((l) => `${l.path}${l.line ? `#L${l.line}` : ""}: ${l.state}`).join("\n")}
+                >
+                  <span className="lfx-dot lfx-connecting" aria-hidden />
+                  {linksLabel(stale)}
+                </button>
+                <button
+                  type="button"
+                  className="lfx-links-btn lfx-links-review"
+                  onClick={reviewLinks}
+                  aria-label="Mark as reviewed"
+                  title="Mark as reviewed: the diagram is up to date with this code"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden>
+                    <path d="M4 10.5l4 4 8-9" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {!chatOpen && (
               <button type="button" className="lfx-badge lfx-ai-toggle" onClick={() => toggleChat(true)} title="Open the assistant">
                 <svg viewBox="0 0 20 20" aria-hidden>
@@ -393,6 +635,7 @@ export function Editor({ path }: { path: string }) {
                   <path d="M15.5 13l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
                 </svg>
                 Assistant
+                <kbd className="lfx-kbd">{navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A"}</kbd>
               </button>
             )}
           </div>
@@ -400,7 +643,14 @@ export function Editor({ path }: { path: string }) {
       >
         <MainMenu>
           <MainMenu.Item onSelect={() => (location.href = "/")}>All drawings</MainMenu.Item>
-          <MainMenu.Item onSelect={() => toggleChat()}>{chatOpen ? "Hide assistant" : "Show assistant"}</MainMenu.Item>
+          <MainMenu.Item onSelect={() => toggleChat()} shortcut={navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A"}>
+            {chatOpen ? "Hide assistant" : "Show assistant"}
+          </MainMenu.Item>
+          <MainMenu.Separator />
+          <MainMenu.Item onSelect={() => void fileAction("rename")}>Rename…</MainMenu.Item>
+          <MainMenu.Item onSelect={() => void fileAction("duplicate")}>Duplicate</MainMenu.Item>
+          <MainMenu.Item onSelect={() => void fileAction("move")}>Move to folder…</MainMenu.Item>
+          <MainMenu.Item onSelect={() => void fileAction("trash")}>Move to trash</MainMenu.Item>
           <MainMenu.Separator />
           <MainMenu.DefaultItems.Export />
           <MainMenu.DefaultItems.SaveAsImage />
@@ -412,6 +662,41 @@ export function Editor({ path }: { path: string }) {
           <MainMenu.DefaultItems.ChangeCanvasBackground />
         </MainMenu>
       </Excalidraw>
+      {highlight && (
+        <div className="lfx-highlights" key={highlight.key} aria-hidden>
+          {highlight.boxes.map((b, i) => (
+            <div
+              key={i}
+              className="lfx-highlight"
+              style={{
+                left: (b.x + view.scrollX) * view.zoom - 6,
+                top: (b.y + view.scrollY) * view.zoom - 6,
+                width: b.w * view.zoom + 12,
+                height: b.h * view.zoom + 12,
+              }}
+            />
+          ))}
+        </div>
+      )}
+      {agentEdit && (
+        // Pointer events stay here, or the canvas treats the click as one on empty space and deselects.
+        <div className="lfx-toast" role="status" key={agentEdit.key} onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+          {agentEdit.who} edited {agentEdit.ids.length} element{agentEdit.ids.length === 1 ? "" : "s"}
+          <button
+            type="button"
+            onClick={() => {
+              const ids = agentEdit.ids;
+              setAgentEdit(null);
+              requestAnimationFrame(() => select(ids));
+            }}
+          >
+            Select
+          </button>
+          <button type="button" className="lfx-toast-close" aria-label="Dismiss" onClick={() => setAgentEdit(null)}>
+            ×
+          </button>
+        </div>
+      )}
       </div>
       {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} dark={liveTheme === "dark"} onClose={() => toggleChat(false)} />}
       {deleted && (
@@ -431,11 +716,20 @@ export function Editor({ path }: { path: string }) {
           </button>
         </div>
       )}
-      {error && (
-        <div className="lfx-error" role="alert" onClick={() => setError(null)}>
-          {error}
+      {offline && !deleted && (
+        <div className="lfx-error lfx-offline-banner" role="alert">
+          Not connected to the daemon. Edits are kept in this tab and saved when it reconnects.
         </div>
       )}
+      {error && (
+        <div className="lfx-error" role="alert">
+          {error}
+          <button type="button" onClick={() => setError(null)} aria-label="Dismiss the error">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {dialog}
     </div>
   );
 }

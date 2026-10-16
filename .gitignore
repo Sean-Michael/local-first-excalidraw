@@ -5,3 +5,5 @@ dist/
 workspace/
 build/
 macos/.build/
+evals/results/*
+!evals/results/README.md

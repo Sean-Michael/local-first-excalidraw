@@ -60,6 +60,16 @@ Each message carries:
 
 With **Read project files** on (the default), the model can also list, search and read files in the drawing's git repository on its own. File access is read-only, never leaves the repository, skips dependencies and `.gitignore`d paths, and refuses anything that looks like a secret (`.env`, keys, credentials).
 
+## How it draws
+
+The assistant has the same drawing tools as MCP agents ([the tool list](mcp.md#tools)) and follows the same rules as the plugin's skills:
+
+- It prefers `create_diagram` for new diagrams and edits existing ones in place, keeping element ids, so your layout, colours and notes survive. It redraws a whole drawing only when you ask it to start over.
+- After each batch of edits, a model that accepts images renders the drawing, says what it sees wrong ("I see the cache box covering an arrow"), fixes it and renders again.
+- It links nodes to the files they stand for (`code=src/orders/repo.ts#L42` in the drawing description), so when you say the code changed it can read those files, find what was added, removed or renamed, and update just those elements.
+- For "which diagram should this be" and the conventions of C4, sequence, state, ER, data flow, infrastructure and messaging diagrams, it reads the reference notes with `diagram_reference`, the same notes the architecture-diagrams skill gives Claude Code.
+- Before a large change it can snapshot the drawing; `restore_drawing` puts the snapshot back. Snapshots are kept in the state directory, not in the project.
+
 ## Chats and history
 
 **+** starts a new chat; the previous one stays under the clock icon, newest first, so you can reopen it and carry on where you left off, or delete it. Each chat remembers its model: switching the model picker changes the open chat and becomes the default for new ones, so chats on other drawings keep the model they started with. If a chat switches between Claude Code and another endpoint, the earlier turns are passed along as text.

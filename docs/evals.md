@@ -56,8 +56,10 @@ They live in `evals/scenarios.json`. Each has the common skill-eval fields (`pro
 | Id | Tests |
 |---|---|
 | `arch-overview` | Architecture diagram from the code, with the real service names and calls |
+| `c4-container` | A C4 container diagram: a person outside a frame for the system boundary, containers labelled with their technology, external systems outside |
 | `request-flow` | The place-order path, from the gateway to the confirmation email, including the declined-card branch |
 | `code-change-update` | After a commit adds `stockroom-inventory`: the existing diagram gains the node and its edges, and keeps at least 80% of its ids |
+| `sync-after-change` | The same commit, driven by the `/excalidraw:sync` command on a diagram with code links: the new node is linked to its source and 90% of ids are kept |
 | `code-change-remove` | After Redis is replaced by an in-memory cache: Redis is gone and every node's code link points at a file that exists |
 | `code-change-webhook` | After a Paylode webhook endpoint is added: an edge from Paylode back into the system |
 | `preserve-manual-edits` | Adding a node to a drawing the user has moved, recoloured and annotated by hand, without undoing any of it |
@@ -77,6 +79,7 @@ The graders in `evals/grade.ts` are deterministic and read only the `.excalidraw
 |---|---|
 | `finite` | No element has a NaN or infinite coordinate, size or point. Always on |
 | `required-labels` | Each synonym list matches some text (bound labels, free text, frame names) |
+| `required-frames` | Each synonym list matches the name of some frame (a system or trust boundary) |
 | `forbidden-labels` | None of these match any text |
 | `required-edges` | For each edge, an arrow is bound from an element whose label matches `from` to one matching `to`. `undirected` and double-headed arrows match either way. Library icons are named by their caption |
 | `min-shapes`, `min-arrows` | At least this many shapes or arrows |

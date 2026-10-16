@@ -9,7 +9,7 @@ The Excalidraw editor running entirely on your machine, with a drawing assistant
 - **Your files are the source of truth.** Drawings are `.excalidraw` JSON (default `docs/diagrams/`), written with stable formatting for clean git diffs.
 - **Live in both directions.** An agent's edit shows up in your open tab immediately. Your edits are saved within about 250 ms. A change on disk (an editor, `git checkout`) updates the tab too.
 - **An assistant that reads your code.** Ask for a diagram of part of the project and it searches and reads the repository (read-only), then draws with real library shapes. Select items to ask about just those. It works with Ollama, LM Studio, llama.cpp, any OpenAI-compatible server, the Anthropic API, or your local Claude Code login.
-- **Tools for coding agents.** Claude Code, Cursor, VS Code and other MCP clients get the same tools the assistant uses: graph to auto-laid-out diagram, Mermaid to Excalidraw, library shapes, bound arrows, plus a text description and a PNG render so they can check their work.
+- **Tools for coding agents.** Claude Code, Cursor, VS Code and other MCP clients get the same tools the assistant uses: graph to auto-laid-out diagram, Mermaid to Excalidraw, library shapes, bound arrows, code links, snapshots, plus a text description and a PNG render so they can check their work.
 - **No network by default.** No CDN, telemetry, share links or collaboration server. [Tracing](docs/tracing.md) is opt-in and meant for a receiver on your machine. The page can only talk to the local daemon, which listens on `127.0.0.1`.
 
 ## Quick start
@@ -84,7 +84,7 @@ claude mcp add excalidraw -- lfx mcp
 
 Then ask it to *"draw the request path through our API, from the load balancer to the database"*. Any drawing open in a tab updates as the agent works, and when the agent renders a drawing to check its layout, it uses a hidden local Chrome or Chromium rather than opening a tab ([headless rendering](docs/configuration.md#headless-rendering)).
 
-For the Claude Code plugin (adds a diagramming skill and `/excalidraw:diagram`), other MCP clients, and the full tool list, see [MCP server](docs/mcp.md).
+For the Claude Code plugin (adds diagramming skills, `/excalidraw:diagram` and `/excalidraw:sync`), other MCP clients, and the full tool list, see [MCP server](docs/mcp.md).
 
 ## How it fits together
 

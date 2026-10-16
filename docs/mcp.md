@@ -51,19 +51,19 @@ Relative drawing paths resolve against the project root. A bare name such as `au
 
 | Tool | What it does |
 |---|---|
-| `create_diagram` | Nodes and edges with layered auto-layout, left to right or top to bottom. Groups become labelled frames. A node's `shape` can be a library shape, drawn as that icon with its label below. The fastest way to an architecture or flow diagram. |
+| `create_diagram` | Nodes and edges with layered auto-layout, left to right or top to bottom. Edges bend around the boxes they would cross, self-loops are drawn as small loops, and edges between the same two nodes are spread apart. Groups become labelled frames that don't overlap. A node's `shape` can be a library shape, drawn as that icon with its label below. `replace: true` swaps the drawing's content for the diagram in one write. The fastest way to an architecture or flow diagram. |
 | `list_shapes` | Searches library shapes: the built-in libraries, installed ones, `.excalidrawlib` files in the project, and your Excalidraw library. Can return a picture of the matches. |
 | `insert_shape` | Places a library shape, optionally `next_to` an existing element. Shapes go in as grouped copies that arrows can bind to. |
-| `connect_elements` | An arrow from one element to another that stays attached when either moves. |
+| `connect_elements` | An arrow from one element to another that stays attached when either moves. Given the `id` of an existing arrow, it attaches that arrow instead of drawing a new one. |
 | `mermaid_to_drawing` | Mermaid flowchart, sequence or class diagram to editable Excalidraw elements. |
 | `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
-| `update_elements` | Move, resize, relabel, recolour, or swap rectangle, ellipse and diamond by id. Labels re-centre and bound arrows re-route. |
+| `update_elements` | Move, resize, relabel, recolour, or swap rectangle, ellipse and diamond by id. Labels re-centre and bound arrows re-route. Moving a frame moves its children, and moving part of a group (such as a library shape) moves the whole group. |
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
 | `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=…`, with arrows as `from -> to`. Raw JSON on request. |
 | `render_drawing` | A PNG of the drawing for the agent to look at. `element_ids` or `region` renders a close-up of part of it at full size, and the result says how big the smallest text appears. |
 | `export_drawing` | Writes `name.excalidraw.svg` (scene embedded, so it's viewable on GitHub and still editable) or `.png`. |
 | `list_drawings` | Drawings in the project, most recently modified first. |
-| `create_drawing` | A new drawing, optionally with initial elements. |
+| `create_drawing` | A new drawing, optionally with initial elements. With `overwrite: true` it also replaces a file that isn't valid JSON, such as one with git conflict markers (other tools refuse such a file with HTTP 422). |
 | `open_drawing` | Opens a drawing in the browser. |
 | `excalidraw_guide` | The element cheat sheet. |
 

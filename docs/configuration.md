@@ -5,7 +5,7 @@
 | Variable | Default | Effect |
 |---|---|---|
 | `LFX_PORT` | `7467` | Daemon port |
-| `LFX_STATE_DIR` | `~/.local-first-excalidraw` | Token, sessions, roots, libraries, assistant settings and chats, log |
+| `LFX_STATE_DIR` | `~/.local-first-excalidraw` | Token, sessions, roots, libraries, assistant settings and chats, recently deleted element ids, log |
 | `LFX_ROOTS` | `~/Excalidraw` | Always-allowed roots, `:`-separated |
 | `LFX_DEFAULT_DIR` | `docs/diagrams` | Where bare drawing names go |
 | `LFX_PROJECT_ROOT` | MCP root, `$CLAUDE_PROJECT_DIR`, or cwd | Project root for the MCP server (same as `lfx mcp --root`) |

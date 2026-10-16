@@ -200,13 +200,12 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         groups: z.array(z.object({ id: z.string(), label: z.string().optional() })).optional(),
         direction: z.enum(["LR", "TB"]).optional().describe("LR = left to right (default), TB = top to bottom"),
         title: z.string().optional(),
-        replace: z.boolean().optional().describe("Clear the drawing first"),
+        replace: z.boolean().optional().describe("Replace everything in the drawing with this diagram (one atomic write)"),
         ...openArg,
       },
       run: async ({ path: p, nodes, edges, groups, direction, title, replace, open }, ctx) => {
         const file = resolveDrawing(ctx, p);
-        if (replace) await ctx.op({ op: "clear", path: file });
-        const r = await ctx.op({ op: "diagram", path: file, graph: { nodes, edges, groups, direction, title } });
+        const r = await ctx.op({ op: "diagram", path: file, replace: !!replace, graph: { nodes, edges, groups, direction, title } });
         let msg = `Drew ${nodes.length} nodes and ${edges?.length ?? 0} edges in ${relPath(ctx, file)}. Element ids: ${(r.created as string[]).join(", ")}.`;
         if (open && ctx.open) msg += " " + (await ctx.open(file));
         return { text: msg, drawing: other(ctx, file) };
@@ -322,7 +321,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
     {
       name: "connect_elements",
       title: "Connect elements",
-      description: "Draws an arrow from one element to another (by id). The arrow stays attached when either end moves.",
+      description:
+        "Draws an arrow from one element to another (by id). The arrow stays attached when either end moves. Pass the id of an existing arrow to attach that arrow to from and to instead of drawing a new one (it is re-routed straight between them).",
       input: {
         path: pathArg,
         from: z.string().describe("Id of the element the arrow starts at"),
@@ -330,17 +330,13 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         label: z.string().optional(),
         style: z.enum(["solid", "dashed", "dotted"]).optional(),
         bidirectional: z.boolean().optional().describe("Arrowheads at both ends"),
-        id: z.string().optional(),
+        id: z.string().optional().describe("Id for the new arrow, or the id of an existing arrow to attach"),
       },
       run: async ({ path: p, from, to, label, style, bidirectional, id }, ctx) => {
         const file = resolveDrawing(ctx, p);
-        const r = await ctx.op({
-          op: "add",
-          path: file,
-          placement: "absolute",
-          elements: [{ type: "arrow", id, start: { id: from }, end: { id: to }, label, strokeStyle: style ?? "solid", startArrowhead: bidirectional ? "arrow" : null }],
-        });
-        return { text: `Connected ${from} -> ${to} in ${relPath(ctx, file)} (arrow id ${(r.created as string[])[0]}).`, drawing: other(ctx, file) };
+        const r = await ctx.op({ op: "connect", path: file, from, to, id, label, style, bidirectional });
+        const what = r.rebound ? "Attached existing arrow" : "Connected";
+        return { text: `${what} ${from} -> ${to} in ${relPath(ctx, file)} (arrow id ${String(r.id)}).`, drawing: other(ctx, file) };
       },
     },
     {

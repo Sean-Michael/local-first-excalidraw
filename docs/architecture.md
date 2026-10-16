@@ -73,6 +73,8 @@ A model without tool calling gets a prompt asking for Mermaid. Each Mermaid bloc
 
 The daemon uses the same model as Excalidraw's own collaboration. Every element has a `version` and a random `versionNonce`, and when copies disagree the higher version wins. Deletions are tombstones, so they propagate instead of being undone by a stale copy.
 
+Files on disk don't keep tombstones, so the daemon also records recently deleted ids in `tombstones.json` in its state directory (up to 2000 per drawing, for 7 days). After a restart, a tab that still holds a deleted element can't bring it back when it saves.
+
 The daemon is the single writer. It merges every save from the browser, the agent and external edits, writes atomically (temp file and rename), and pushes the result to open tabs. Agent edits are applied inside the daemon, so they can't race your typing on other elements. If you and an agent change the *same* element at the same moment, one version wins, the same as in Excalidraw collaboration.
 
 If a drawing is deleted or moved on disk while open, the tab stops saving and offers **Restore it** instead of silently recreating the file.

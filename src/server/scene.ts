@@ -334,40 +334,68 @@ function boundaryPoint(el: El, dx: number, dy: number, gap: number): [number, nu
   const hh = el.height / 2;
   const cx = el.x + hw;
   const cy = el.y + hh;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
+  // No direction (coincident centres): leave from the right-hand side.
+  const len = Math.hypot(dx, dy);
+  const ux = len ? dx / len : 1;
+  const uy = len ? dy / len : 0;
   let t: number;
   if (el.type === "ellipse") t = 1 / Math.sqrt((ux / hw) ** 2 + (uy / hh) ** 2);
   else if (el.type === "diamond") t = 1 / (Math.abs(ux) / hw + Math.abs(uy) / hh);
   else t = Math.min(ux ? hw / Math.abs(ux) : Infinity, uy ? hh / Math.abs(uy) : Infinity);
+  if (!Number.isFinite(t)) t = 0; // zero-sized shape
   return [cx + ux * (t + gap), cy + uy * (t + gap)];
 }
 
 const GAP = 6;
+const LOOP = 30;
 
-/** Recomputes a straight arrow between two bound shapes. */
-export function routeArrow(arrow: El, from: El | undefined, to: El | undefined): El {
-  const pts = (arrow.points as [number, number][]) ?? [[0, 0], [100, 0]];
-  let start: [number, number] = [arrow.x + pts[0][0], arrow.y + pts[0][1]];
-  let end: [number, number] = [arrow.x + pts[pts.length - 1][0], arrow.y + pts[pts.length - 1][1]];
-  const center = (e: El): [number, number] => [e.x + e.width / 2, e.y + e.height / 2];
-  const aim0 = to ? center(to) : end;
-  const aim1 = from ? center(from) : start;
-  if (from) start = boundaryPoint(from, aim0[0] - center(from)[0], aim0[1] - center(from)[1], GAP);
-  if (to) end = boundaryPoint(to, aim1[0] - center(to)[0], aim1[1] - center(to)[1], GAP);
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
+/** Points (relative to the first) and box of a polyline given in absolute coordinates. */
+function polyline(arrow: El, abs: [number, number][]): El {
+  const [x0, y0] = abs[0];
+  const points = abs.map(([x, y]) => [x - x0, y - y0] as [number, number]);
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
   return {
     ...arrow,
-    x: start[0],
-    y: start[1],
-    width: Math.abs(dx),
-    height: Math.abs(dy),
-    points: [
-      [0, 0],
-      [dx, dy],
-    ],
+    x: x0,
+    y: y0,
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+    points,
+  };
+}
+
+/** A small loop off a shape's top-right, for an arrow that starts and ends on the same shape. */
+function selfLoop(arrow: El, el: El): El {
+  const start = boundaryPoint(el, el.width / 4, -el.height / 2, GAP);
+  const end = boundaryPoint(el, el.width / 2, -el.height / 4, GAP);
+  const binding = { elementId: el.id, focus: 0, gap: GAP };
+  return {
+    ...polyline(arrow, [start, [start[0] + LOOP * 0.4, start[1] - LOOP], [end[0] + LOOP, end[1] - LOOP * 0.4], end]),
+    startBinding: binding,
+    endBinding: binding,
+  };
+}
+
+/**
+ * Recomputes an arrow between two bound shapes: its ends sit on the outlines, aimed at the
+ * other shape (or at the nearest waypoint, which is kept). An arrow from a shape to itself
+ * becomes a small loop.
+ */
+export function routeArrow(arrow: El, from: El | undefined, to: El | undefined): El {
+  if (from && to && from.id === to.id) return selfLoop(arrow, from);
+  const pts = (arrow.points as [number, number][])?.length >= 2 ? (arrow.points as [number, number][]) : [[0, 0], [100, 0]];
+  const abs = pts.map(([px, py]) => [arrow.x + px, arrow.y + py] as [number, number]);
+  const inner = abs.slice(1, -1);
+  let start = abs[0];
+  let end = abs[abs.length - 1];
+  const center = (e: El): [number, number] => [e.x + e.width / 2, e.y + e.height / 2];
+  const aim0 = inner[0] ?? (to ? center(to) : end);
+  const aim1 = inner[inner.length - 1] ?? (from ? center(from) : start);
+  if (from) start = boundaryPoint(from, aim0[0] - center(from)[0], aim0[1] - center(from)[1], GAP);
+  if (to) end = boundaryPoint(to, aim1[0] - center(to)[0], aim1[1] - center(to)[1], GAP);
+  return {
+    ...polyline(arrow, [start, ...inner, end]),
     startBinding: from ? { elementId: from.id, focus: 0, gap: GAP } : (arrow.startBinding ?? null),
     endBinding: to ? { elementId: to.id, focus: 0, gap: GAP } : (arrow.endBinding ?? null),
   };
@@ -398,7 +426,64 @@ function passthrough(s: SkeletonEl): Partial<El> {
   return out;
 }
 
+/** A problem with the caller's input (reported as a 4xx, not a server error). */
 export class SceneError extends Error {}
+
+/** Every element type Excalidraw knows; anything else would be saved but never drawn. */
+export const ELEMENT_TYPES = new Set([
+  "rectangle", "ellipse", "diamond", "text", "arrow", "line", "freedraw", "image", "frame", "magicframe", "embeddable", "iframe",
+]);
+
+// Words models reach for instead of the real type names.
+const TYPE_GUESSES: Record<string, string> = {
+  box: "rectangle", rect: "rectangle", square: "rectangle", node: "rectangle", card: "rectangle",
+  circle: "ellipse", oval: "ellipse", rhombus: "diamond", decision: "diamond",
+  label: "text", note: "text", connector: "arrow", edge: "arrow", link: "arrow", group: "frame", container: "frame",
+};
+
+function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return d[b.length];
+}
+
+/** Throws a SceneError naming the closest known type when `type` isn't one. */
+export function checkType(type: string): void {
+  if (ELEMENT_TYPES.has(type)) return;
+  const t = type.toLowerCase();
+  let best = TYPE_GUESSES[t] ?? (ELEMENT_TYPES.has(t) ? t : undefined);
+  if (!best) {
+    const [d, name] = [...ELEMENT_TYPES].map((k) => [editDistance(t, k), k] as const).sort((x, y) => x[0] - y[0])[0];
+    if (d <= 3) best = name;
+  }
+  throw new SceneError(
+    `Unknown element type "${type}"${best ? `; did you mean "${best}"?` : "."} Known types: ${[...ELEMENT_TYPES].join(", ")}.`,
+  );
+}
+
+const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+
+/** Throws a SceneError if a live element has a non-finite position, size or point. */
+export function assertFinite(els: El[]): void {
+  for (const e of els) {
+    if (e.isDeleted) continue;
+    const bad =
+      !finite(e.x) ||
+      !finite(e.y) ||
+      (e.width !== undefined && !finite(e.width)) ||
+      (e.height !== undefined && !finite(e.height)) ||
+      (Array.isArray(e.points) && e.points.some((p: unknown) => !Array.isArray(p) || !finite(p[0]) || !finite(p[1])));
+    if (bad) throw new SceneError(`Element "${e.id}" (${e.type}) has a coordinate that is not a finite number`);
+  }
+}
 
 /**
  * Converts simplified element specs into complete Excalidraw elements and merges them
@@ -468,7 +553,8 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
     } else if (s.type === "frame") {
       pendingFrames.push({ el: base("frame", { name: s.name ?? null, ...passthrough(s), id }), s });
     } else {
-      // Unknown or full raw element (freedraw, image, ...): accept as-is with defaults.
+      // A full raw element of another type (freedraw, image, ...): accept as-is with defaults.
+      checkType(s.type);
       put(base(s.type, { ...passthrough(s), id }), true);
     }
   }
@@ -669,6 +755,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
   const all = new Map(existing.map((e) => [e.id, e]));
   const extra: El[] = [];
   const moved = new Set<string>();
+  const shifts: { el: El; dx: number; dy: number }[] = [];
 
   for (const u of updates) {
     const cur = all.get(u.id);
@@ -697,6 +784,9 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
     }
     let next = bump(cur, patch);
     if (["x", "y", "width", "height", "type"].some((k) => k in patch)) moved.add(cur.id);
+    if (typeof patch.x === "number" || typeof patch.y === "number") {
+      shifts.push({ el: cur, dx: (patch.x ?? cur.x) - cur.x, dy: (patch.y ?? cur.y) - cur.y });
+    }
 
     // A longer label grows its shape (around the same centre) unless the caller sized it explicitly.
     if (u.label && SHAPES.has(cur.type) && u.width === undefined && u.height === undefined) {
@@ -725,6 +815,23 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
       }
     }
     all.set(cur.id, next);
+  }
+
+  // A frame carries its children, and a grouped element (such as a library shape's anchor) its
+  // whole group, by the same offset. Elements the caller positioned themselves stay put.
+  const placed = new Set(updates.map((u) => u.id));
+  for (const { el, dx, dy } of shifts) {
+    if (!dx && !dy) continue;
+    const group = el.groupIds?.at(-1);
+    const frame = el.type === "frame" || el.type === "magicframe" ? el.id : undefined;
+    for (const e of all.values()) {
+      if (e.isDeleted || placed.has(e.id)) continue;
+      if ((frame && e.frameId === frame) || (group && e.groupIds?.at(-1) === group)) {
+        all.set(e.id, bump(e, { x: e.x + dx, y: e.y + dy }));
+        placed.add(e.id);
+        moved.add(e.id);
+      }
+    }
   }
 
   // Re-centre labels and re-route arrows touching anything that moved.
@@ -778,6 +885,47 @@ export function deleteElements(existing: El[], ids: string[]): { elements: El[];
     if (Object.keys(patch).length) all.set(e.id, bump(e, patch));
   }
   return { elements: existing.map((e) => all.get(e.id)!), deleted: [...doomed] };
+}
+
+/**
+ * Binds an existing arrow to two elements: updates its bindings and both ends' boundElements
+ * (detaching it from whatever it was bound to before) and routes it straight between them.
+ */
+export function connectArrow(existing: El[], arrowId: string, fromId: string, toId: string): El[] {
+  const all = new Map(existing.map((e) => [e.id, e]));
+  const arrow = all.get(arrowId);
+  if (!arrow || arrow.isDeleted) throw new SceneError(`Element "${arrowId}" not found`);
+  if (arrow.type !== "arrow") throw new SceneError(`Element "${arrowId}" is a ${arrow.type}, not an arrow`);
+  const end = (id: string) => {
+    const e = all.get(id);
+    if (!e || e.isDeleted) throw new SceneError(`Element "${id}" not found`);
+    if (LINEAR.has(e.type) || (e.type === "text" && e.containerId)) throw new SceneError(`Can't bind an arrow to ${e.type} "${id}"`);
+    return e;
+  };
+  const from = end(fromId);
+  const to = end(toId);
+  for (const old of [arrow.startBinding?.elementId, arrow.endBinding?.elementId]) {
+    const e = old && old !== fromId && old !== toId ? all.get(old) : undefined;
+    if (e?.boundElements?.some((b: { id: string }) => b.id === arrowId)) {
+      all.set(e.id, bump(e, { boundElements: e.boundElements.filter((b: { id: string }) => b.id !== arrowId) }));
+    }
+  }
+  for (const e of [from, to]) all.set(e.id, bump(addBound(all.get(e.id)!, { id: arrowId, type: "arrow" })));
+  // Start from a straight arrow: old waypoints were drawn for other ends.
+  const pts = arrow.points as [number, number][];
+  const straight = { ...arrow, points: [pts?.[0] ?? [0, 0], pts?.at(-1) ?? [100, 0]] };
+  const routed = bump(routeArrow(straight, all.get(fromId), all.get(toId)));
+  all.set(arrowId, routed);
+  for (const b of routed.boundElements ?? []) {
+    const lbl = all.get(b.id);
+    if (lbl && b.type === "text" && !lbl.isDeleted) all.set(lbl.id, centerLabel(routed, bump(lbl)));
+  }
+  return existing.map((e) => all.get(e.id)!);
+}
+
+/** Tombstones for every element, so new content with reused ids outranks the old. */
+export function cleared(existing: El[]): El[] {
+  return existing.map((e) => (e.isDeleted ? e : bump(e, { isDeleted: true })));
 }
 
 /** Shifts every given element (and their labels) so their bounding box starts at (x, y). */

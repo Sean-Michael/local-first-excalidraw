@@ -6,19 +6,19 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS1: Core correctness (scene, layout, ops)
 
-- [ ] Self-loop or coincident-centre arrows write NaN points to the file (`scene.ts` `boundaryPoint`). Draw a loop, and assert that coordinates are finite before applying.
-- [ ] `create_diagram replace:true` clears the drawing and lays it out in two writes, so a failed layout leaves an empty file. Make it one atomic op.
-- [ ] Moving a frame or a library-shape anchor leaves its children or group members behind. Move them by the same offset.
-- [ ] Unknown element types (`{type:"box"}`) are saved. Reject them with a "did you mean" error.
-- [ ] There is no way to bind an existing free arrow. Let `connect_elements` take an existing arrow `id` and re-route it, as the review skill expects.
-- [ ] Layout:
+- [x] Self-loop or coincident-centre arrows write NaN points to the file (`scene.ts` `boundaryPoint`). Draw a loop, and assert that coordinates are finite before applying.
+- [x] `create_diagram replace:true` clears the drawing and lays it out in two writes, so a failed layout leaves an empty file. Make it one atomic op.
+- [x] Moving a frame or a library-shape anchor leaves its children or group members behind. Move them by the same offset.
+- [x] Unknown element types (`{type:"box"}`) are saved. Reject them with a "did you mean" error.
+- [x] There is no way to bind an existing free arrow. Let `connect_elements` take an existing arrow `id` and re-route it, as the review skill expects.
+- [x] Layout:
   - Long edges cut through intermediate ranks. Add dummy nodes or waypoints.
   - Group frames can overlap or enclose non-members.
   - Self-loops are dropped silently.
   - Parallel and opposite edges are drawn on top of each other.
-- [ ] A drawing with invalid JSON (for example git conflict markers) wedges every op with HTTP 500. Return a 422 with a clear message, and let `overwrite` recover it.
-- [ ] Deleted elements come back after a daemon restart if a stale tab saves them. Persist recent tombstones in a sidecar.
-- [ ] `layoutGraph` throws plain `Error`, which becomes a 500. Use `SceneError`.
+- [x] A drawing with invalid JSON (for example git conflict markers) wedges every op with HTTP 500. Return a 422 with a clear message, and let `overwrite` recover it.
+- [x] Deleted elements come back after a daemon restart if a stale tab saves them. Persist recent tombstones in a sidecar.
+- [x] `layoutGraph` throws plain `Error`, which becomes a 500. Use `SceneError`.
 
 ## WS2: Daemon lifecycle and security
 

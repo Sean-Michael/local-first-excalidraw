@@ -19,6 +19,9 @@ final class EditorController: NSObject {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.preferences.isElementFullscreenEnabled = true
+        // The page hides its own drawings sidebar: the app has a native one.
+        config.userContentController.addUserScript(
+            WKUserScript(source: "window.lfxEmbedded = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsMagnification = false
         webView.allowsBackForwardNavigationGestures = false

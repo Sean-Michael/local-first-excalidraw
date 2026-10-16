@@ -91,8 +91,8 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS7: Release
 
-- [ ] CHANGELOG.
-- [ ] Docs:
+- [x] CHANGELOG.
+- [x] Docs:
   - a troubleshooting page
   - a shortcuts reference
   - a "diagrams that reference code" guide
@@ -100,11 +100,19 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 - [ ] Sync the plugin.json version with package.json.
 - [ ] Bump to 1.0.0.
 
+## WS8: Project sidebar
+
+- [x] A persistent, collapsible, resizable drawings sidebar in the editor (⌘B), organised by root and real folder, with recents, a filter, git badges, a "show all folders" toggle, and the open drawing revealed.
+- [x] Context menus (rename, duplicate, move, trash; new drawing, new folder, rename folder, reveal in Finder), drag to move, and tree keyboard navigation (arrows, Enter, F2).
+- [x] Client-side switching between drawings, so the sidebar and assistant panel stay; the assistant follows the drawing.
+- [x] `files-changed` pushed over the WebSocket (and `/api/events` for the app) when the drawing set changes, instead of polling.
+- [x] The drawing list uses the same tree, full width.
+- [x] macOS: a folder tree sidebar with the same actions, refreshed by the event stream; the app checks the running daemon's version.
+
 ## Later (post-1.0)
 
-- Folder tree, recents, tabs or multiple windows in the macOS app
+- Tabs or multiple windows in the macOS app
 - Full-text search inside drawings
 - Compare with HEAD (ghost and highlight diff view)
 - `@file:10-40` and element-level mentions
 - An in-app update check
-- Pushing file-list changes over the WebSocket

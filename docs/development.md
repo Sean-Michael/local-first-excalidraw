@@ -35,7 +35,7 @@ LFX_PORT=7468 LFX_STATE_DIR=/tmp/lfx-dev node dist/src/server/cli.js url docs/di
 | `src/shared/` | Chat types and the JSONC parser, used by both server and page |
 | `src/web/` | Editor, chat panel, settings, Shapes view, drawing list |
 | `libraries/` | Built-in `.excalidrawlib` files and their manifest |
-| `plugin/` | The Claude Code plugin: MCP config, skill, commands |
+| `plugin/` | The Claude Code plugin: MCP config, skills (with their references and evals), commands |
 | `macos/` | SwiftUI app and its build script |
 | `test/` | Unit tests, and integration tests (`daemon.test.ts`) that start a real daemon on a random port with a temporary state directory |
 | `evals/` | Eval harness, scenarios and fixture project ([Evals](evals.md)) |
@@ -62,7 +62,7 @@ One-time setup:
    xcrun notarytool store-credentials lfx-notary --apple-id <you> --team-id <TEAMID>
    ```
 
-For each release, bump the version (`npm version patch --no-git-tag-version`), commit it to `main`, and run:
+For each release, move the `unreleased` entries in [CHANGELOG.md](../CHANGELOG.md) under the new version and date, bump the version (`npm version patch --no-git-tag-version`) and the plugin's version in `plugin/.claude-plugin/plugin.json`, commit it to `main`, and run:
 
 ```bash
 SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" NOTARY_PROFILE=lfx-notary macos/build-app.sh --release --publish

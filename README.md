@@ -11,7 +11,7 @@ The Excalidraw editor running entirely on your machine, with a drawing assistant
 - **An assistant that reads your code.** Ask for a diagram of part of the project and it searches and reads the repository (read-only), then draws with real library shapes. Select items to ask about just those. It works with Ollama, LM Studio, llama.cpp, any OpenAI-compatible server, the Anthropic API, or your local Claude Code login.
 - **Tools for coding agents.** Claude Code, Cursor, VS Code and other MCP clients get the same tools the assistant uses: graph to auto-laid-out diagram, Mermaid to Excalidraw, library shapes, bound arrows, code links, snapshots, plus a text description and a PNG render so they can check their work.
 - **Diagrams that point at code.** Link a node to `src/orders/repo.ts#L42` and clicking it opens the file in VS Code, Cursor, Zed, a JetBrains IDE or your `$EDITOR`. The editor flags nodes whose code has changed since, and agents see the same through `read_drawing`.
-- **Files like an IDE.** Rename, duplicate, move and trash drawings from the drawing list or the editor menu, with git badges for modified and untracked drawings. Agent edits are undoable and briefly highlighted.
+- **Files like an IDE.** A sidebar of drawings organised by your project's folders (⌘B), with recents, a filter, drag to move, and rename, duplicate, move and trash from the context menu. Git badges mark modified and untracked drawings, and drawings agents create appear as they're made. Agent edits are undoable and briefly highlighted.
 - **No network by default.** No CDN, telemetry, share links or collaboration server. [Tracing](docs/tracing.md) is opt-in and meant for a receiver on your machine. The page can only talk to the local daemon, which listens on `127.0.0.1`.
 
 ## Quick start
@@ -66,11 +66,11 @@ The daemon starts in the background and your browser opens the drawing:
 
 ![The Excalidraw editor showing this project's architecture diagram](docs/images/editor.png)
 
-`lfx open` with no file shows the list of drawings. `lfx status` and `lfx stop` manage the daemon; `lfx status` also flags a daemon whose version differs from the CLI's. `lfx roots` lists the folders the daemon may use, and `lfx roots remove DIR` forgets one.
+`lfx open` with no file shows the list of drawings. `lfx status` and `lfx stop` manage the daemon; `lfx status` also flags a daemon whose version differs from the CLI's. `lfx roots` lists the folders the daemon may use, and `lfx roots remove DIR` forgets one. If something doesn't work, see [Troubleshooting](docs/troubleshooting.md).
 
 ## Turn on the assistant
 
-Click **Assistant** at the top right of a drawing (⇧⌘A in the macOS app), open its settings, and add a model. For a fully local setup, run Ollama with a tool-calling model such as `gpt-oss:20b`. If you have Claude Code installed and signed in, pick **Claude Code** and it uses your existing login.
+Click **Assistant** at the top right of a drawing (or press ⇧⌘A, Ctrl+Shift+A on Windows and Linux), open its settings, and add a model. For a fully local setup, run Ollama with a tool-calling model such as `gpt-oss:20b`. If you have Claude Code installed and signed in, pick **Claude Code** and it uses your existing login.
 
 Then type what you want drawn, or select part of the drawing and ask for a change. Type `@` to mention a file or another drawing. ⌘Z undoes the assistant's edits.
 
@@ -86,7 +86,7 @@ claude mcp add excalidraw -- lfx mcp
 
 Then ask it to *"draw the request path through our API, from the load balancer to the database"*. Any drawing open in a tab updates as the agent works, and when the agent renders a drawing to check its layout, it uses a hidden local Chrome or Chromium rather than opening a tab ([headless rendering](docs/configuration.md#headless-rendering)).
 
-For the Claude Code plugin (adds diagramming skills, `/excalidraw:diagram` and `/excalidraw:sync`), other MCP clients, and the full tool list, see [MCP server](docs/mcp.md).
+For the Claude Code plugin (adds diagramming, architecture-diagram and review skills, and `/excalidraw:diagram`, `/excalidraw:sync`, `/excalidraw:review` and `/excalidraw:open`), other MCP clients, and the full tool list, see [MCP server](docs/mcp.md).
 
 ## How it fits together
 
@@ -103,9 +103,12 @@ This diagram was drawn with the project's own MCP tools and is a normal drawing:
 - [MCP server](docs/mcp.md): connecting Claude Code and other clients, and every tool
 - [About the architecture](docs/architecture.md): components, the assistant's loop, concurrent editing
 - [Security model](docs/security.md): threats considered, defences, and the egress-isolated Docker setup
-- [Configuration](docs/configuration.md): environment variables and `ai.json`
+- [Configuration](docs/configuration.md): environment variables, headless rendering and `ai.json`
+- [Keyboard shortcuts](docs/shortcuts.md): the shortcuts the web editor and the macOS app add to Excalidraw's own
+- [Troubleshooting](docs/troubleshooting.md): the daemon, version mismatches, sign-in links, rendering, merge conflicts, code links and logs
 - [Tracing](docs/tracing.md): OpenTelemetry traces of the assistant's model calls, tools and edits
 - [Development](docs/development.md): building, testing, the macOS app, and releases
 - [Evals](docs/evals.md): measuring Claude Code's diagramming with the MCP server and skills
+- [Changelog](CHANGELOG.md): what changed in each release
 
 The editor is the official [`@excalidraw/excalidraw`](https://github.com/excalidraw/excalidraw) package (MIT), the same editor as excalidraw.com, without the hosted app's sharing and collaboration services. MIT licensed.

@@ -6,7 +6,7 @@ The assistant is a chat panel beside the canvas that draws and edits with the mo
 
 ## Open the panel
 
-Click **Assistant** at the top right of a drawing. In the macOS app, use the toolbar button or **Toggle Assistant** (⇧⌘A).
+Click **Assistant** at the top right of a drawing, or press ⇧⌘A (Ctrl+Shift+A on Windows and Linux). In the macOS app, the toolbar button and **View → Toggle Assistant** do the same. Enter sends a message and Shift+Enter starts a new line; [Keyboard shortcuts](shortcuts.md) has the rest.
 
 Ask for a new diagram, or select items (drag a rectangle or click them) and ask for changes to just those. The selection chip above the input shows what will be sent; click it to leave the selection out. Type `@` to mention a project file or another drawing.
 

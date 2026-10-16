@@ -4,20 +4,44 @@ Drawings are `.excalidraw` files inside your project. This page covers managing 
 
 ## Managing drawings and projects
 
-The drawing list (**All drawings** in the editor menu, or the daemon's home page) shows every drawing under the allowed roots, newest first.
+### The sidebar
 
-| Action | Where | What happens |
+The editor has a sidebar of drawings on the left, organised by your project's real folders, like a code editor's file explorer. It shows one tree per root (each folder you added, or the project an agent registered); a root inside another root shows once, inside the outer one. Folders appear when they contain drawings. Empty folders you made with **New folder…** appear too, so you can fill them. Other folders, such as `src/`, stay hidden until you press the folder button next to the filter, which shows every folder.
+
+- ⌘B (Ctrl+B) or the sidebar button shows and hides it. Drag its right edge to resize it. The width, whether it's open, which folders are expanded and the folder toggle are remembered in the browser.
+- **Recent** at the top lists the last 8 drawings you opened.
+- The filter matches the drawing's name and its folders below the root, so `flows` finds every drawing in a `flows/` folder.
+- The open drawing is highlighted, and its folders expand to show it.
+- Click a drawing to open it. Switching drawings this way keeps the sidebar and the assistant panel; the assistant switches to the new drawing's chats. Back and forward work as usual.
+- Drag a drawing onto a folder or root to move it there.
+- The tree updates by itself when drawings are created, renamed, moved or deleted, whether by you, an agent, git or the Finder.
+
+The drawing list (**All drawings** in the editor menu, the **Drawings** title in the sidebar, or the daemon's home page) shows the same tree full width, with each drawing's last change, and a form to create a drawing.
+
+### Actions
+
+Right-click a row, or use its `⋯` button, for these. The editor menu has the drawing ones for the open drawing.
+
+| Action | On | What happens |
 |---|---|---|
-| New drawing | The form at the top | Creates `name.excalidraw` in the chosen root. `sub/dir/name` creates the folders too. |
-| New folder | The form at the top | Creates a folder in the chosen root, for **Move to folder**. |
-| Rename | `⋯` on a row, or the editor menu | Renames the file in place. A tab that has the drawing open follows it to the new name. |
-| Duplicate | `⋯` on a row, or the editor menu | Copies it next to itself as `name copy.excalidraw` (then `name copy 2`, and so on). From the editor, the copy opens in a new tab. |
-| Move to folder | `⋯` on a row, or the editor menu | Moves it to another root or a folder under one. Open tabs follow it. |
-| Move to trash | `⋯` on a row, or the editor menu | Moves the file to the system trash: `~/.Trash` on macOS, and `gio trash` or the XDG trash (`~/.local/share/Trash`) on Linux, so you can restore it from there. A tab that had it open shows **Restore it**, which writes it back. |
+| New drawing | The form on the drawing list, or **New drawing here…** on a folder | Creates `name.excalidraw` there and opens it. `sub/dir/name` creates the folders too. |
+| New folder… | A folder or root | Creates a folder inside it. `a/b` creates nested folders. |
+| Rename… (F2) | A drawing | Renames the file in place. A tab that has the drawing open follows it to the new name. |
+| Rename folder… (F2) | A folder (not a root) | Renames the folder. Tabs with drawings inside it open follow them. |
+| Duplicate | A drawing | Copies it next to itself as `name copy.excalidraw` (then `name copy 2`, and so on) and opens the copy. |
+| Move to folder… | A drawing | Moves it to another root or a folder under one. Open tabs follow it. Dragging does the same. |
+| Reveal in Finder | A drawing or folder (macOS) | Shows it in the Finder. |
+| Move to trash | A drawing | Moves the file to the system trash: `~/.Trash` on macOS, and `gio trash` or the XDG trash (`~/.local/share/Trash`) on Linux, so you can restore it from there. A tab that had it open shows **Restore it**, which writes it back. |
 
 Names are refused if they would replace an existing file or leave the allowed roots. Set `LFX_TRASH_DIR` to send deleted drawings to a folder of your choosing instead (useful in containers, which have no system trash).
 
-The macOS app's sidebar has **Rename…** and **Duplicate** in each drawing's context menu, next to **Move to Trash**.
+### How the tree stays current
+
+The daemon tells open tabs (over their WebSocket) and the macOS app (over `GET /api/events`, a server-sent event stream) when the set of drawings and folders changes. It looks only while something is listening: on macOS and Windows with a recursive file watch on each root, and on Linux with a bounded rescan every 2 seconds, plus a rescan after every rename, move, trash and new drawing it makes itself. Edits to an existing drawing don't count as a change to the set.
+
+### macOS app
+
+The app's sidebar is a native folder tree with the same grouping: roots as sections, folders as disclosure groups, the filter in the search field. A drawing's context menu has **Rename…**, **Duplicate**, **Move To**, **Move to Trash** and **Show in Finder**; a folder's has **New Drawing Here…**, **New Folder…**, **Rename Folder…** and **Show in Finder**. The editor inside the app hides the web sidebar.
 
 ### Git badges
 
@@ -60,6 +84,8 @@ The editor comes from `LFX_EDITOR`, else the `editor` key of `~/.local-first-exc
 | A command with `{file}` and `{line}` | That command, split on spaces and run without a shell, for example `subl {file}:{line}` |
 | Any other word | That command with `file:line` |
 
+The daemon reads `LFX_EDITOR` from its own environment, and the macOS app starts the daemon without your shell's variables, so with the app use `editor.json`. It is read on every click. If a link opens the wrong editor, see [Troubleshooting](troubleshooting.md#code-links-open-the-wrong-editor).
+
 ### Staleness
 
 When a code link is made, by you in the editor, by the assistant or by an MCP agent, the daemon records the linked file's content hash in the element (`customData.lfxCode`). Later checks compare the file with that hash:
@@ -81,6 +107,6 @@ Edits from MCP agents (Claude Code, Cursor and others) and from the in-app assis
 
 ## Shortcuts and status
 
-- ⇧⌘A (Ctrl+Shift+A elsewhere) shows or hides the assistant.
+- ⇧⌘A (Ctrl+Shift+A elsewhere) shows or hides the assistant. [Keyboard shortcuts](shortcuts.md) lists the rest.
 - The dot by the drawing's name is green while the tab is connected to the daemon. After 3 seconds without a connection, a banner says so; edits stay in the tab and are saved when it reconnects.
 - Errors appear in a banner with a **Dismiss** button. Failures to load or save your personal shape library appear as a toast.

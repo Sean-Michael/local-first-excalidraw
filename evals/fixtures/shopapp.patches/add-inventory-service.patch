@@ -1,0 +1,206 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -7,6 +7,7 @@
+ | `turnstile-gateway` | Public HTTP entry point. Checks the session with keymaster-auth, then forwards to the right service. |
+ | `keymaster-auth` | Sign-in, session tokens. Users live in Postgres, issued tokens are cached in Redis. |
+ | `ledger-orders` | Places orders: stores them in Postgres, charges the card through Paylode, publishes `order.placed`. |
++| `stockroom-inventory` | Stock levels. ledger-orders reserves stock here before charging the card. |
+ | `courier-worker` | Consumes the `order-events` queue and sends confirmation emails through Pigeonpost. |
+ 
+ Shared code is in `packages/db` (Postgres pool and migrations) and `packages/queue` (RabbitMQ connection).
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -22,7 +22,14 @@
+       AMQP_URL: amqp://postbox-mq:5672
+       PAYLODE_API_KEY: ${PAYLODE_API_KEY}
+       PAYLODE_BASE_URL: https://api.paylode.example/v2
+-    depends_on: [shopapp-pg, postbox-mq]
++      STOCKROOM_URL: http://stockroom-inventory:7003
++    depends_on: [shopapp-pg, postbox-mq, stockroom-inventory]
++
++  stockroom-inventory:
++    build: ./services/stockroom-inventory
++    environment:
++      DATABASE_URL: postgres://shop:shop@shopapp-pg:5432/shop
++    depends_on: [shopapp-pg]
+ 
+   courier-worker:
+     build: ./services/courier-worker
+diff --git a/packages/db/migrations/002_inventory.sql b/packages/db/migrations/002_inventory.sql
+new file mode 100644
+--- /dev/null
++++ b/packages/db/migrations/002_inventory.sql
+@@ -0,0 +1,10 @@
++create table stock_levels (
++  sku text primary key,
++  available integer not null check (available >= 0)
++);
++
++create table stock_reservations (
++  order_id uuid not null references orders(id),
++  sku text not null references stock_levels(sku),
++  quantity integer not null
++);
+diff --git a/services/ledger-orders/src/inventory/stockroomClient.ts b/services/ledger-orders/src/inventory/stockroomClient.ts
+new file mode 100644
+--- /dev/null
++++ b/services/ledger-orders/src/inventory/stockroomClient.ts
+@@ -0,0 +1,17 @@
++/** Client for stockroom-inventory: hold stock before charging, give it back if payment fails. */
++export class StockroomClient {
++  constructor(private baseUrl: string) {}
++
++  async reserve(orderId: string, items: { sku: string; quantity: number }[]): Promise<boolean> {
++    const res = await fetch(`${this.baseUrl}/v1/reservations`, {
++      method: "POST",
++      headers: { "content-type": "application/json" },
++      body: JSON.stringify({ orderId, items }),
++    });
++    return res.status === 201;
++  }
++
++  async release(orderId: string): Promise<void> {
++    await fetch(`${this.baseUrl}/v1/reservations/${orderId}`, { method: "DELETE" });
++  }
++}
+diff --git a/services/ledger-orders/src/placeOrder.ts b/services/ledger-orders/src/placeOrder.ts
+--- a/services/ledger-orders/src/placeOrder.ts
++++ b/services/ledger-orders/src/placeOrder.ts
+@@ -1,4 +1,5 @@
+ import type { OrderEventsPublisher } from "./events/orderEventsPublisher.js";
++import type { StockroomClient } from "./inventory/stockroomClient.js";
+ import type { PaylodeClient } from "./payments/paylodeClient.js";
+ import type { OrderRepository } from "./repo/orderRepository.js";
+ 
+@@ -11,25 +12,33 @@
+   orders: OrderRepository;
+   paylode: PaylodeClient;
+   events: OrderEventsPublisher;
++  stockroom: StockroomClient;
+ }
+ 
+ /**
+  * The checkout path:
+  * 1. save the order as `pending` in Postgres
+- * 2. charge the card through Paylode
+- * 3. mark it `paid` (or `payment_failed`)
+- * 4. publish `order.placed` so courier-worker emails the receipt
++ * 2. reserve stock in stockroom-inventory (released again if payment fails)
++ * 3. charge the card through Paylode
++ * 4. mark it `paid` (or `payment_failed`)
++ * 5. publish `order.placed` so courier-worker emails the receipt
+  */
+ export async function placeOrder(deps: Deps, userId: string, input: PlaceOrderInput) {
+   const totalCents = input.items.reduce((s, i) => s + i.quantity * i.unitPriceCents, 0);
+   const order = await deps.orders.insertPending(userId, input.items, totalCents);
+ 
++  if (!(await deps.stockroom.reserve(order.id, input.items))) {
++    await deps.orders.markPaymentFailed(order.id, "out_of_stock");
++    return { ok: false, orderId: order.id, reason: "out_of_stock" };
++  }
++
+   const charge = await deps.paylode.createCharge({
+     amountCents: totalCents,
+     paymentMethodId: input.paymentMethodId,
+     idempotencyKey: order.id,
+   });
+   if (charge.status !== "succeeded") {
++    await deps.stockroom.release(order.id);
+     await deps.orders.markPaymentFailed(order.id, charge.failureCode);
+     return { ok: false, orderId: order.id, reason: charge.failureCode };
+   }
+diff --git a/services/ledger-orders/src/server.ts b/services/ledger-orders/src/server.ts
+--- a/services/ledger-orders/src/server.ts
++++ b/services/ledger-orders/src/server.ts
+@@ -2,6 +2,7 @@
+ import { createPool } from "@shopapp/db";
+ import { connectQueue } from "@shopapp/queue";
+ import { OrderEventsPublisher } from "./events/orderEventsPublisher.js";
++import { StockroomClient } from "./inventory/stockroomClient.js";
+ import { PaylodeClient } from "./payments/paylodeClient.js";
+ import { placeOrder, type PlaceOrderInput } from "./placeOrder.js";
+ import { OrderRepository } from "./repo/orderRepository.js";
+@@ -10,10 +11,11 @@
+ const orders = new OrderRepository(createPool(process.env.DATABASE_URL!));
+ const paylode = new PaylodeClient(process.env.PAYLODE_BASE_URL!, process.env.PAYLODE_API_KEY!);
+ const events = new OrderEventsPublisher(await connectQueue(process.env.AMQP_URL!));
++const stockroom = new StockroomClient(process.env.STOCKROOM_URL ?? "http://localhost:7003");
+ 
+ app.post("/v1/orders", async (req, reply) => {
+   const userId = req.headers["x-user-id"] as string;
+-  const result = await placeOrder({ orders, paylode, events }, userId, req.body as PlaceOrderInput);
++  const result = await placeOrder({ orders, paylode, events, stockroom }, userId, req.body as PlaceOrderInput);
+   return reply.code(result.ok ? 201 : 402).send(result);
+ });
+ 
+diff --git a/services/stockroom-inventory/package.json b/services/stockroom-inventory/package.json
+new file mode 100644
+--- /dev/null
++++ b/services/stockroom-inventory/package.json
+@@ -0,0 +1 @@
++{ "name": "stockroom-inventory", "version": "0.1.0", "main": "dist/server.js", "dependencies": { "fastify": "^4.28.0", "@shopapp/db": "*" } }
+diff --git a/services/stockroom-inventory/src/reservationRepository.ts b/services/stockroom-inventory/src/reservationRepository.ts
+new file mode 100644
+--- /dev/null
++++ b/services/stockroom-inventory/src/reservationRepository.ts
+@@ -0,0 +1,33 @@
++import type { Pool } from "@shopapp/db";
++
++/** stock_levels and stock_reservations tables. */
++export class ReservationRepository {
++  constructor(private pool: Pool) {}
++
++  async reserve(orderId: string, items: { sku: string; quantity: number }[]): Promise<boolean> {
++    const client = await this.pool.connect();
++    try {
++      await client.query("begin");
++      for (const i of items) {
++        const r = await client.query("update stock_levels set available = available - $2 where sku = $1 and available >= $2", [i.sku, i.quantity]);
++        if (r.rowCount === 0) {
++          await client.query("rollback");
++          return false;
++        }
++        await client.query("insert into stock_reservations (order_id, sku, quantity) values ($1, $2, $3)", [orderId, i.sku, i.quantity]);
++      }
++      await client.query("commit");
++      return true;
++    } finally {
++      client.release();
++    }
++  }
++
++  async release(orderId: string) {
++    await this.pool.query(
++      "update stock_levels s set available = available + r.quantity from stock_reservations r where r.order_id = $1 and r.sku = s.sku",
++      [orderId],
++    );
++    await this.pool.query("delete from stock_reservations where order_id = $1", [orderId]);
++  }
++}
+diff --git a/services/stockroom-inventory/src/server.ts b/services/stockroom-inventory/src/server.ts
+new file mode 100644
+--- /dev/null
++++ b/services/stockroom-inventory/src/server.ts
+@@ -0,0 +1,20 @@
++import Fastify from "fastify";
++import { createPool } from "@shopapp/db";
++import { ReservationRepository } from "./reservationRepository.js";
++
++const app = Fastify({ logger: true });
++const reservations = new ReservationRepository(createPool(process.env.DATABASE_URL!));
++
++/** Holds stock for an order. Fails with 409 if any SKU is short. */
++app.post("/v1/reservations", async (req, reply) => {
++  const { orderId, items } = req.body as { orderId: string; items: { sku: string; quantity: number }[] };
++  const ok = await reservations.reserve(orderId, items);
++  return ok ? reply.code(201).send({ orderId }) : reply.code(409).send({ error: "out of stock" });
++});
++
++app.delete("/v1/reservations/:orderId", async (req) => {
++  await reservations.release((req.params as { orderId: string }).orderId);
++  return { ok: true };
++});
++
++app.listen({ port: 7003, host: "0.0.0.0" });

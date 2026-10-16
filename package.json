@@ -22,6 +22,8 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "npm run build:server && node --test dist/test/*.test.js",
     "dev:web": "vite",
+    "evals": "npm run build:server && node dist/evals/run.js",
+    "evals:skills": "npm run build:server && node dist/evals/skill-evals.js",
     "build:mac": "macos/build-app.sh"
   },
   "dependencies": {

@@ -1,0 +1,1 @@
+{ "name": "ledger-orders", "version": "3.0.2", "main": "dist/server.js", "dependencies": { "fastify": "^4.28.0", "@shopapp/db": "*", "@shopapp/queue": "*" } }

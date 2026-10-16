@@ -1,0 +1,106 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -22,6 +22,7 @@
+       AMQP_URL: amqp://postbox-mq:5672
+       PAYLODE_API_KEY: ${PAYLODE_API_KEY}
+       PAYLODE_BASE_URL: https://api.paylode.example/v2
++      PAYLODE_WEBHOOK_SECRET: ${PAYLODE_WEBHOOK_SECRET}
+     depends_on: [shopapp-pg, postbox-mq]
+ 
+   courier-worker:
+diff --git a/services/ledger-orders/src/events/orderEventsPublisher.ts b/services/ledger-orders/src/events/orderEventsPublisher.ts
+--- a/services/ledger-orders/src/events/orderEventsPublisher.ts
++++ b/services/ledger-orders/src/events/orderEventsPublisher.ts
+@@ -9,4 +9,8 @@
+   async orderPlaced(e: { orderId: string; userId: string; totalCents: number }) {
+     await this.queue.publish(ORDER_EVENTS_QUEUE, { type: "order.placed", ...e });
+   }
++
++  async orderDisputed(e: { orderId: string; chargeId: string }) {
++    await this.queue.publish(ORDER_EVENTS_QUEUE, { type: "order.disputed", ...e });
++  }
+ }
+diff --git a/services/ledger-orders/src/repo/orderRepository.ts b/services/ledger-orders/src/repo/orderRepository.ts
+--- a/services/ledger-orders/src/repo/orderRepository.ts
++++ b/services/ledger-orders/src/repo/orderRepository.ts
+@@ -3,7 +3,7 @@
+ export interface OrderRow {
+   id: string;
+   user_id: string;
+-  status: "pending" | "paid" | "payment_failed";
++  status: "pending" | "paid" | "payment_failed" | "disputed";
+   total_cents: number;
+   paylode_charge_id: string | null;
+ }
+@@ -39,6 +39,10 @@
+ 
+   async markPaymentFailed(id: string, code?: string) {
+     await this.pool.query("update orders set status = 'payment_failed', failure_code = $2 where id = $1", [id, code ?? null]);
++  }
++
++  async markDisputed(id: string) {
++    await this.pool.query("update orders set status = 'disputed' where id = $1", [id]);
+   }
+ 
+   async findById(id: string) {
+diff --git a/services/ledger-orders/src/routes/paylodeWebhook.ts b/services/ledger-orders/src/routes/paylodeWebhook.ts
+new file mode 100644
+--- /dev/null
++++ b/services/ledger-orders/src/routes/paylodeWebhook.ts
+@@ -0,0 +1,23 @@
++import crypto from "node:crypto";
++import type { FastifyInstance } from "fastify";
++import type { OrderEventsPublisher } from "../events/orderEventsPublisher.js";
++import type { OrderRepository } from "../repo/orderRepository.js";
++
++/**
++ * POST /v1/webhooks/paylode: Paylode calls this when a charge settles or is disputed.
++ * The body is signed with the shared webhook secret (header `paylode-signature`).
++ */
++export function registerPaylodeWebhook(app: FastifyInstance, deps: { orders: OrderRepository; events: OrderEventsPublisher; secret: string }) {
++  app.post("/v1/webhooks/paylode", { config: { rawBody: true } }, async (req, reply) => {
++    const raw = (req as any).rawBody as string;
++    const expected = crypto.createHmac("sha256", deps.secret).update(raw).digest("hex");
++    if (req.headers["paylode-signature"] !== expected) return reply.code(400).send({ error: "bad signature" });
++
++    const event = JSON.parse(raw) as { type: string; data: { charge_id: string; order_ref: string } };
++    if (event.type === "charge.disputed") {
++      await deps.orders.markDisputed(event.data.order_ref);
++      await deps.events.orderDisputed({ orderId: event.data.order_ref, chargeId: event.data.charge_id });
++    }
++    return { received: true };
++  });
++}
+diff --git a/services/ledger-orders/src/server.ts b/services/ledger-orders/src/server.ts
+--- a/services/ledger-orders/src/server.ts
++++ b/services/ledger-orders/src/server.ts
+@@ -5,6 +5,7 @@
+ import { PaylodeClient } from "./payments/paylodeClient.js";
+ import { placeOrder, type PlaceOrderInput } from "./placeOrder.js";
+ import { OrderRepository } from "./repo/orderRepository.js";
++import { registerPaylodeWebhook } from "./routes/paylodeWebhook.js";
+ 
+ const app = Fastify({ logger: true });
+ const orders = new OrderRepository(createPool(process.env.DATABASE_URL!));
+@@ -18,5 +19,7 @@
+ });
+ 
+ app.get("/v1/orders/:id", async (req) => orders.findById((req.params as { id: string }).id));
++
++registerPaylodeWebhook(app, { orders, events, secret: process.env.PAYLODE_WEBHOOK_SECRET! });
+ 
+ app.listen({ port: 7002, host: "0.0.0.0" });
+diff --git a/services/turnstile-gateway/src/routes.ts b/services/turnstile-gateway/src/routes.ts
+--- a/services/turnstile-gateway/src/routes.ts
++++ b/services/turnstile-gateway/src/routes.ts
+@@ -12,6 +12,9 @@
+   // Sign-in and sign-out go straight to keymaster-auth.
+   app.register(proxy, { upstream: up.keymasterUrl, prefix: "/auth", rewritePrefix: "/v1" });
+ 
++  // Paylode webhooks are signed by Paylode, not by a user session: forward them unauthenticated.
++  app.register(proxy, { upstream: up.ledgerUrl, prefix: "/webhooks/paylode", rewritePrefix: "/v1/webhooks/paylode" });
++
+   // Orders: check the session first, then forward with the user id attached.
+   app.register(async (orders) => {
+     orders.addHook("preHandler", requireSession(up.keymasterUrl));

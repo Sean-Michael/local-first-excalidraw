@@ -38,6 +38,7 @@ LFX_PORT=7468 LFX_STATE_DIR=/tmp/lfx-dev node dist/src/server/cli.js url docs/di
 | `plugin/` | The Claude Code plugin: MCP config, skill, commands |
 | `macos/` | SwiftUI app and its build script |
 | `test/` | Unit tests, and integration tests (`daemon.test.ts`) that start a real daemon on a random port with a temporary state directory |
+| `evals/` | Eval harness, scenarios and fixture project ([Evals](evals.md)) |
 | `docs/diagrams/` | The diagrams in these docs, as editable `.excalidraw` files |
 
 [About the architecture](architecture.md) explains how the pieces fit.

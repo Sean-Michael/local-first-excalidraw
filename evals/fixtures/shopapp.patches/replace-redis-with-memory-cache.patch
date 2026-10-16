@@ -1,0 +1,122 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -5,7 +5,7 @@
+ | Service | What it does |
+ |---|---|
+ | `turnstile-gateway` | Public HTTP entry point. Checks the session with keymaster-auth, then forwards to the right service. |
+-| `keymaster-auth` | Sign-in, session tokens. Users live in Postgres, issued tokens are cached in Redis. |
++| `keymaster-auth` | Sign-in, session tokens. Users live in Postgres, issued tokens are kept in memory. |
+ | `ledger-orders` | Places orders: stores them in Postgres, charges the card through Paylode, publishes `order.placed`. |
+ | `courier-worker` | Consumes the `order-events` queue and sends confirmation emails through Pigeonpost. |
+ 
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -11,9 +11,8 @@
+     build: ./services/keymaster-auth
+     environment:
+       DATABASE_URL: postgres://shop:shop@shopapp-pg:5432/shop
+-      REDIS_URL: redis://token-cache:6379
+       SESSION_TTL_SECONDS: "3600"
+-    depends_on: [shopapp-pg, token-cache]
++    depends_on: [shopapp-pg]
+ 
+   ledger-orders:
+     build: ./services/ledger-orders
+@@ -38,9 +37,6 @@
+       POSTGRES_PASSWORD: shop
+       POSTGRES_DB: shop
+     volumes: ["pgdata:/var/lib/postgresql/data"]
+-
+-  token-cache:
+-    image: redis:7
+ 
+   postbox-mq:
+     image: rabbitmq:3.13-management
+diff --git a/services/keymaster-auth/package.json b/services/keymaster-auth/package.json
+--- a/services/keymaster-auth/package.json
++++ b/services/keymaster-auth/package.json
+@@ -1 +1 @@
+-{ "name": "keymaster-auth", "version": "2.1.0", "main": "dist/server.js", "dependencies": { "fastify": "^4.28.0", "ioredis": "^5.4.1", "argon2": "^0.40.0", "@shopapp/db": "*" } }
++{ "name": "keymaster-auth", "version": "2.1.0", "main": "dist/server.js", "dependencies": { "fastify": "^4.28.0", "argon2": "^0.40.0", "@shopapp/db": "*" } }
+diff --git a/services/keymaster-auth/src/cache/memoryTokenCache.ts b/services/keymaster-auth/src/cache/memoryTokenCache.ts
+new file mode 100644
+--- /dev/null
++++ b/services/keymaster-auth/src/cache/memoryTokenCache.ts
+@@ -0,0 +1,29 @@
++import type { TokenCache } from "./tokenCache.js";
++
++/**
++ * Session tokens in process memory. keymaster-auth runs as a single replica, so the Redis
++ * token-cache was not buying anything; sessions now end when the process restarts.
++ */
++export class MemoryTokenCache implements TokenCache {
++  private tokens = new Map<string, { userId: string; expiresAt: number }>();
++
++  constructor(private ttlSeconds: number) {}
++
++  async put(token: string, userId: string) {
++    this.tokens.set(token, { userId, expiresAt: Date.now() + this.ttlSeconds * 1000 });
++  }
++
++  async get(token: string) {
++    const t = this.tokens.get(token);
++    if (!t) return null;
++    if (t.expiresAt < Date.now()) {
++      this.tokens.delete(token);
++      return null;
++    }
++    return t.userId;
++  }
++
++  async revoke(token: string) {
++    this.tokens.delete(token);
++  }
++}
+diff --git a/services/keymaster-auth/src/cache/redisTokenCache.ts b/services/keymaster-auth/src/cache/redisTokenCache.ts
+deleted file mode 100644
+--- a/services/keymaster-auth/src/cache/redisTokenCache.ts
++++ /dev/null
+@@ -1,23 +0,0 @@
+-import Redis from "ioredis";
+-import type { TokenCache } from "./tokenCache.js";
+-
+-/** Session tokens in Redis (token-cache), expiring after the session TTL. */
+-export class RedisTokenCache implements TokenCache {
+-  private redis: Redis;
+-
+-  constructor(url: string, private ttlSeconds: number) {
+-    this.redis = new Redis(url);
+-  }
+-
+-  async put(token: string, userId: string) {
+-    await this.redis.set(`session:${token}`, userId, "EX", this.ttlSeconds);
+-  }
+-
+-  async get(token: string) {
+-    return this.redis.get(`session:${token}`);
+-  }
+-
+-  async revoke(token: string) {
+-    await this.redis.del(`session:${token}`);
+-  }
+-}
+diff --git a/services/keymaster-auth/src/server.ts b/services/keymaster-auth/src/server.ts
+--- a/services/keymaster-auth/src/server.ts
++++ b/services/keymaster-auth/src/server.ts
+@@ -1,12 +1,12 @@
+ import Fastify from "fastify";
+ import { createPool } from "@shopapp/db";
+-import { RedisTokenCache } from "./cache/redisTokenCache.js";
++import { MemoryTokenCache } from "./cache/memoryTokenCache.js";
+ import { UserRepository } from "./repo/userRepository.js";
+ import { issueSession, introspect } from "./tokens.js";
+ 
+ const app = Fastify({ logger: true });
+ const users = new UserRepository(createPool(process.env.DATABASE_URL!));
+-const cache = new RedisTokenCache(process.env.REDIS_URL!, Number(process.env.SESSION_TTL_SECONDS ?? 3600));
++const cache = new MemoryTokenCache(Number(process.env.SESSION_TTL_SECONDS ?? 3600));
+ 
+ app.post("/v1/login", async (req, reply) => {
+   const { email, password } = req.body as { email: string; password: string };

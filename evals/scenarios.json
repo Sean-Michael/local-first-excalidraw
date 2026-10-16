@@ -1,0 +1,294 @@
+{
+  "graphs": {
+    "shopapp-arch": {
+      "direction": "LR",
+      "title": "shopapp architecture",
+      "nodes": [
+        { "id": "shopper", "label": "Shopper", "shape": "ellipse" },
+        { "id": "turnstile-gateway", "label": "turnstile-gateway", "color": "blue" },
+        { "id": "keymaster-auth", "label": "keymaster-auth", "color": "blue" },
+        { "id": "ledger-orders", "label": "ledger-orders", "color": "blue" },
+        { "id": "courier-worker", "label": "courier-worker", "color": "blue" },
+        { "id": "shopapp-pg", "label": "shopapp-pg (Postgres)", "color": "green" },
+        { "id": "token-cache", "label": "token-cache (Redis)", "color": "green" },
+        { "id": "postbox-mq", "label": "postbox-mq (RabbitMQ)", "color": "gray" },
+        { "id": "paylode", "label": "Paylode API", "color": "orange" },
+        { "id": "pigeonpost", "label": "Pigeonpost API", "color": "orange" }
+      ],
+      "edges": [
+        { "from": "shopper", "to": "turnstile-gateway", "label": "HTTPS" },
+        { "from": "turnstile-gateway", "to": "keymaster-auth", "label": "introspect" },
+        { "from": "turnstile-gateway", "to": "ledger-orders", "label": "/orders" },
+        { "from": "keymaster-auth", "to": "shopapp-pg" },
+        { "from": "keymaster-auth", "to": "token-cache", "label": "sessions" },
+        { "from": "ledger-orders", "to": "shopapp-pg" },
+        { "from": "ledger-orders", "to": "paylode", "label": "charges" },
+        { "from": "ledger-orders", "to": "postbox-mq", "label": "order.placed" },
+        { "from": "postbox-mq", "to": "courier-worker" },
+        { "from": "courier-worker", "to": "pigeonpost", "label": "email" }
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "id": "arch-overview",
+      "title": "Architecture diagram from the codebase",
+      "skill": "excalidraw",
+      "prompt": "Draw an architecture diagram of this project: its services, data stores, queues and external providers, and how they talk to each other.",
+      "expected_output": "One drawing with the four services (turnstile-gateway, keymaster-auth, ledger-orders, courier-worker), Postgres (shopapp-pg), Redis (token-cache), RabbitMQ (postbox-mq), and the external Paylode and Pigeonpost APIs, using the names from the code. Arrows are bound at both ends and follow the real calls: gateway to auth and orders, orders to Postgres, Paylode and the queue, the queue to the worker, the worker to Pigeonpost, auth to Postgres and Redis. No overlaps and every label fits.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [
+          ["turnstile-gateway", "turnstile"],
+          ["keymaster-auth", "keymaster"],
+          ["ledger-orders", "ledger"],
+          ["courier-worker", "courier"],
+          ["shopapp-pg", "postgres", "postgresql"],
+          ["token-cache", "redis"],
+          ["postbox-mq", "rabbitmq", "order-events"],
+          ["paylode"],
+          ["pigeonpost"]
+        ],
+        "requiredEdges": [
+          { "from": ["turnstile"], "to": ["keymaster"] },
+          { "from": ["turnstile"], "to": ["ledger"] },
+          { "from": ["ledger"], "to": ["paylode"] },
+          { "from": ["ledger"], "to": ["postbox", "rabbitmq", "order-events", "queue"] },
+          { "from": ["postbox", "rabbitmq", "order-events", "queue"], "to": ["courier"], "undirected": true },
+          { "from": ["courier"], "to": ["pigeonpost"] },
+          { "from": ["keymaster"], "to": ["token-cache", "redis"], "undirected": true },
+          { "from": ["ledger"], "to": ["shopapp-pg", "postgres"], "undirected": true }
+        ],
+        "minArrows": 8,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14
+      }
+    },
+    {
+      "id": "request-flow",
+      "title": "Request flow for placing an order",
+      "skill": "excalidraw",
+      "prompt": "Make a diagram of what happens when a user places an order, from the HTTP request hitting the gateway to the confirmation email going out. Show the steps in order, including the failure path when the card is declined.",
+      "expected_output": "A top-to-bottom flow or sequence diagram: turnstile-gateway checks the session with keymaster-auth (introspect), forwards POST /orders to ledger-orders, which inserts a pending order through OrderRepository into Postgres, charges through the Paylode client, marks the order paid (or payment_failed on decline), publishes order.placed to the order-events queue, and courier-worker sends the email through Pigeonpost. Names match the code.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [
+          ["turnstile-gateway", "turnstile"],
+          ["keymaster-auth", "keymaster", "introspect"],
+          ["ledger-orders", "ledger", "placeOrder"],
+          ["postgres", "shopapp-pg", "OrderRepository", "insertPending"],
+          ["paylode", "createCharge"],
+          ["payment_failed", "declined", "payment failed", "markPaymentFailed"],
+          ["order.placed", "order-events", "postbox-mq", "rabbitmq"],
+          ["courier-worker", "courier"],
+          ["pigeonpost"]
+        ],
+        "minArrows": 6,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 12
+      }
+    },
+    {
+      "id": "code-change-update",
+      "title": "Update the diagram after a service is added",
+      "skill": "excalidraw",
+      "prompt": "I just added a service (see the latest commit). Update docs/diagrams/architecture.excalidraw so it matches the code again.",
+      "expected_output": "The existing diagram is edited in place: a new stockroom-inventory node with an arrow from ledger-orders (reserve stock) and to Postgres. Every existing element keeps its id (at least 80% of them, no full redraw) and nothing that still exists in the code is removed.",
+      "files": ["evals/fixtures/shopapp", "evals/fixtures/shopapp.patches/add-inventory-service.patch"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [{ "op": "diagram", "graph": "shopapp-arch" }],
+      "commitSetup": true,
+      "patch": "add-inventory-service",
+      "checks": {
+        "requiredLabels": [
+          ["stockroom-inventory", "stockroom", "inventory"],
+          ["turnstile-gateway"],
+          ["keymaster-auth"],
+          ["ledger-orders"],
+          ["courier-worker"],
+          ["paylode"],
+          ["pigeonpost"]
+        ],
+        "requiredEdges": [
+          { "from": ["ledger"], "to": ["stockroom", "inventory"] },
+          { "from": ["stockroom", "inventory"], "to": ["shopapp-pg", "postgres"], "undirected": true }
+        ],
+        "minIdPreservation": 0.8,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0
+      }
+    },
+    {
+      "id": "code-change-remove",
+      "title": "Update the diagram and its code links after Redis is removed",
+      "skill": "excalidraw",
+      "prompt": "The code changed in the last commit. Bring docs/diagrams/architecture.excalidraw up to date, including the code links on its nodes.",
+      "expected_output": "Redis (token-cache) is gone from the diagram and keymaster-auth no longer points at it; sessions are now kept in memory inside keymaster-auth (a note or label is fine, a separate datastore box is not needed). Every node link points at a file that exists, so the link to redisTokenCache.ts is updated or removed. Other elements keep their ids.",
+      "files": ["evals/fixtures/shopapp", "evals/fixtures/shopapp.patches/replace-redis-with-memory-cache.patch"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [
+        { "op": "diagram", "graph": "shopapp-arch" },
+        {
+          "op": "update",
+          "updates": [
+            { "id": "turnstile-gateway", "link": "services/turnstile-gateway/src/routes.ts" },
+            { "id": "keymaster-auth", "link": "services/keymaster-auth/src/server.ts" },
+            { "id": "token-cache", "link": "services/keymaster-auth/src/cache/redisTokenCache.ts" },
+            { "id": "ledger-orders", "link": "services/ledger-orders/src/placeOrder.ts" },
+            { "id": "courier-worker", "link": "services/courier-worker/src/worker.ts" },
+            { "id": "shopapp-pg", "link": "packages/db/src/pool.ts" },
+            { "id": "postbox-mq", "link": "packages/queue/src/amqp.ts" },
+            { "id": "paylode", "link": "services/ledger-orders/src/payments/paylodeClient.ts" },
+            { "id": "pigeonpost", "link": "services/courier-worker/src/pigeonpostMailer.ts" }
+          ]
+        }
+      ],
+      "commitSetup": true,
+      "patch": "replace-redis-with-memory-cache",
+      "checks": {
+        "forbiddenLabels": ["redis", "token-cache"],
+        "requiredLabels": [["keymaster-auth"], ["ledger-orders"], ["turnstile-gateway"]],
+        "links": { "minLinked": 7, "allExist": true },
+        "minIdPreservation": 0.75,
+        "maxOverlaps": 0
+      }
+    },
+    {
+      "id": "code-change-webhook",
+      "title": "Update the diagram after a webhook endpoint is added",
+      "skill": "excalidraw",
+      "prompt": "We added a payment provider webhook in the latest commit. Update the architecture diagram in docs/diagrams/ to show it.",
+      "expected_output": "An arrow from Paylode back into the system (through turnstile-gateway or straight to ledger-orders) labelled as a webhook, and ideally the order.disputed event. Existing elements keep their ids.",
+      "files": ["evals/fixtures/shopapp", "evals/fixtures/shopapp.patches/add-paylode-webhook.patch"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [{ "op": "diagram", "graph": "shopapp-arch" }],
+      "commitSetup": true,
+      "patch": "add-paylode-webhook",
+      "checks": {
+        "requiredLabels": [["webhook", "webhooks/paylode"]],
+        "requiredEdges": [{ "from": ["paylode"], "to": ["turnstile", "ledger"] }],
+        "minIdPreservation": 0.85,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0
+      }
+    },
+    {
+      "id": "preserve-manual-edits",
+      "title": "Add to a diagram the user has edited by hand",
+      "skill": "excalidraw",
+      "prompt": "Add the new stockroom-inventory service to docs/diagrams/architecture.excalidraw. I've been tidying that drawing by hand, so don't undo my changes.",
+      "expected_output": "stockroom-inventory is added with arrows from ledger-orders and to Postgres. The user's manual edits survive: token-cache stays where the user dragged it, ledger-orders keeps its red fill, and the user's free text note is untouched. No element is recreated.",
+      "files": ["evals/fixtures/shopapp", "evals/fixtures/shopapp.patches/add-inventory-service.patch"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [
+        { "op": "diagram", "graph": "shopapp-arch" },
+        { "op": "move", "id": "token-cache", "dx": 0, "dy": -110 },
+        { "op": "move", "id": "pigeonpost", "dx": 40, "dy": 0 },
+        { "op": "update", "updates": [{ "id": "ledger-orders", "backgroundColor": "#ffc9c9", "strokeColor": "#e03131" }] },
+        {
+          "op": "add",
+          "placement": "below",
+          "elements": [{ "type": "text", "id": "user-note", "x": 0, "y": 0, "text": "Ask Priya: refund SLA for disputed charges?", "fontSize": 18 }]
+        }
+      ],
+      "commitSetup": true,
+      "patch": "add-inventory-service",
+      "checks": {
+        "requiredLabels": [["stockroom-inventory", "stockroom", "inventory"]],
+        "requiredEdges": [{ "from": ["ledger"], "to": ["stockroom", "inventory"] }],
+        "preserve": {
+          "ids": ["token-cache", "pigeonpost", "ledger-orders", "user-note"],
+          "props": ["x", "y", "backgroundColor", "strokeColor"],
+          "texts": ["Ask Priya: refund SLA for disputed charges?"]
+        },
+        "minIdPreservation": 0.95,
+        "maxOverlaps": 0
+      }
+    },
+    {
+      "id": "readability-review",
+      "title": "Readability review of a messy drawing",
+      "skill": "diagram-review",
+      "prompt": "Review docs/diagrams/checkout-sketch.excalidraw for readability and fix what's hard to read.",
+      "expected_output": "The overlapping boxes are moved apart, the free-floating arrows are bound to the boxes they point at, tiny text is enlarged to at least 14px, and labels fit their boxes. The five components and the note survive with their ids; nothing is recreated from scratch.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/checkout-sketch.excalidraw",
+      "setup": [
+        {
+          "op": "add",
+          "elements": [
+            { "type": "rectangle", "id": "gw", "x": 0, "y": 0, "width": 150, "height": 60, "label": { "text": "turnstile-gateway", "fontSize": 10 } },
+            { "type": "rectangle", "id": "auth", "x": 110, "y": -30, "width": 150, "height": 60, "label": { "text": "keymaster-auth", "fontSize": 10 } },
+            { "type": "rectangle", "id": "orders", "x": 120, "y": 40, "width": 70, "height": 40, "label": { "text": "ledger-orders", "fontSize": 16 } },
+            { "type": "rectangle", "id": "pg", "x": 330, "y": 200, "width": 120, "height": 50, "label": { "text": "shopapp-pg", "fontSize": 11 } },
+            { "type": "ellipse", "id": "paylode", "x": 400, "y": 220, "width": 140, "height": 70, "label": { "text": "Paylode API", "fontSize": 9 } },
+            { "type": "arrow", "id": "a1", "x": 200, "y": 70, "width": 120, "height": 150 },
+            { "type": "arrow", "id": "a2", "x": 190, "y": 60, "width": 210, "height": 175 },
+            { "type": "arrow", "id": "a3", "start": { "id": "gw" }, "end": { "id": "auth" } },
+            { "type": "text", "id": "note", "x": 140, "y": 55, "text": "charge before publishing order.placed", "fontSize": 8 }
+          ]
+        }
+      ],
+      "commitSetup": true,
+      "checks": {
+        "requiredLabels": [["turnstile-gateway"], ["keymaster-auth"], ["ledger-orders"], ["shopapp-pg"], ["paylode"]],
+        "improve": { "overlaps": true, "boundRatio": true, "minFontSize": true, "overflow": true },
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14,
+        "minIdPreservation": 0.8
+      }
+    },
+    {
+      "id": "mermaid",
+      "title": "Mermaid conversion",
+      "skill": "excalidraw",
+      "prompt": "Turn this Mermaid into an Excalidraw drawing at docs/diagrams/checkout.excalidraw:\n\n```mermaid\nflowchart LR\n  U((Shopper)) -->|HTTPS| G[turnstile-gateway]\n  G -->|introspect| A[keymaster-auth]\n  G -->|/orders| O[ledger-orders]\n  O -->|charge| P[Paylode]\n  O -->|order.placed| Q[(postbox-mq)]\n  Q --> W[courier-worker]\n  W -->|email| M[Pigeonpost]\n```",
+      "expected_output": "Eight nodes with the Mermaid labels and seven arrows bound at both ends in the same directions, laid out left to right without overlaps.",
+      "files": [],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/checkout.excalidraw",
+      "checks": {
+        "requiredLabels": [["shopper"], ["turnstile-gateway"], ["keymaster-auth"], ["ledger-orders"], ["paylode"], ["postbox-mq"], ["courier-worker"], ["pigeonpost"]],
+        "requiredEdges": [
+          { "from": ["shopper"], "to": ["turnstile-gateway"] },
+          { "from": ["turnstile-gateway"], "to": ["keymaster-auth"] },
+          { "from": ["turnstile-gateway"], "to": ["ledger-orders"] },
+          { "from": ["ledger-orders"], "to": ["paylode"] },
+          { "from": ["ledger-orders"], "to": ["postbox-mq"] },
+          { "from": ["postbox-mq"], "to": ["courier-worker"] },
+          { "from": ["courier-worker"], "to": ["pigeonpost"] }
+        ],
+        "minArrows": 7,
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0
+      }
+    },
+    {
+      "id": "code-links",
+      "title": "Architecture with nodes linked to code",
+      "skill": "excalidraw",
+      "prompt": "Draw the architecture of this project and link each component box to the source file that implements it, so clicking a box opens the code.",
+      "expected_output": "An architecture diagram like arch-overview where each service and client box carries a link (the element's link property) to a file that exists, e.g. ledger-orders to services/ledger-orders/src/server.ts or placeOrder.ts, Paylode to paylodeClient.ts, Postgres to packages/db/src/pool.ts.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [["turnstile-gateway", "turnstile"], ["keymaster-auth", "keymaster"], ["ledger-orders", "ledger"], ["courier-worker", "courier"], ["paylode"], ["pigeonpost"]],
+        "links": { "minLinked": 6, "allExist": true },
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0
+      }
+    }
+  ]
+}

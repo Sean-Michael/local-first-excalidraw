@@ -103,5 +103,6 @@ This diagram was drawn with the project's own MCP tools and is a normal drawing:
 - [Configuration](docs/configuration.md): environment variables and `ai.json`
 - [Tracing](docs/tracing.md): OpenTelemetry traces of the assistant's model calls, tools and edits
 - [Development](docs/development.md): building, testing, the macOS app, and releases
+- [Evals](docs/evals.md): measuring Claude Code's diagramming with the MCP server and skills
 
 The editor is the official [`@excalidraw/excalidraw`](https://github.com/excalidraw/excalidraw) package (MIT), the same editor as excalidraw.com, without the hosted app's sharing and collaboration services. MIT licensed.

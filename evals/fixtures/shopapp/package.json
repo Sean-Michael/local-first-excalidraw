@@ -1,0 +1,9 @@
+{
+  "name": "shopapp",
+  "private": true,
+  "workspaces": ["services/*", "packages/*"],
+  "scripts": {
+    "build": "tsc -b services/*",
+    "migrate": "node packages/db/dist/migrate.js"
+  }
+}

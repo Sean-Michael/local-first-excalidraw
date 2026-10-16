@@ -1,0 +1,16 @@
+{
+  "skill_name": "diagram-review",
+  "generated_from": "evals/scenarios.json (run them with `npm run evals`)",
+  "evals": [
+    {
+      "id": 0,
+      "name": "readability-review",
+      "prompt": "Review docs/diagrams/checkout-sketch.excalidraw for readability and fix what's hard to read.",
+      "expected_output": "The overlapping boxes are moved apart, the free-floating arrows are bound to the boxes they point at, tiny text is enlarged to at least 14px, and labels fit their boxes. The five components and the note survive with their ids; nothing is recreated from scratch.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ],
+      "setup": "Needs a prepared project: npm run evals -- --scenario readability-review"
+    }
+  ]
+}

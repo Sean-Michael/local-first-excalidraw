@@ -81,6 +81,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
   // Tool calls wait for the answer, so the first one doesn't run against cwd.
   let rootsKnown: Promise<void> = Promise.resolve();
   server.server.oninitialized = () => {
+    client.agent = server.server.getClientVersion()?.name;
     if (opts.root || process.env.LFX_PROJECT_ROOT) return;
     if (!server.server.getClientCapabilities()?.roots) return;
     rootsKnown = (async () => {

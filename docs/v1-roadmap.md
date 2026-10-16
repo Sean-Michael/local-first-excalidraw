@@ -63,13 +63,13 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS5: IDE for diagrams
 
-- [ ] Code links: clicking an element's code link opens the file at that line in the user's editor (`vscode://` or `$EDITOR`) instead of treating it as a URL.
-- [ ] Staleness: record the content hash of each linked file, show which nodes point at changed or missing code, and expose this to agents (`check_drawing` / in `read_drawing`).
-- [ ] File management: rename, duplicate, move and delete (to the system trash) drawings from the web UI.
-- [ ] MCP-agent edits go on the undo stack and are highlighted briefly so you can see what changed. Today only the in-app assistant's edits are undoable.
-- [ ] Revert reports when it was partial ("kept N you edited").
-- [ ] Git awareness: modified and untracked badges in the drawing list.
-- [ ] A shortcut to toggle the assistant in the web UI. Surface library load and save failures. Show a banner when offline.
+- [x] Code links: clicking an element's code link opens the file at that line in the user's editor (`vscode://` or `$EDITOR`) instead of treating it as a URL.
+- [x] Staleness: record the content hash of each linked file, show which nodes point at changed or missing code, and expose this to agents (`check_drawing` / in `read_drawing`).
+- [x] File management: rename, duplicate, move and delete (to the system trash) drawings from the web UI.
+- [x] MCP-agent edits go on the undo stack and are highlighted briefly so you can see what changed. Today only the in-app assistant's edits are undoable.
+- [x] Revert reports when it was partial ("kept N you edited").
+- [x] Git awareness: modified and untracked badges in the drawing list.
+- [x] A shortcut to toggle the assistant in the web UI. Surface library load and save failures. Show a banner when offline.
 
 ## WS6: End-to-end tests, evals and CI
 

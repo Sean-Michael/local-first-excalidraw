@@ -70,6 +70,13 @@ Chats on different drawings reply at the same time. On one drawing, only one cha
 
 The assistant's edits go on the canvas undo stack, so ⌘Z takes them back. Each reply also has **Revert changes**, which restores everything that reply changed except elements you've edited since.
 
+Some caveats:
+
+- A revert never overwrites your work. If you changed an element after the reply, it keeps your version, and the reply says so: **Reverted 3, kept 1 you edited since**. Undo with ⌘Z, or edit it by hand, if you want it back too.
+- Only replies since the daemon last started can be reverted; the snapshot each revert needs is kept in memory.
+- A revert restores elements, not the canvas background or files the reply wrote elsewhere (an exported SVG, say).
+- Edits by MCP agents such as Claude Code have no **Revert changes** button, but they are on the undo stack of any tab that had the drawing open; see [Agent edits in the editor](projects.md#agent-edits-in-the-editor).
+
 ## Where requests go
 
 The local daemon makes every model request; the page only talks to the daemon. The panel always shows the destination, for example `→ localhost:11434 · gpt-oss:20b` or `→ Claude Code · sonnet`.

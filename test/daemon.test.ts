@@ -38,6 +38,8 @@ const isolatedEnv = (port: number, stateDir: string, root: string, web: string):
   LFX_ROOTS: root,
   LFX_WEB_DIR: web,
   LFX_NO_BROWSER: "1",
+  // The web directory here is a stub that can't render; headless rendering has its own tests.
+  LFX_HEADLESS: "off",
   LFX_URL: undefined,
   LFX_TOKEN: undefined,
   LFX_PROJECT_ROOT: undefined,

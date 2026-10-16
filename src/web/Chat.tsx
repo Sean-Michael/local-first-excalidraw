@@ -7,6 +7,7 @@ import {
   endpointLabel,
   type Mention,
   type PublicSettings,
+  revertSummary,
   type ToolPart,
 } from "../shared/chat";
 import { ChatSettings } from "./ChatSettings";
@@ -131,7 +132,9 @@ function AssistantTurn({ item, onRevert }: { item: AssistantItem; onRevert: () =
             Revert changes ({item.changed})
           </button>
         )}
-        {item.reverted && <span>Changes reverted</span>}
+        {item.reverted && (
+          <span title={item.keptCount ? "Elements you changed after this reply were left as they are" : undefined}>{revertSummary(item)}</span>
+        )}
       </div>
     </div>
   );

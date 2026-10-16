@@ -494,3 +494,108 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-links-review svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 @media (max-width: 1280px) { .lfx-kbd { display: none; } }
 .lfx-editor[data-theme="dark"] .lfx-toast { background: #232329; color: #e3e3e8; }
+
+/* ---- Shell, sidebar and drawing tree ------------------------------------- */
+.lfx-shell[data-theme="light"] {
+  --lfx-bg: #ffffff; --lfx-fg: #1e1e1e; --lfx-muted: #6b7280; --lfx-line: #e5e7eb; --lfx-hover: #f3f4f6; --lfx-accent: #6965db;
+  --lfx-side: #f8f8fa; --lfx-current: #e9e8ff; --lfx-focus: rgba(105,101,219,.55);
+  color-scheme: light;
+}
+.lfx-shell[data-theme="dark"] {
+  --lfx-bg: #121212; --lfx-fg: #e3e3e8; --lfx-muted: #9ca3af; --lfx-line: #2a2a2e; --lfx-hover: #1e1e22; --lfx-accent: #a8a5ff;
+  --lfx-side: #18181b; --lfx-current: #2e2c4d; --lfx-focus: rgba(168,165,255,.6);
+  color-scheme: dark;
+}
+.lfx-shell { position: fixed; inset: 0; display: flex; background: var(--lfx-bg); color: var(--lfx-fg); }
+.lfx-shell.lfx-home { position: static; display: block; min-height: 100%; }
+.lfx-shell .lfx-editor { position: relative; inset: auto; flex: 1; min-width: 0; height: 100%; }
+.lfx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.lfx-sidebar {
+  position: relative; flex: none; display: flex; flex-direction: column; height: 100%; box-sizing: border-box;
+  background: var(--lfx-side); border-right: 1px solid var(--lfx-line);
+  font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.lfx-sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: .55rem .5rem .3rem .8rem; }
+.lfx-sidebar-title { font-weight: 600; font-size: .8rem; letter-spacing: .02em; text-transform: uppercase; color: var(--lfx-muted); text-decoration: none; }
+.lfx-sidebar-title:hover { color: var(--lfx-fg); }
+.lfx-sidebar-resize { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 5; }
+.lfx-sidebar-resize:hover, .lfx-sidebar-resize:focus-visible { background: var(--lfx-accent); opacity: .5; outline: none; }
+.lfx-sidebar-toggle svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.3; }
+
+.lfx-tree-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.lfx-tree-page { margin-top: 1rem; }
+.lfx-tree-tools { display: flex; gap: .3rem; padding: .2rem .5rem .45rem; }
+.lfx-tree-page .lfx-tree-tools { padding: 0 0 .6rem; }
+.lfx-tree-filter {
+  flex: 1; min-width: 0; font: inherit; padding: .32rem .55rem; border-radius: .4rem;
+  border: 1px solid var(--lfx-line); background: var(--lfx-bg); color: var(--lfx-fg);
+}
+.lfx-browser .lfx-tree-filter { padding: .5rem .75rem; font-size: .9rem; }
+.lfx-tree-filter:focus { outline: none; border-color: var(--lfx-accent); box-shadow: 0 0 0 2px var(--lfx-focus); }
+.lfx-tree-tool, .lfx-browser button.lfx-tree-tool {
+  display: inline-grid; place-items: center; width: 1.9rem; flex: none; padding: 0; border-radius: .4rem;
+  border: 1px solid transparent; background: transparent; color: var(--lfx-muted); cursor: pointer;
+}
+.lfx-tree-tool:hover, .lfx-browser button.lfx-tree-tool:hover { background: var(--lfx-hover); color: var(--lfx-fg); }
+.lfx-tree-tool.lfx-on, .lfx-browser button.lfx-tree-tool.lfx-on { color: var(--lfx-accent); border-color: var(--lfx-line); background: var(--lfx-bg); }
+.lfx-tree-tool:focus-visible { outline: 2px solid var(--lfx-focus); outline-offset: 1px; }
+.lfx-tree-msg { margin: .2rem .8rem .4rem; font-size: .8rem; color: var(--lfx-muted); overflow-wrap: anywhere; }
+.lfx-tree-error { color: #e03131; }
+.lfx-tree-msg button, .lfx-browser .lfx-tree-msg button { font: inherit; background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; }
+.lfx-tree-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 1rem; }
+.lfx-tree-page .lfx-tree-scroll { overflow: visible; border: 1px solid var(--lfx-line); border-radius: .5rem; padding: .3rem 0; }
+
+.lfx-recent { margin-bottom: .4rem; }
+.lfx-recent h3, .lfx-browser .lfx-recent h3 { margin: .2rem .8rem .2rem; font-size: .7rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--lfx-muted); }
+.lfx-recent ul, .lfx-browser .lfx-recent ul { list-style: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: visible; }
+.lfx-browser .lfx-recent li + li { border-top: 0; }
+.lfx-recent button, .lfx-browser .lfx-recent button {
+  display: flex; align-items: center; gap: .35rem; width: 100%; box-sizing: border-box; padding: .22rem .6rem .22rem 1.65rem;
+  border: 0; border-radius: 0; background: transparent; color: var(--lfx-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.lfx-recent button:hover { background: var(--lfx-hover); }
+.lfx-recent button.lfx-current { background: var(--lfx-current); }
+.lfx-recent button:focus-visible { outline: 2px solid var(--lfx-focus); outline-offset: -2px; }
+
+.lfx-tree { outline: none; }
+.lfx-tree-row {
+  position: relative; display: flex; align-items: center; gap: .35rem; min-height: 1.6rem; padding-right: .3rem;
+  cursor: pointer; user-select: none; white-space: nowrap; border: 1px solid transparent;
+}
+.lfx-tree-page .lfx-tree-row { min-height: 2rem; font-size: .9rem; }
+.lfx-tree-row:hover { background: var(--lfx-hover); }
+.lfx-tree-row.lfx-current { background: var(--lfx-current); }
+.lfx-tree-row:focus-visible { outline: none; border-color: var(--lfx-focus); }
+.lfx-tree-row.lfx-drop { background: var(--lfx-current); border-color: var(--lfx-accent); }
+.lfx-tree-root { font-weight: 600; margin-top: .3rem; }
+.lfx-tree-chevron, .lfx-tree-chevron-space { width: .85rem; height: .85rem; flex: none; }
+.lfx-tree-chevron { fill: none; stroke: var(--lfx-muted); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .12s; }
+.lfx-tree-chevron.lfx-open { transform: rotate(90deg); }
+.lfx-tree-icon { width: .95rem; height: .95rem; flex: none; fill: none; stroke: var(--lfx-muted); stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; }
+.lfx-tree-folder > .lfx-tree-icon { fill: var(--lfx-muted); fill-opacity: .18; }
+.lfx-tree-drawing > .lfx-tree-icon, .lfx-recent .lfx-tree-icon { stroke: var(--lfx-accent); }
+.lfx-tree-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lfx-tree-gap { flex: 1; }
+.lfx-tree-count { color: var(--lfx-muted); font-size: .72rem; font-weight: 400; padding-left: .3rem; }
+.lfx-tree-time { color: var(--lfx-muted); font-size: .78rem; padding-left: .6rem; }
+.lfx-tree-row .lfx-git { flex: none; }
+.lfx-tree-more, .lfx-browser button.lfx-tree-more {
+  flex: none; margin-left: .2rem; padding: 0 .35rem; height: 1.3rem; line-height: 1; font-size: 1rem; border-radius: .3rem;
+  border: 0; background: transparent; color: var(--lfx-muted); cursor: pointer; visibility: hidden;
+}
+.lfx-tree-row:hover .lfx-tree-more, .lfx-tree-row.lfx-menu-open .lfx-tree-more, .lfx-tree-row:focus-visible .lfx-tree-more { visibility: visible; }
+.lfx-tree-more:hover, .lfx-browser button.lfx-tree-more:hover { background: var(--lfx-line); color: var(--lfx-fg); }
+@media (hover: none) { .lfx-tree-more { visibility: visible; } }
+
+.lfx-tree-menu {
+  position: fixed; z-index: 50; min-width: 11rem; display: flex; flex-direction: column; padding: .25rem;
+  background: var(--lfx-bg); color: var(--lfx-fg); border: 1px solid var(--lfx-line); border-radius: .5rem; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  font: 13px system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.lfx-tree-menu button, .lfx-browser .lfx-tree-menu button {
+  font: inherit; text-align: left; padding: .38rem .6rem; border: 0; border-radius: .35rem; background: transparent; color: var(--lfx-fg); cursor: pointer;
+}
+.lfx-tree-menu button:hover, .lfx-tree-menu button:focus-visible { background: var(--lfx-hover); outline: none; }
+.lfx-tree-menu button.lfx-danger-text { color: #e03131; }
+@media (max-width: 700px) { .lfx-sidebar { display: none; } }

@@ -8,6 +8,8 @@ import { api, basename } from "./sync";
 export interface Folder {
   path: string;
   root: string;
+  /** Nothing inside at all (a folder just made with New folder). */
+  empty?: boolean;
 }
 
 const dirOf = (p: string) => p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")));
@@ -21,8 +23,17 @@ export const files = {
   move: (path: string, dir: string) => api<{ path: string }>("POST", "/api/files/move", { path, dir }),
   trash: (path: string) => api<{ path: string; trashed: string }>("POST", "/api/files/trash", { path }),
   folder: (path: string) => api<{ path: string }>("POST", "/api/files/folder", { path }),
-  list: () => api<{ roots: string[]; drawings: { path: string; root: string; size: number; mtime: number }[]; folders: Folder[] }>("GET", "/api/files"),
+  renameFolder: (path: string, name: string) => api<{ path: string }>("POST", "/api/files/rename-folder", { path, name: name.trim() }),
+  /** Shows a drawing or folder in the Finder (macOS only). */
+  reveal: (path: string) => api<{ path: string }>("POST", "/api/files/reveal", { path }),
+  list: () => api<FileList>("GET", "/api/files"),
 };
+
+export interface FileList {
+  roots: string[];
+  drawings: { path: string; root: string; size: number; mtime: number }[];
+  folders: Folder[];
+}
 
 interface Ask {
   title: string;

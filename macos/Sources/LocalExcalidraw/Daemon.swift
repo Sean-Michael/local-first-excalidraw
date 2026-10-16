@@ -37,11 +37,56 @@ final class Daemon: @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Reuses a running daemon (started by the CLI, an agent, or a previous launch) or starts one.
-    func ensure() async throws {
-        if try await healthy() {
+    /// Like the CLI, an older daemon that was started on demand is replaced by this app's version.
+    /// Returns the version of an older daemon someone started on purpose, which the user may
+    /// want to restart; a newer one is only logged.
+    @discardableResult
+    func ensure() async throws -> String? {
+        if let h = try await health() {
             try loadToken()
+            guard let mine = Runtime.bundledVersion(), let theirs = h.version, theirs != mine else { return nil }
+            if Self.compareVersions(theirs, mine) > 0 {
+                NSLog("lfx daemon v\(theirs) is newer than this app's v\(mine); using it.")
+                return nil
+            }
+            if h.onDemand != true { return theirs }
+            NSLog("Replacing on-demand lfx daemon v\(theirs) with v\(mine).")
+            try await shutdownRunning()
+        }
+        try await launch()
+        return nil
+    }
+
+    /// Stops whichever daemon is running and starts this app's version.
+    func restart() async throws {
+        try await shutdownRunning()
+        try await launch()
+    }
+
+    private func shutdownRunning() async throws {
+        if let p = process, p.isRunning {
+            p.terminate()
+            p.waitUntilExit()
+            process = nil
             return
         }
+        if let token {
+            var req = URLRequest(url: apiBase.appending(path: "/api/shutdown"))
+            req.httpMethod = "POST"
+            req.timeoutInterval = 2
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = Data("{}".utf8)
+            _ = try? await session.data(for: req)
+        }
+        for _ in 0..<50 {
+            if try await health() == nil { return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw Failure(message: "The running daemon did not stop. Run `lfx stop` and try again.")
+    }
+
+    private func launch() async throws {
         try start()
         for _ in 0..<60 {
             try await Task.sleep(for: .milliseconds(150))
@@ -76,15 +121,35 @@ final class Daemon: @unchecked Sendable {
         _ = done.wait(timeout: .now() + 2.5)
     }
 
-    func healthy() async throws -> Bool {
+    struct Health: Decodable {
+        let name: String?
+        let version: String?
+        let onDemand: Bool?
+    }
+
+    /// The running daemon's health, or nil when nothing answers.
+    func health() async throws -> Health? {
         var req = URLRequest(url: apiBase.appending(path: "/api/health"))
         req.timeoutInterval = 1.5
-        guard let (data, _) = try? await session.data(for: req) else { return false }
-        let name = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["name"] as? String
-        if name != "local-first-excalidraw" {
+        guard let (data, _) = try? await session.data(for: req) else { return nil }
+        let h = try? JSONDecoder().decode(Health.self, from: data)
+        if h?.name != "local-first-excalidraw" {
             throw Failure(message: "Port \(port) is in use by another program.")
         }
-        return true
+        return h
+    }
+
+    func healthy() async throws -> Bool { try await health() != nil }
+
+    /// -1, 0 or 1, comparing dotted numeric versions ("0.1.10" > "0.1.9").
+    static func compareVersions(_ a: String, _ b: String) -> Int {
+        let pa = a.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y ? -1 : 1 }
+        }
+        return 0
     }
 
     private var logURL: URL { stateDir.appending(path: "daemon.log") }
@@ -166,6 +231,35 @@ final class Daemon: @unchecked Sendable {
         return r.path
     }
 
+    /// Moves a drawing into another folder, keeping its name.
+    func move(_ path: String, to dir: String) async throws -> String {
+        let r: PathResult = try await request("POST", "/api/files/move", body: ["path": path, "dir": dir])
+        return r.path
+    }
+
+    func newFolder(_ path: String) async throws -> String {
+        let r: PathResult = try await request("POST", "/api/files/folder", body: ["path": path])
+        return r.path
+    }
+
+    /// Renames a folder in place; open tabs of drawings inside follow.
+    func renameFolder(_ path: String, to name: String) async throws -> String {
+        let r: PathResult = try await request("POST", "/api/files/rename-folder", body: ["path": path, "name": name])
+        return r.path
+    }
+
+    /// Server-sent event lines ("event: files-changed", ...) until the connection drops.
+    func eventLines() async throws -> AsyncLineSequence<URLSession.AsyncBytes> {
+        guard let token else { throw Failure(message: "Not connected to the daemon.") }
+        var req = URLRequest(url: apiBase.appending(path: "/api/events"))
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // The daemon pings every 25 s, so a longer silence means it's gone.
+        req.timeoutInterval = 60
+        let (bytes, res) = try await session.bytes(for: req)
+        guard (res as? HTTPURLResponse)?.statusCode == 200 else { throw Failure(message: "The daemon has no event stream.") }
+        return bytes.lines
+    }
+
     /// Renames or moves a drawing; open tabs of it follow.
     func rename(_ path: String, to newPath: String) async throws -> String {
         let r: PathResult = try await request("POST", "/api/files/rename", body: ["path": path, "to": newPath])
@@ -217,9 +311,17 @@ struct Drawing: Decodable, Identifiable, Hashable {
     }
 }
 
+struct Folder: Decodable, Hashable {
+    let path: String
+    let root: String
+    /// Nothing inside at all (just made with New Folder).
+    let empty: Bool?
+}
+
 struct FileList: Decodable {
     let roots: [String]
     let drawings: [Drawing]
+    let folders: [Folder]?
 }
 
 private struct Empty: Decodable {}
@@ -243,6 +345,17 @@ enum Runtime {
             throw Daemon.Failure(message: "Node.js 20 or newer is required. Install it with `brew install node`, or set LFX_NODE.")
         }
         return (node, cli)
+    }
+
+    /// The version of the bundled (or, during development, the repository's) lfx.
+    static func bundledVersion() -> String? {
+        guard let cli = cliScript() else { return nil }
+        // cli.js lives at <lfx>/dist/src/server/cli.js, next to <lfx>/package.json.
+        let pkg = cli.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appending(path: "package.json")
+        guard let data = try? Data(contentsOf: pkg),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["version"] as? String
     }
 
     private static func cliScript() -> URL? {

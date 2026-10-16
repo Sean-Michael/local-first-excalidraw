@@ -12,7 +12,9 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - Git badges (**M**, **U**, **S**, **C**) for modified, untracked, staged and conflicted drawings in the drawing list.
 - Edits by MCP agents go on the canvas undo stack, glow briefly, and are announced with a toast such as **Claude Code edited 3 elements** and a **Select** action.
 - ⇧⌘A (Ctrl+Shift+A) shows or hides the assistant in the web UI. A banner appears when the tab loses its connection, error banners have a **Dismiss** button, and library load or save failures show as a toast.
-- Rename and Duplicate in the macOS app's sidebar context menu.
+- A drawings sidebar in the editor, organised by the project's folders: ⌘B (Ctrl+B) toggles it, with recents, a filter, a "show all folders" toggle, git badges, context menus (including new drawing here, new folder and rename folder), drag to move and tree keyboard navigation. Switching drawings from it keeps the sidebar and the assistant open. The drawing list shows the same tree. See [Drawings, projects and code](docs/projects.md).
+- The daemon pushes a `files-changed` event over the WebSocket, and over `GET /api/events` (server-sent events), when drawings or folders are created, renamed, moved or deleted, by anyone.
+- The macOS app's sidebar is a folder tree with Rename, Duplicate, Move To, New Folder and Rename Folder, and refreshes from the daemon's event stream instead of polling every 3 seconds. The app replaces an older daemon that was started on demand, and offers to restart an older one started elsewhere.
 - Headless rendering. Render, export, Mermaid conversion and shape previews run in a hidden local Chrome, Chromium, Edge or Brave when no tab of the drawing is open, so agents and CI no longer open your browser. Configured with `LFX_HEADLESS` (`auto`, `always`, `off`), `LFX_BROWSER` and `LFX_HEADLESS_IDLE_MIN`; `lfx status` shows its state. The Docker image can include Chromium with `--build-arg WITH_CHROMIUM=1`.
 - New MCP tools:
   - `apply_changes`: add, update and delete in one call and one revision.

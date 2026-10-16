@@ -22,6 +22,7 @@ import {
   writeFileAtomic,
 } from "./config.js";
 import { copyName, duplicateFile, FileOpError, listFolders, makeFolder, moveFile, moveToTrash } from "./files.js";
+import { DrawingSetWatcher } from "./drawing-watch.js";
 import { drawingStatus } from "./git.js";
 import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
@@ -214,6 +215,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   };
 
   store.on("change", (ch: SceneChange) => {
+    drawingSet.saw(ch.path);
     for (const c of clients.values()) {
       if (c.path === ch.path && c.id !== ch.origin) {
         // "agent": the in-app assistant; "mcp:<client>": an MCP agent; "daemon": the daemon's own
@@ -234,11 +236,21 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
 
   store.on("deleted", (p: string) => {
     for (const c of clients.values()) if (c.path === p) send(c, { t: "deleted", path: p });
+    drawingSet.nudge();
   });
 
   const isOpen = (c: Client) => c.ws.readyState === c.ws.OPEN;
   /** Tabs the user can see; the headless renderer is not one of them. */
   const visibleClients = () => [...clients.values()].filter((c) => !c.renderer);
+
+  // ---- drawing set changes: the sidebar trees (tabs) and the macOS app (/api/events) ----
+  const eventStreams = new Set<ServerResponse>();
+  const drawingSet = new DrawingSetWatcher(roots, () => {
+    for (const c of visibleClients()) send(c, { t: "files-changed" });
+    for (const res of eventStreams) res.write("event: files-changed\ndata: {}\n\n");
+  });
+  /** Watch only while something shows the drawing list. */
+  const updateWatching = () => drawingSet.setActive(visibleClients().length > 0 || eventStreams.size > 0);
 
   const waitForClient = async (ms: number): Promise<Client | undefined> => {
     const deadline = Date.now() + ms;
@@ -862,6 +874,20 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     if (name === "git" && method === "GET") return { status: await drawingStatus(roots()) };
     if (method !== "POST") throw new HttpError(405, "Method not allowed");
     const body = await readBody(req);
+    const result = await changeFiles(name, body);
+    drawingSet.nudge();
+    return result;
+  };
+
+  /** A folder under a root (not a root itself), canonicalised. */
+  const subfolder = (dir: unknown) => {
+    const real = safeDir(String(dir ?? ""));
+    if (roots().some((r) => (fs.existsSync(r) ? fs.realpathSync.native(r) : r) === real)) throw new HttpError(400, "That is a root folder; remove or re-add it instead");
+    if (!fs.statSync(real).isDirectory()) throw new HttpError(400, "Not a folder");
+    return real;
+  };
+
+  const changeFiles = async (name: string, body: Record<string, any>): Promise<unknown> => {
     try {
       switch (name) {
         case "rename":
@@ -900,6 +926,32 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           if (roots().some((r) => path.resolve(r) === dir)) throw new HttpError(409, "That folder already exists");
           makeFolder(dir);
           return { path: dir };
+        }
+        case "rename-folder": {
+          // A new name in the same parent; open tabs on drawings inside follow.
+          const from = subfolder(body.path);
+          const name = String(body.name ?? "").trim();
+          if (!name || /[\\/\0]/.test(name) || name === "." || name === "..") throw new HttpError(400, "Give the folder a plain name, without slashes");
+          const to = path.join(path.dirname(from), name);
+          if (to === from) return { path: to };
+          const inside = listDrawings([from], 12, 5_000).map((d) => d.path);
+          moveFile(from, to);
+          for (const p of inside) announceMove(p, path.join(to, path.relative(from, p)));
+          for (const p of inside) store.get(p);
+          return { path: to };
+        }
+        case "reveal": {
+          // Show a drawing or folder in the Finder (macOS only).
+          if (process.platform !== "darwin") throw new HttpError(501, "Revealing files is only supported on macOS");
+          let target: string;
+          try {
+            target = safe(body.path);
+          } catch {
+            target = safeDir(String(body.path ?? ""));
+          }
+          if (!fs.existsSync(target)) throw new HttpError(404, `No such file: ${target}`);
+          await launch({ cmd: "open", args: ["-R", target], via: "finder" });
+          return { path: target };
         }
       }
     } catch (e) {
@@ -963,6 +1015,20 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       if (auth !== "bearer") throw new HttpError(403, "This endpoint is only available to local clients");
     };
 
+    if (pathname === "/api/events" && method === "GET") {
+      // Server-sent events for clients without a WebSocket (the macOS app): "files-changed" so far.
+      res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
+      res.write(": connected\n\n");
+      eventStreams.add(res);
+      updateWatching();
+      const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+      req.on("close", () => {
+        clearInterval(ping);
+        eventStreams.delete(res);
+        updateWatching();
+      });
+      return;
+    }
     if (pathname === "/api/files" && method === "GET") {
       const rs = roots();
       return json(res, 200, { roots: rs, drawings: listDrawings(rs), folders: listFolders(rs) });
@@ -1235,6 +1301,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     wss.handleUpgrade(req, socket, head, (ws) => {
       const c: Client = { id: crypto.randomUUID(), ws, lastActive: Date.now(), renderer };
       clients.set(c.id, c);
+      updateWatching();
       ws.on("message", (raw) => {
         c.lastActive = lastActivity = Date.now();
         let msg: Record<string, unknown>;
@@ -1252,6 +1319,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       ws.on("close", () => {
         c.unwatch?.();
         clients.delete(c.id);
+        updateWatching();
         // Fail this tab's outstanding renders now rather than after the full timeout.
         for (const [id, p] of pending) {
           if (p.owner !== c.id) continue;

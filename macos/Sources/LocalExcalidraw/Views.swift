@@ -41,6 +41,12 @@ struct ContentView: View {
         } message: {
             Text(model.alert ?? "")
         }
+        .alert("An older daemon is running", isPresented: Binding(get: { model.outdatedDaemon != nil }, set: { if !$0 { model.outdatedDaemon = nil } })) {
+            Button("Restart Daemon") { Task { await model.restartDaemon() } }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("lfx v\(model.outdatedDaemon ?? "?") is running, started outside this app. Restart it to use this app's version. Open editors reconnect on their own.")
+        }
     }
 
     @ViewBuilder private var detail: some View {
@@ -76,38 +82,41 @@ struct ContentView: View {
 
 struct Sidebar: View {
     @Bindable var model: AppModel
-    @State private var newName = ""
+    @State private var promptValue = ""
 
     var body: some View {
         List(selection: $model.selection) {
-            ForEach(model.sections, id: \.root) { section in
+            ForEach(model.tree) { root in
                 Section {
-                    if section.drawings.isEmpty {
+                    if root.children.isEmpty {
                         Text(model.search.isEmpty ? "No drawings yet" : "No matches")
                             .foregroundStyle(.tertiary)
                     }
-                    ForEach(section.drawings) { d in
-                        DrawingRow(drawing: d)
-                            .tag(d.path)
-                            .contextMenu { menu(for: d) }
+                    ForEach(root.children) { node in
+                        TreeRow(model: model, node: node)
                     }
                 } header: {
-                    Text(abbreviate(section.root)).help(section.root)
+                    Text(abbreviate(root.path))
+                        .help(root.path)
+                        .contextMenu { FolderMenu(model: model, folder: root) }
                 }
             }
         }
         .listStyle(.sidebar)
         .searchable(text: $model.search, placement: .sidebar, prompt: "Filter")
-        .alert("Rename Drawing", isPresented: Binding(get: { model.renaming != nil }, set: { if !$0 { model.renaming = nil } })) {
-            TextField("Name", text: $newName)
-            Button("Rename") {
-                if let d = model.renaming {
-                    let name = newName
-                    Task { await model.rename(d, to: name) }
+        .onChange(of: model.selection) { model.revealSelection() }
+        .onChange(of: model.drawings) { model.revealSelection() }
+        .alert(model.prompt?.title ?? "", isPresented: Binding(get: { model.prompt != nil }, set: { if !$0 { model.prompt = nil } })) {
+            TextField("Name", text: $promptValue)
+            Button(model.prompt?.confirm ?? "OK") {
+                if let p = model.prompt {
+                    let value = promptValue
+                    Task { await p.action(value) }
                 }
             }
             Button("Cancel", role: .cancel) {}
         }
+        .onChange(of: model.prompt?.title) { promptValue = model.prompt?.value ?? "" }
         .overlay {
             if model.phase == .ready && model.roots.isEmpty { ProgressView() }
         }
@@ -133,19 +142,71 @@ struct Sidebar: View {
             .disabled(model.phase != .ready)
         }
     }
+}
 
-    @ViewBuilder private func menu(for d: Drawing) -> some View {
-        Button("Show in Finder") { model.reveal(d.path) }
-        Button("Open in Browser") { model.openInBrowser(d.path) }
-        Button("Copy Path") { model.copyPath(d.path) }
-        Divider()
-        Button("Rename…") {
-            newName = d.name
-            model.renaming = d
+/// A folder (a disclosure group of its children) or a drawing (a selectable row).
+struct TreeRow: View {
+    let model: AppModel
+    let node: TreeNode
+
+    var body: some View {
+        if let d = node.drawing {
+            DrawingRow(drawing: d)
+                .tag(d.path)
+                .contextMenu { DrawingMenu(model: model, drawing: d) }
+        } else {
+            DisclosureGroup(isExpanded: Binding(get: { model.isExpanded(node) }, set: { model.setExpanded(node, $0) })) {
+                ForEach(node.children) { child in
+                    TreeRow(model: model, node: child)
+                }
+            } label: {
+                HStack {
+                    Label(node.name, systemImage: "folder")
+                    Spacer()
+                    if node.count > 0 {
+                        Text("\(node.count)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .help(node.path)
+                .contextMenu { FolderMenu(model: model, folder: node) }
+            }
         }
-        Button("Duplicate") { Task { await model.duplicate(d.path) } }
+    }
+}
+
+struct DrawingMenu: View {
+    let model: AppModel
+    let drawing: Drawing
+
+    var body: some View {
+        Button("Show in Finder") { model.reveal(drawing.path) }
+        Button("Open in Browser") { model.openInBrowser(drawing.path) }
+        Button("Copy Path") { model.copyPath(drawing.path) }
         Divider()
-        Button("Move to Trash", role: .destructive) { model.moveToTrash(d.path) }
+        Button("Rename…") { model.askRename(drawing) }
+        Button("Duplicate") { Task { await model.duplicate(drawing.path) } }
+        Menu("Move To") {
+            ForEach(model.moveTargets(for: drawing), id: \.self) { dir in
+                Button(abbreviate(dir)) { Task { await model.move(drawing, to: dir) } }
+            }
+        }
+        Divider()
+        Button("Move to Trash", role: .destructive) { model.moveToTrash(drawing.path) }
+    }
+}
+
+struct FolderMenu: View {
+    let model: AppModel
+    let folder: TreeNode
+
+    var body: some View {
+        Button("New Drawing Here…") { model.askNewDrawing(in: folder) }
+        Button("New Folder…") { model.askNewFolder(in: folder) }
+        if !folder.isRoot {
+            Button("Rename Folder…") { model.askRenameFolder(folder) }
+        }
+        Divider()
+        Button("Show in Finder") { model.reveal(folder.path) }
     }
 }
 
@@ -153,19 +214,18 @@ struct DrawingRow: View {
     let drawing: Drawing
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(drawing.name).lineLimit(1)
-            HStack(spacing: 4) {
-                if !drawing.folder.isEmpty {
-                    Text(drawing.folder).lineLimit(1).truncationMode(.head)
-                    Text("·")
-                }
+        Label {
+            HStack {
+                Text(drawing.name).lineLimit(1)
+                Spacer()
                 Text(drawing.modified, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        } icon: {
+            Image(systemName: "scribble.variable")
         }
-        .padding(.vertical, 2)
         .help(drawing.path)
     }
 }

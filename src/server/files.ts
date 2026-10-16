@@ -119,24 +119,30 @@ export function moveToTrash(file: string, env: NodeJS.ProcessEnv = process.env, 
   throw new FileOpError(`Moving files to the trash isn't supported on ${platform}; set LFX_TRASH_DIR`, 501);
 }
 
-/** Folders under the roots (bounded), for "move to folder" and empty new folders. */
-export function listFolders(roots: string[], maxDepth = 4, limit = 300): { path: string; root: string }[] {
-  const out: { path: string; root: string }[] = [];
-  const walk = (root: string, dir: string, depth: number) => {
-    if (depth > maxDepth || out.length >= limit) return;
+/**
+ * Folders under the roots (bounded), for "move to folder" and the drawing tree. `empty` marks a
+ * folder with nothing in it at all, such as one just made with New folder.
+ */
+export function listFolders(roots: string[], maxDepth = 4, limit = 300): { path: string; root: string; empty?: boolean }[] {
+  const out: { path: string; root: string; empty?: boolean }[] = [];
+  /** Returns how many entries `dir` has, or -1 when it wasn't read. */
+  const walk = (root: string, dir: string, depth: number): number => {
+    if (depth > maxDepth || out.length >= limit) return -1;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return -1;
     }
     for (const e of entries) {
-      if (out.length >= limit) return;
+      if (out.length >= limit) break;
       if (!e.isDirectory() || SKIP_DIRS.has(e.name) || e.name.startsWith(".")) continue;
       const full = path.join(dir, e.name);
-      out.push({ path: full, root });
-      walk(root, full, depth + 1);
+      const item: { path: string; root: string; empty?: boolean } = { path: full, root };
+      out.push(item);
+      if (walk(root, full, depth + 1) === 0) item.empty = true;
     }
+    return entries.length;
   };
   for (const r of roots) walk(r, r, 0);
   return out.sort((a, b) => a.path.localeCompare(b.path));

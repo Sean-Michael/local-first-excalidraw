@@ -30,7 +30,7 @@ function storedFlag(key: string): boolean {
     return false;
   }
 }
-function storedTheme(): "light" | "dark" {
+export function storedTheme(): "light" | "dark" {
   try {
     const t = localStorage.getItem(THEME_KEY);
     if (t === "light" || t === "dark") return t;
@@ -175,7 +175,23 @@ export async function mermaid(text: string): Promise<{ elements: any[]; files: R
   return { elements: convertToExcalidrawElements(elements as any, { regenerateIds: true }) as any[], files: files ?? {} };
 }
 
-export function Editor({ path }: { path: string }) {
+export interface EditorProps {
+  path: string;
+  /** Opens another drawing (or the list, with null) in place; without it, links load a new page. */
+  onNavigate?: (path: string | null) => void;
+  /** This drawing was renamed or moved, by anyone. */
+  onMoved?: (from: string, to: string) => void;
+  onTheme?: (theme: "light" | "dark") => void;
+  sidebar?: { open: boolean; toggle: () => void };
+}
+
+const MOD = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+";
+
+export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorProps) {
+  const go = useCallback(
+    (p: string | null) => (onNavigate ? onNavigate(p) : void (location.href = p ? `/?file=${encodeURIComponent(p)}` : "/")),
+    [onNavigate],
+  );
   const [excalidraw, setExcalidraw] = useState<ExcalidrawImperativeAPI | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -398,7 +414,7 @@ export function Editor({ path }: { path: string }) {
           if (v && v !== basename(path)) await files.rename(path, v); // the daemon then tells this tab where it went
         } else if (kind === "duplicate") {
           const r = await files.duplicate(path);
-          window.open(`/?file=${encodeURIComponent(r.path)}`, "_blank");
+          go(r.path);
         } else if (kind === "move") {
           const d = await files.list();
           const options = folderOptions(d.roots, d.folders, dirOf(path));
@@ -416,7 +432,7 @@ export function Editor({ path }: { path: string }) {
         setError((e as Error).message);
       }
     },
-    [ask, path, flush],
+    [ask, path, flush, go],
   );
 
   useEffect(() => {
@@ -451,7 +467,8 @@ export function Editor({ path }: { path: string }) {
         } else if (m.t === "moved" && m.path === path) {
           // Renamed or moved from the drawing list or another tab: follow it.
           deletedRef.current = true;
-          location.replace(`/?file=${encodeURIComponent(m.to)}`);
+          if (onMoved) onMoved(m.path, m.to);
+          else location.replace(`/?file=${encodeURIComponent(m.to)}`);
         } else if ((m.t === "chat" && m.path === path) || m.t === "chat-error") {
           for (const fn of chatListeners.current) fn(m);
         } else if (m.t === "render") reply(m.id, render(m.scene, m.opts));
@@ -496,11 +513,13 @@ export function Editor({ path }: { path: string }) {
     };
     window.addEventListener("beforeunload", onUnload);
     return () => {
+      // Switching drawings in place: don't drop an edit still in the debounce window.
+      onUnload();
       sync.close();
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("beforeunload", onUnload);
     };
-  }, [excalidraw, path, applyRemote, flush, toggleOnce, refreshLinks]);
+  }, [excalidraw, path, applyRemote, flush, toggleOnce, refreshLinks, onMoved]);
 
   const onChange = useCallback(
     (_els: readonly unknown[], appState: any) => {
@@ -509,7 +528,10 @@ export function Editor({ path }: { path: string }) {
       } catch {
         // storage unavailable
       }
-      if (appState.theme !== liveTheme) setLiveTheme(appState.theme);
+      if (appState.theme !== liveTheme) {
+        setLiveTheme(appState.theme);
+        onTheme?.(appState.theme);
+      }
       const ids = Object.keys(appState.selectedElementIds ?? {}).filter((k) => appState.selectedElementIds[k]);
       const key = ids.join(",");
       if (key !== selectionKey.current) {
@@ -522,7 +544,7 @@ export function Editor({ path }: { path: string }) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(flush, SAVE_DEBOUNCE_MS);
     },
-    [excalidraw, flush, liveTheme],
+    [excalidraw, flush, liveTheme, onTheme],
   );
 
   const bridge = useMemo<ChatBridge>(
@@ -598,9 +620,25 @@ export function Editor({ path }: { path: string }) {
         }}
         renderTopRightUI={() => (
           <div className="lfx-top-right">
+            {sidebar && !sidebar.open && (
+              <button type="button" className="lfx-badge lfx-ai-toggle lfx-sidebar-toggle" onClick={sidebar.toggle} title={`Show the drawings sidebar (${MOD}B)`} aria-label="Show the drawings sidebar">
+                <svg viewBox="0 0 16 16" aria-hidden>
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+                  <path d="M6 2.5v11" />
+                </svg>
+              </button>
+            )}
             <div className="lfx-badge" title={path}>
               <span className={`lfx-dot lfx-${status}`} title={status === "live" ? "Synced to disk" : status} />
-              <a href="/" className="lfx-files">
+              <a
+                href="/"
+                className="lfx-files"
+                onClick={(e) => {
+                  if (!onNavigate) return;
+                  e.preventDefault();
+                  onNavigate(null);
+                }}
+              >
                 {basename(path)}
               </a>
             </div>
@@ -642,7 +680,12 @@ export function Editor({ path }: { path: string }) {
         )}
       >
         <MainMenu>
-          <MainMenu.Item onSelect={() => (location.href = "/")}>All drawings</MainMenu.Item>
+          <MainMenu.Item onSelect={() => go(null)}>All drawings</MainMenu.Item>
+          {sidebar && (
+            <MainMenu.Item onSelect={sidebar.toggle} shortcut={`${MOD}B`}>
+              {sidebar.open ? "Hide sidebar" : "Show sidebar"}
+            </MainMenu.Item>
+          )}
           <MainMenu.Item onSelect={() => toggleChat()} shortcut={navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A"}>
             {chatOpen ? "Hide assistant" : "Show assistant"}
           </MainMenu.Item>

@@ -21,6 +21,8 @@ export type ServerMsg =
   | { t: "render"; id: string; scene: SceneData; opts: RenderOpts }
   | { t: "mermaid"; id: string; text: string }
   | { t: "deleted"; path: string }
+  /** A drawing or folder appeared, moved or went away under the roots. */
+  | { t: "files-changed" }
   | { t: "error"; message: string };
 
 export interface SceneData {
@@ -39,6 +41,12 @@ export interface RenderOpts {
 
 export type Status = "connecting" | "live" | "offline";
 
+/**
+ * "change" whenever the daemon says the drawing set changed, from whichever socket heard it,
+ * and on every reconnect (events may have been missed). The drawing trees listen here.
+ */
+export const fileEvents = new EventTarget();
+
 const PING_MS = 10_000;
 // Nothing heard (not even a pong) for this long: the connection is dead even if the socket hasn't noticed.
 const DEAD_MS = 25_000;
@@ -51,6 +59,7 @@ export class Sync {
   private queue: string[] = [];
   private lastHeard = 0;
   private heartbeat?: number;
+  private connectedOnce = false;
 
   constructor(
     private onMessage: (m: ServerMsg) => void,
@@ -74,6 +83,8 @@ export class Sync {
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
     this.ws = ws;
     ws.onopen = () => {
+      if (this.connectedOnce) fileEvents.dispatchEvent(new Event("change"));
+      this.connectedOnce = true;
       this.retry = 0;
       this.lastHeard = Date.now();
       this.onStatus("live");
@@ -83,7 +94,9 @@ export class Sync {
     ws.onmessage = (ev) => {
       this.lastHeard = Date.now();
       try {
-        this.onMessage(JSON.parse(ev.data));
+        const m = JSON.parse(ev.data) as ServerMsg;
+        if (m.t === "files-changed") fileEvents.dispatchEvent(new Event("change"));
+        else this.onMessage(m);
       } catch (e) {
         console.error(e);
       }

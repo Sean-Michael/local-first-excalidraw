@@ -39,7 +39,7 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS3: Headless rendering
 
-- [ ] Render, export and Mermaid need a browser tab, and with none open, a read-only `render_drawing` opens the user's browser. Add a headless editor: the daemon launches a local Chromium-family browser with `--headless` against itself, on demand. This is used for agents and CI, and keeps the user's browser from popping open. Make it configurable, and document the result.
+- [x] Render, export and Mermaid need a browser tab, and with none open, a read-only `render_drawing` opens the user's browser. Add a headless editor: the daemon launches a local Chromium-family browser with `--headless` against itself, on demand. This is used for agents and CI, and keeps the user's browser from popping open. Make it configurable, and document the result.
 
 ## WS4: Agent skills, prompts and tools
 

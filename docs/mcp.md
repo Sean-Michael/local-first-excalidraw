@@ -61,7 +61,7 @@ Relative drawing paths resolve against the project root. A bare name such as `au
 | `open_drawing` | Opens a drawing in the browser. |
 | `excalidraw_guide` | The element cheat sheet. |
 
-Render, export and Mermaid conversion run in an open editor tab, because only a real browser has the fonts and canvas. If no tab is open, the server opens one. Everything else works headless.
+Render, export, Mermaid conversion and shape previews need a real browser for the fonts and canvas. An open tab of the drawing does the work if there is one; otherwise the daemon uses its own headless Chrome or Chromium, so these tools work without opening your browser, including in CI. Only `open_drawing` opens your browser. If no Chromium-family browser is installed, or `LFX_HEADLESS=off`, the server opens the drawing in your browser to do the work, as before. See [Headless rendering](configuration.md#headless-rendering).
 
 The in-app assistant has three more tools, `list_files`, `search_files` and `read_file`, for reading the project. They aren't exposed over MCP because coding agents have their own.
 

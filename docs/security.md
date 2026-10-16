@@ -26,6 +26,18 @@ Editor code and fonts are bundled. The build strips Excalidraw's CDN fallback an
 
 Links in Excalidraw's Help dialog and the library catalog open external sites, but only when you click them. Installing a library from the catalog is the only download the app makes.
 
+## Headless renderer
+
+When no tab is open, the daemon renders and converts Mermaid in a [headless Chrome or Chromium](configuration.md#headless-rendering) that it starts itself. The browser binary comes from `LFX_BROWSER` or a fixed list of install locations, never from the page or a request. It runs as a local child process:
+
+- It uses a fresh profile in a temporary directory, deleted when the browser exits, with extensions, sync, background networking, component updates and first-run pages turned off.
+- It is kept offline. `--host-resolver-rules` makes every host name except `127.0.0.1` fail to resolve, and `--no-proxy-server` stops it using a system proxy. The page itself is under the same Content Security Policy as a normal tab.
+- It signs in the same way as your browser: the daemon mints a single-use, two-minute login code and passes the link on the command line. The session it gets is kept in memory only. Host, Origin and cookie checks are unchanged.
+- Its session is limited to the page and the WebSocket. It can't call the HTTP API, and the daemon ignores anything it sends except replies to the daemon's own requests, so it can't open, save or chat about a drawing. Drawings reach it only inside render requests.
+- It exits when the daemon does, including when the daemon is killed: it's started with `--remote-debugging-pipe`, and Chrome exits when that pipe closes. Nothing listens on a debugging port.
+
+In containers (and as root on Linux), Chromium's own sandbox can't start, so it runs with `--no-sandbox` and the container is the boundary.
+
 ## Tracing
 
 [Tracing](tracing.md) is off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT` or `LFX_TRACE_FILE` in the daemon's environment; the page can't turn it on. Spans hold counts, timings and tool names by default. Prompts, replies, file contents and tool results are recorded only with `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, so send traces only to a receiver you trust, ideally on your machine.
@@ -60,4 +72,12 @@ The second command prints a sign-in link to open in your browser.
 - `gateway` is the same image running a small TCP forwarder (`lfx proxy`). It publishes the UI on `127.0.0.1:7467` only.
 - The workspace mount is the only place drawings can be read or written (`LFX_LOCK_ROOTS=1`).
 
-In this mode the assistant can reach only endpoints inside the Docker network. The MCP client configuration for this setup is in [MCP server](mcp.md#any-other-client).
+In this mode the assistant can reach only endpoints inside the Docker network.
+
+The image doesn't include a browser, so render, export and Mermaid conversion need an open tab. To render headless inside the container, build with Chromium (about 250 MB more):
+
+```bash
+docker compose build --build-arg WITH_CHROMIUM=1
+```
+
+Chromium then runs inside the same isolated, read-only container, with its profile in the `/tmp` tmpfs. The MCP client configuration for this setup is in [MCP server](mcp.md#any-other-client).

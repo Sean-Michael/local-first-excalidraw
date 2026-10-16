@@ -13,10 +13,27 @@
 | `LFX_NO_BROWSER` | unset | `1` prints links instead of opening a browser |
 | `LFX_IDLE_EXIT_MIN` | `30` when started on demand | The daemon stops after this many minutes with no editor open, no request and no reply in progress. Unset for `lfx serve` |
 | `LFX_PARENT_PID` | set by the macOS app | The daemon stops when this process exits |
+| `LFX_HEADLESS` | `auto` | Where render, export and Mermaid conversion run; see [Headless rendering](#headless-rendering) |
+| `LFX_BROWSER` | first one found | Chrome, Chromium, Edge or Brave binary for headless rendering |
+| `LFX_HEADLESS_IDLE_MIN` | `5` | Stop the headless browser after this many minutes without a request |
 | `LFX_CLAUDE_BIN` | `claude` on `PATH` | Claude Code binary for the assistant |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | unset | Used when an endpoint for that service has no stored key |
 | `LFX_HOST`, `LFX_ALLOWED_HOSTS` | `127.0.0.1` | Bind address and extra allowed `Host` headers, for containers only |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `LFX_TRACE_FILE` | unset | Send traces of the assistant to an OTLP receiver or a file; see [Tracing](tracing.md) |
+
+## Headless rendering
+
+Rendering a drawing, exporting it and converting Mermaid need a real browser for the fonts and the canvas. If a tab of that drawing is open, it does the work, so you see Mermaid output appear. Otherwise the daemon starts a hidden browser of its own and uses that. Your browser doesn't open, so agents, CI and evals can render without a window.
+
+| `LFX_HEADLESS` | Behaviour |
+|---|---|
+| `auto` | An open tab of the drawing, else the headless browser. If no browser binary is found, any open tab, else the MCP server opens your browser. |
+| `always` | Always the headless browser, even with a tab open. Gives the same output on every machine. |
+| `off` | Never headless. Any open tab does the work, and the MCP server opens your browser if there is none. |
+
+The daemon looks for `LFX_BROWSER`, then Google Chrome, Chromium, Microsoft Edge and Brave in `/Applications` on macOS, or `google-chrome`, `chromium` or `chromium-browser` on `PATH` on Linux. It starts the browser on the first request that needs it, keeps it for later requests, and stops it after `LFX_HEADLESS_IDLE_MIN` idle minutes and when the daemon exits. `lfx status` shows whether it is running.
+
+These variables are read by the daemon. If a daemon is already running (for example the macOS app's), restart it to change them. For Docker, see [Egress-isolated Docker](security.md#egress-isolated-docker); what the headless browser can reach is in [Security](security.md#headless-renderer).
 
 ## ai.json
 

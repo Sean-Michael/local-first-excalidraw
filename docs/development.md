@@ -14,6 +14,8 @@ npm test           # node:test unit tests
 npm run typecheck
 ```
 
+The headless rendering tests start a daemon on a random port with temporary state and render through Chrome or Chromium. They need `npm run build` first (for the editor bundle) and skip themselves, with a note, when no browser is found; set `LFX_BROWSER` to point at one.
+
 `npm run dev:web` runs Vite for the editor alone. To run the daemon from your checkout without touching your normal state, give it its own port and state directory:
 
 ```bash

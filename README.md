@@ -82,7 +82,7 @@ In Claude Code:
 claude mcp add excalidraw -- lfx mcp
 ```
 
-Then ask it to *"draw the request path through our API, from the load balancer to the database"*. Any drawing open in a tab updates as the agent works, and the agent opens a tab itself when it renders a drawing to check its layout.
+Then ask it to *"draw the request path through our API, from the load balancer to the database"*. Any drawing open in a tab updates as the agent works, and when the agent renders a drawing to check its layout, it uses a hidden local Chrome or Chromium rather than opening a tab ([headless rendering](docs/configuration.md#headless-rendering)).
 
 For the Claude Code plugin (adds a diagramming skill and `/excalidraw:diagram`), other MCP clients, and the full tool list, see [MCP server](docs/mcp.md).
 

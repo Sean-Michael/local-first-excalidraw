@@ -10,7 +10,7 @@ import { listAnthropicModels } from "./ai/anthropic.js";
 import { listOllamaModels } from "./ai/ollama.js";
 import { listOpenAIModels } from "./ai/openai.js";
 import { apiKeyFor, type Endpoint, findClaude, SettingsError, SettingsStore } from "./ai/settings.js";
-import { CodeError, resolveInRoot, suggestFiles } from "./code.js";
+import { CodeError, resolveInRoot } from "./code.js";
 import { checkLinks, formatCodeLink, hashFile, parseCodeLink, refreshLinks, stampCodeLinks, summarizeLinks } from "./codelinks.js";
 import {
   baseUrl,
@@ -22,7 +22,8 @@ import {
   writeFileAtomic,
 } from "./config.js";
 import { copyName, duplicateFile, FileOpError, listFolders, makeFolder, moveFile, moveToTrash } from "./files.js";
-import { drawingStatus } from "./git.js";
+import { changedFiles, drawingStatus } from "./git.js";
+import { type MentionSuggestion, suggestMentions } from "./mentions.js";
 import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
 import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
@@ -193,6 +194,16 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       if (Date.now() - created < SESSION_TTL_MS) return "session";
     }
     return null;
+  };
+
+  /** git status per project root, reused for a few seconds while the user types a mention. */
+  const changedCache = new Map<string, { at: number; files: Promise<Set<string>> }>();
+  const changedFilesCached = (root: string) => {
+    const hit = changedCache.get(root);
+    if (hit && Date.now() - hit.at < 5_000) return hit.files;
+    const files = changedFiles(root);
+    changedCache.set(root, { at: Date.now(), files });
+    return files;
   };
 
   const safe = (p: unknown) => {
@@ -1045,12 +1056,11 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         .filter((d) => d.path !== p && path.relative(root, d.path).toLowerCase().includes(lower))
         .slice(0, 8)
         .map((d) => ({ kind: "drawing", path: d.path, rel: path.relative(root, d.path) }));
-      let files: { kind: string; path: string; rel: string }[] = [];
+      let files: MentionSuggestion[] = [];
       if (settings.get().codeAccess) {
         try {
-          files = suggestFiles(root, q, 20)
-            .filter((f) => !f.endsWith(".excalidraw"))
-            .map((f) => ({ kind: "file", path: f, rel: path.relative(root, f) }));
+          // Files with uncommitted changes rank first: they're usually what the question is about.
+          files = suggestMentions(root, q, { changed: await changedFilesCached(root), limit: 20 });
         } catch (e) {
           if (!(e instanceof CodeError)) throw e;
         }

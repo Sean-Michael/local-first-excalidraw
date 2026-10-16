@@ -76,9 +76,14 @@ export type ChatEvent =
   | { type: "reverted"; id: string; restored: number; skipped: number };
 
 export interface Mention {
-  kind: "file" | "drawing";
-  /** Absolute path. */
+  /** A folder attaches an overview of it, not every file; a symbol attaches its definition. */
+  kind: "file" | "drawing" | "folder" | "symbol";
+  /** Absolute path; for a symbol, the file that defines it. */
   path: string;
+  /** Only these lines of a file (1-based, inclusive); for a symbol, its definition. */
+  lines?: [number, number];
+  /** The symbol's name, for a symbol. */
+  symbol?: string;
 }
 
 /** What the page sends with a chat message. */

@@ -24,6 +24,8 @@ final class AppModel {
     }
     var search = ""
     var showingNewDrawing = false
+    /// The drawing whose Rename prompt is showing.
+    var renaming: Drawing?
     var alert: String?
 
     /// Files handed to the app (Finder, `open -a`) before the daemon was ready.
@@ -179,6 +181,30 @@ final class AppModel {
             } catch {
                 alert = error.localizedDescription
             }
+        }
+    }
+
+    func rename(_ d: Drawing, to name: String) async {
+        var clean = name.trimmingCharacters(in: .whitespaces)
+        if clean.hasSuffix(".excalidraw") { clean = String(clean.dropLast(".excalidraw".count)) }
+        guard !clean.isEmpty, clean != d.name else { return }
+        let dir = (d.path as NSString).deletingLastPathComponent
+        do {
+            let path = try await daemon.rename(d.path, to: (dir as NSString).appendingPathComponent(clean + ".excalidraw"))
+            await refresh()
+            if selection == d.path { selection = path }
+        } catch {
+            alert = error.localizedDescription
+        }
+    }
+
+    func duplicate(_ path: String) async {
+        do {
+            let copy = try await daemon.duplicate(path)
+            await refresh()
+            selection = copy
+        } catch {
+            alert = error.localizedDescription
         }
     }
 

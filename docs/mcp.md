@@ -59,7 +59,8 @@ Relative drawing paths resolve against the project root. A bare name such as `au
 | `add_elements` | Simplified elements: shapes with `label`, arrows bound with `start`/`end: {id}`, frames with `children`, palette `color`s. Any raw Excalidraw property also works. |
 | `update_elements` | Move, resize, relabel, recolour, or swap rectangle, ellipse and diamond by id. Labels re-centre and bound arrows re-route. Moving a frame moves its children, and moving part of a group (such as a library shape) moves the whole group. |
 | `delete_elements` | Removes elements with their labels and detaches arrows. |
-| `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=…`, with arrows as `from -> to`. Raw JSON on request. |
+| `read_drawing` | Compact listing such as `[id] type at (x,y) size WxH "label" fill=…`, with arrows as `from -> to`. Raw JSON on request. Ends with the state of any code links. |
+| `check_code_links` | Each code-linked element (`link: "src/a.ts#L42"`) as ok, changed, missing or unknown. `mark_reviewed: true` records the linked files' current state once the diagram is up to date. See [Diagrams that reference code](projects.md#diagrams-that-reference-code). |
 | `render_drawing` | A PNG of the drawing for the agent to look at. `element_ids` or `region` renders a close-up of part of it at full size, and the result says how big the smallest text appears. |
 | `export_drawing` | Writes `name.excalidraw.svg` (scene embedded, so it's viewable on GitHub and still editable) or `.png`. |
 | `list_drawings` | Drawings in the project, most recently modified first. |

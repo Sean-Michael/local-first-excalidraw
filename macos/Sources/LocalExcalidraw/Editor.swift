@@ -82,6 +82,9 @@ extension EditorController: WKNavigationDelegate {
                 AppModel.shared.selection = nil
                 return .cancel
             }
+            // A code link ("src/a.ts#L42") resolves against the page; the editor already asked the
+            // daemon to open it in the user's code editor, so never navigate to it.
+            if action.navigationType == .linkActivated && url.path != "/" { return .cancel }
             return .allow
         }
         // Help links, "Browse libraries", etc. open in the user's browser.

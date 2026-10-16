@@ -38,6 +38,9 @@ export interface AssistantItem {
   /** The daemon still holds the snapshot needed to undo this turn's edits. */
   revertable?: boolean;
   reverted?: boolean;
+  /** After a revert: elements put back, and elements kept because the user edited them since. */
+  revertedCount?: number;
+  keptCount?: number;
   /** Number of elements this turn changed. */
   changed?: number;
 }
@@ -161,8 +164,15 @@ export function applyChatEvent(items: ChatItem[], ev: ChatEvent): ChatItem[] {
         parts: t.parts.map((p) => (p.type === "tool" && p.status === "running" ? { ...p, status: "error", result: "Cancelled" } : p)),
       }));
     case "reverted":
-      return turn(ev.id, (t) => ({ ...t, reverted: true, revertable: false }));
+      return turn(ev.id, (t) => ({ ...t, reverted: true, revertable: false, revertedCount: ev.restored, keptCount: ev.skipped }));
   }
+}
+
+/** What a revert did, e.g. "Reverted 3, kept 1 you edited since". */
+export function revertSummary(item: Pick<AssistantItem, "revertedCount" | "keptCount">): string {
+  const kept = item.keptCount ?? 0;
+  if (!kept) return "Changes reverted";
+  return `Reverted ${item.revertedCount ?? 0}, kept ${kept} you edited since`;
 }
 
 /** "http://localhost:11434/v1" -> "localhost:11434". */

@@ -166,6 +166,18 @@ final class Daemon: @unchecked Sendable {
         return r.path
     }
 
+    /// Renames or moves a drawing; open tabs of it follow.
+    func rename(_ path: String, to newPath: String) async throws -> String {
+        let r: PathResult = try await request("POST", "/api/files/rename", body: ["path": path, "to": newPath])
+        return r.path
+    }
+
+    /// Copies a drawing next to itself ("name copy") and returns the copy's path.
+    func duplicate(_ path: String) async throws -> String {
+        let r: PathResult = try await request("POST", "/api/files/duplicate", body: ["path": path])
+        return r.path
+    }
+
     /// One-time sign-in link for the web view; it lands on the given drawing.
     func loginURL(file: String?) async throws -> URL {
         let r: LoginCode = try await request("POST", "/api/login-code", body: file.map { ["path": $0] } ?? [:])

@@ -76,6 +76,7 @@ struct ContentView: View {
 
 struct Sidebar: View {
     @Bindable var model: AppModel
+    @State private var newName = ""
 
     var body: some View {
         List(selection: $model.selection) {
@@ -97,6 +98,16 @@ struct Sidebar: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $model.search, placement: .sidebar, prompt: "Filter")
+        .alert("Rename Drawing", isPresented: Binding(get: { model.renaming != nil }, set: { if !$0 { model.renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let d = model.renaming {
+                    let name = newName
+                    Task { await model.rename(d, to: name) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .overlay {
             if model.phase == .ready && model.roots.isEmpty { ProgressView() }
         }
@@ -127,6 +138,12 @@ struct Sidebar: View {
         Button("Show in Finder") { model.reveal(d.path) }
         Button("Open in Browser") { model.openInBrowser(d.path) }
         Button("Copy Path") { model.copyPath(d.path) }
+        Divider()
+        Button("Rename…") {
+            newName = d.name
+            model.renaming = d
+        }
+        Button("Duplicate") { Task { await model.duplicate(d.path) } }
         Divider()
         Button("Move to Trash", role: .destructive) { model.moveToTrash(d.path) }
     }

@@ -82,6 +82,8 @@ If the server picks the wrong project, or tools fail with "Path is outside the a
 | `open_drawing` | Opens a drawing in the user's browser, creating an empty one if it doesn't exist. |
 | `excalidraw_guide` | The drawing guide: element format, sizing rules, layout anti-patterns, the check after every batch, error recovery, and updating a diagram after a code change. |
 | `diagram_reference` | The architecture-diagrams skill's reference notes (C4, UML, data flow and threat models, ER, infrastructure, messaging, visual principles, living diagrams), by topic. Lists the topics when called without one. |
+| `project_overview` | Read-only map of the project or one folder (`dir`): the tree with file counts, languages, manifests and deployment files (package.json, go.mod, pyproject, Cargo.toml, Compose services, Dockerfiles, Kubernetes manifests, `.proto`, OpenAPI), likely entry points, the README's headline and existing drawings. |
+| `git_changes` | Read-only summary of what changed: uncommitted changes and untracked files against HEAD (default), the last N commits (`last`), or between refs (`from`, `to`, or `A..B`), with +/- counts per file. `diff: true` adds the unified diff, capped at 20K characters; `path` limits it to one file or folder. Git runs with a timeout, without external diff or textconv programs, and secret-looking files are left out. |
 
 Render, export, Mermaid conversion and shape previews need a real browser for the fonts and canvas. An open tab of the drawing does the work if there is one; otherwise the daemon uses its own headless Chrome or Chromium, so these tools work without opening your browser, including in CI. Only `open_drawing` opens your browser. If no Chromium-family browser is installed, or `LFX_HEADLESS=off`, the server opens the drawing in your browser to do the work, as before. See [Headless rendering](configuration.md#headless-rendering), and [Troubleshooting](troubleshooting.md#render-export-or-mermaid-fails) when it fails.
 
@@ -93,7 +95,7 @@ Render, export, Mermaid conversion and shape previews need a real browser for th
 
 A shape can point at the code it stands for. Pass `code: "src/orders/repo.ts"` or `code: "src/orders/repo.ts:42"` to a `create_diagram` node, an `add_elements` shape or an `update_elements` entry (`null` removes it). The element's `link` then holds the project-relative path with an optional `#L<line>` (`src/orders/repo.ts#L42`), and `customData.lfxCode` holds `{ path, line, sha }`, where `sha` is the file's SHA-256 when the link was made. `read_drawing` shows `code=src/orders/repo.ts#L42`. A `link` set directly to a project path is stored the same way. A path to a file that doesn't exist is linked anyway, and the tool result says so.
 
-The in-app assistant has three more tools, `list_files`, `search_files` and `read_file`, for reading the project. They aren't exposed over MCP because coding agents have their own.
+`project_overview` and `git_changes` are the two code tools served over MCP because they add something a coding agent's own tools don't: a one-call map built for choosing what to diagram, and a change summary that works for agents with no shell (or with shell access limited to their own allow-list). The in-app assistant has five more, `list_files`, `search_files`, `read_file`, `outline_file` and `find_symbol` ([How it explores code](assistant.md#how-it-explores-code)). They aren't served over MCP because coding agents already have Read, Grep and Glob, or their own equivalents, and language-server symbol search where available.
 
 ## Example
 

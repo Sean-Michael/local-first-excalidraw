@@ -10,6 +10,7 @@ import { writeFileAtomic } from "./config.js";
 import { listFiles, readFile, searchFiles } from "./code.js";
 import { GUIDE } from "./guide.js";
 import { type LibraryShape, searchShapes } from "./library.js";
+import { listTopics, readTopic } from "./references.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
 
@@ -71,8 +72,28 @@ const skeleton = z
     points: z.array(z.tuple([z.number(), z.number()])).optional(),
     name: z.string().optional().describe("Frame title"),
     children: z.array(z.string()).optional().describe("Frame: ids to put inside"),
+    code: z.string().optional().describe('Shape: project file it stands for, optionally with a line ("src/orders/repo.ts" or "src/orders/repo.ts:42"); stored as a code link'),
   })
   .describe("Simplified Excalidraw element; any raw Excalidraw property is also accepted");
+
+const ifRev = z
+  .string()
+  .optional()
+  .describe("The rev read_drawing returned. The write fails, changing nothing, if the drawing changed since (for example the user edited it)");
+
+const updateItem = z.looseObject({
+  id: z.string(),
+  label: z.union([label, z.null()]),
+  text: z.string().optional(),
+  color,
+  code: z.union([z.string(), z.null()]).optional().describe("Project file (and :line) this element stands for; null removes the link"),
+});
+
+/** " Rev abc123." for a write's result, plus any notes the daemon made. */
+function after(r: Record<string, unknown>, notes: string[] = []): string {
+  const all = [...notes, ...((r.notes as string[] | undefined) ?? [])];
+  return (r.contentRev ? ` Rev ${String(r.contentRev)}.` : "") + (all.length ? `\nNotes:\n- ${all.join("\n- ")}` : "");
+}
 
 const PATH_HELP =
   'Drawing path, relative to the project root (e.g. "docs/diagrams/auth-flow.excalidraw"). A bare name like "auth-flow" goes to docs/diagrams/.';
@@ -110,10 +131,25 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
     {
       name: "excalidraw_guide",
       title: "Excalidraw element guide",
-      description: "Element format, colours and layout tips. Read once before hand-placing elements.",
+      description:
+        "The drawing guide: which tool to use, the simplified element format, sizing and spacing rules, layout anti-patterns, the check-after-every-batch list, error recovery and the update-after-a-code-change workflow. Read it once per session before your first edit.",
       input: {},
       readOnly: true,
       run: async () => ({ text: GUIDE }),
+    },
+    {
+      name: "diagram_reference",
+      title: "Diagram reference",
+      description:
+        "Reference notes on architecture and design diagrams: choosing a diagram for the audience and question, C4, UML sequence/activity/state and class/component/deployment, data flow and threat models, ER, infrastructure, messaging, visual principles, and keeping diagrams in step with code. Omit topic for the list.",
+      input: { topic: z.string().optional().describe('A topic from the list, e.g. "c4" or "choosing-a-diagram"') },
+      readOnly: true,
+      run: async ({ topic }) => {
+        if (topic?.trim()) return { text: readTopic(topic) };
+        const topics = listTopics();
+        if (!topics.length) return { text: "The diagram reference files aren't installed with this copy of Local-first Excalidraw." };
+        return { text: `Topics (pass one as topic):\n${topics.map((t) => `- ${t.topic}: ${t.title}`).join("\n")}` };
+      },
     },
     {
       name: "list_drawings",
@@ -136,13 +172,28 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "read_drawing",
       title: "Read drawing",
       description:
-        "Compact description of a drawing: every element's id, type, position, size, label and colours; arrows as `from -> to`. Set include_json for raw Excalidraw elements.",
-      input: { path: pathArg, include_json: z.boolean().optional() },
+        "Compact description of a drawing and its `rev`: every element's id, type, position, size, label, colours, frame and code link (`code=src/foo.ts#L42`); arrows as `[id] arrow from -> to`. " +
+        "Filter a big drawing with query (label, text or link substring), ids or type; matches bring the arrows attached to them. Pass the rev to a later write's if_rev. Set include_json for raw Excalidraw elements.",
+      input: {
+        path: pathArg,
+        query: z.string().optional().describe('Only elements whose label, text, frame name or link contains this (case-insensitive), e.g. "orders"'),
+        ids: z.array(z.string()).optional().describe("Only these elements"),
+        type: z.string().optional().describe("Only this element type (rectangle, arrow, frame, text, ...)"),
+        include_json: z.boolean().optional(),
+      },
       readOnly: true,
-      run: async ({ path: p, include_json }, ctx) => {
+      run: async ({ path: p, include_json, query, ids, type }, ctx) => {
         const file = resolveDrawing(ctx, p);
-        const r = (await ctx.op({ op: "read", path: file, full: include_json })) as { summary: string; scene?: { elements: unknown[] } };
-        let out = `${relPath(ctx, file)}: ${r.summary}`;
+        const r = (await ctx.op({ op: "read", path: file, full: include_json, query, ids, type })) as {
+          summary: string;
+          contentRev: string;
+          matched?: number;
+          total: number;
+          scene?: { elements: unknown[] };
+        };
+        const filtered = r.matched !== undefined ? ` (filtered: ${r.matched} of ${r.total} elements match)` : "";
+        let out = `${relPath(ctx, file)} rev ${r.contentRev}${filtered}: ${r.summary}`;
+        if (r.matched === 0) out += "\nNothing matches. Try a shorter query, or read without filters.";
         if (include_json) out += `\n\nelements:\n${JSON.stringify(r.scene?.elements)}`;
         return { text: out };
       },
@@ -160,7 +211,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       run: async ({ path: p, elements, overwrite, open }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const r = await ctx.op({ op: "create", path: file, elements: elements ?? [], overwrite });
-        let msg = `Created ${relPath(ctx, file)} with ${(r.created as string[]).length} elements.`;
+        let msg = `Created ${relPath(ctx, file)} with ${(r.created as string[]).length} elements.${after(r)}`;
         if (open && ctx.open) msg += " " + (await ctx.open(file));
         return { text: msg, drawing: other(ctx, file) };
       },
@@ -169,7 +220,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "create_diagram",
       title: "Create diagram from a graph",
       description:
-        "Draws nodes and edges with automatic layered layout - the fastest way to make architecture, flow and dependency diagrams. Creates the file if needed; otherwise appends next to existing content (or replaces it with replace: true).",
+        "Draws nodes and edges with automatic layered layout: the fastest way to a clean architecture, flow, state or dependency diagram. Creates the file if needed; otherwise appends to the right of existing content. " +
+        "replace: true swaps the whole drawing for this one (only when the user asks to start over: it discards their edits). Node ids become element ids, so later edits can refer to them.",
       input: {
         path: pathArg,
         nodes: z
@@ -183,6 +235,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
                 .describe("rectangle (default), ellipse, diamond, or a library shape key from list_shapes (drawn as that icon with the label below)"),
               color,
               group: z.string().optional().describe("Group id; members are drawn inside a labelled frame"),
+              code: z.string().optional().describe('Project file the node stands for, optionally with a line ("src/orders/repo.ts:42"); stored as a code link'),
             }),
           )
           .min(1),
@@ -191,8 +244,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
             z.object({
               from: z.string(),
               to: z.string(),
-              label: z.string().optional(),
-              style: z.enum(["solid", "dashed", "dotted"]).optional(),
+              label: z.string().optional().describe("Only when the meaning isn't obvious from the two ends; 12 characters or fewer"),
+              style: z.enum(["solid", "dashed", "dotted"]).optional().describe("dashed for async or optional flows"),
               bidirectional: z.boolean().optional(),
             }),
           )
@@ -206,7 +259,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       run: async ({ path: p, nodes, edges, groups, direction, title, replace, open }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const r = await ctx.op({ op: "diagram", path: file, replace: !!replace, graph: { nodes, edges, groups, direction, title } });
-        let msg = `Drew ${nodes.length} nodes and ${edges?.length ?? 0} edges in ${relPath(ctx, file)}. Element ids: ${(r.created as string[]).join(", ")}.`;
+        let msg = `Drew ${nodes.length} nodes and ${edges?.length ?? 0} edges in ${relPath(ctx, file)}. Element ids: ${(r.created as string[]).join(", ")}.${after(r)}`;
         if (open && ctx.open) msg += " " + (await ctx.open(file));
         return { text: msg, drawing: other(ctx, file) };
       },
@@ -292,7 +345,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         };
         const b = r.bounds;
         return {
-          text: `Inserted ${r.shape} into ${relPath(ctx, file)} at (${Math.round(b.x)},${Math.round(b.y)}) size ${Math.round(b.width)}x${Math.round(b.height)}. Bind arrows to id "${r.anchor}". All ids: ${r.created.join(", ")}.`,
+          text: `Inserted ${r.shape} into ${relPath(ctx, file)} at (${Math.round(b.x)},${Math.round(b.y)}) size ${Math.round(b.width)}x${Math.round(b.height)}. Bind arrows to id "${r.anchor}". All ids: ${r.created.join(", ")}.${after(r)}`,
           drawing: other(ctx, file),
         };
       },
@@ -300,7 +353,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
     {
       name: "add_elements",
       title: "Add elements",
-      description: "Adds elements in the simplified format (labels, bound arrows, frames). Creates the drawing if it doesn't exist.",
+      description:
+        "Adds elements in the simplified format (see excalidraw_guide): shapes with labels, arrows bound by start/end id, free text, frames. Give your own ids so later edits and arrows can refer to them. Creates the drawing if it doesn't exist.",
       input: {
         path: pathArg,
         elements: z.array(skeleton).min(1),
@@ -308,12 +362,13 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
           .enum(["absolute", "right", "below"])
           .optional()
           .describe("absolute (default) uses your coordinates; right/below shifts the batch next to existing content"),
+        if_rev: ifRev,
       },
-      run: async ({ path: p, elements, placement }, ctx) => {
+      run: async ({ path: p, elements, placement, if_rev }, ctx) => {
         const file = resolveDrawing(ctx, p);
-        const r = await ctx.op({ op: "add", path: file, elements, placement: placement ?? "absolute" });
+        const r = await ctx.op({ op: "add", path: file, elements, placement: placement ?? "absolute", if_rev });
         return {
-          text: `Added ${(r.created as string[]).length} elements to ${relPath(ctx, file)}: ${(r.created as string[]).join(", ")}`,
+          text: `Added ${(r.created as string[]).length} elements to ${relPath(ctx, file)}: ${(r.created as string[]).join(", ")}.${after(r)}`,
           drawing: other(ctx, file),
         };
       },
@@ -336,57 +391,160 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         const file = resolveDrawing(ctx, p);
         const r = await ctx.op({ op: "connect", path: file, from, to, id, label, style, bidirectional });
         const what = r.rebound ? "Attached existing arrow" : "Connected";
-        return { text: `${what} ${from} -> ${to} in ${relPath(ctx, file)} (arrow id ${String(r.id)}).`, drawing: other(ctx, file) };
+        return { text: `${what} ${from} -> ${to} in ${relPath(ctx, file)} (arrow id ${String(r.id)}).${after(r)}`, drawing: other(ctx, file) };
       },
     },
     {
       name: "update_elements",
       title: "Update elements",
       description:
-        "Changes existing elements by id: position, size, label (null removes it), text, color, type (switch between rectangle, ellipse and diamond in place), or any raw property. Labels re-centre and bound arrows re-route automatically. Prefer this over deleting and re-adding: it keeps the element's id, position and arrows.",
+        "Changes existing elements by id: position, size, label (null removes it), text, color, code link, type (switch between rectangle, ellipse and diamond in place), frameId, or any raw property. " +
+        "Labels re-centre, bound arrows re-route, and a moved frame or grouped shape takes its children or group along. Prefer this over deleting and re-adding: it keeps the id, the arrows and the user's styling.",
       input: {
         path: pathArg,
-        updates: z
-          .array(z.looseObject({ id: z.string(), label: z.union([label, z.null()]), text: z.string().optional(), color }))
-          .min(1),
+        updates: z.array(updateItem).min(1),
+        if_rev: ifRev,
       },
-      run: async ({ path: p, updates: raw }, ctx) => {
+      run: async ({ path: p, updates: raw, if_rev }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const { updates, notes } = normalizeUpdates(raw);
-        await ctx.op({ op: "update", path: file, updates });
-        const msg = `Updated ${updates.length} element(s) in ${relPath(ctx, file)}.`;
-        return { text: notes.length ? `${msg}\nNotes:\n- ${notes.join("\n- ")}` : msg, drawing: other(ctx, file) };
+        const r = await ctx.op({ op: "update", path: file, updates, if_rev });
+        return { text: `Updated ${updates.length} element(s) in ${relPath(ctx, file)}.${after(r, notes)}`, drawing: other(ctx, file) };
       },
     },
     {
       name: "delete_elements",
       title: "Delete elements",
-      description: "Deletes elements by id (their labels go too; arrows attached to them are detached).",
-      input: { path: pathArg, ids: z.array(z.string()).min(1) },
+      description:
+        "Deletes elements by id. Their labels go too; arrows attached to them are detached, not deleted, so delete those arrows as well when the connection no longer exists.",
+      input: { path: pathArg, ids: z.array(z.string()).min(1), if_rev: ifRev },
       destructive: true,
-      run: async ({ path: p, ids }, ctx) => {
+      run: async ({ path: p, ids, if_rev }, ctx) => {
         const file = resolveDrawing(ctx, p);
-        const r = await ctx.op({ op: "delete", path: file, ids });
-        return { text: `Deleted ${(r.deleted as string[]).length} element(s) from ${relPath(ctx, file)}.`, drawing: other(ctx, file) };
+        const r = await ctx.op({ op: "delete", path: file, ids, if_rev });
+        return { text: `Deleted ${(r.deleted as string[]).length} element(s) from ${relPath(ctx, file)}.${after(r)}`, drawing: other(ctx, file) };
+      },
+    },
+    {
+      name: "apply_changes",
+      title: "Apply changes",
+      description:
+        "Adds, updates and deletes elements in one call and one revision: deletes first, then adds, then updates (which may refer to the new ids). " +
+        "Use it for a planned set of edits, such as bringing a diagram up to date after a code change. Same formats as add_elements, update_elements and delete_elements; nothing changes if any part fails.",
+      input: {
+        path: pathArg,
+        add: z.array(skeleton).optional(),
+        update: z.array(updateItem).optional(),
+        delete: z.array(z.string()).optional().describe("Ids to delete"),
+        placement: z.enum(["absolute", "right", "below"]).optional().describe("For add (default absolute)"),
+        if_rev: ifRev,
+      },
+      destructive: true,
+      run: async ({ path: p, add, update, delete: del, placement, if_rev }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        if (!add?.length && !update?.length && !del?.length) throw new Error("Nothing to do: pass add, update or delete");
+        const norm = update?.length ? normalizeUpdates(update) : { updates: [], notes: [] };
+        const r = await ctx.op({ op: "apply", path: file, add, update: norm.updates, delete: del, placement, if_rev });
+        const created = (r.created as string[]) ?? [];
+        const deleted = (r.deleted as string[]) ?? [];
+        const parts = [
+          created.length ? `added ${created.length} (${created.join(", ")})` : "",
+          norm.updates.length ? `updated ${norm.updates.length}` : "",
+          deleted.length ? `deleted ${deleted.length}` : "",
+        ].filter(Boolean);
+        return { text: `In ${relPath(ctx, file)}: ${parts.join(", ")}.${after(r, norm.notes)}`, drawing: other(ctx, file) };
+      },
+    },
+    {
+      name: "arrange_elements",
+      title: "Align or distribute elements",
+      description:
+        "Aligns elements (left, center, right, top, middle, bottom) or spaces them evenly (horizontal, vertical) by id. Each moves with its label, its group (a library shape) or, for a frame, its children; bound arrows re-route. Distribute keeps the two outermost in place.",
+      input: {
+        path: pathArg,
+        ids: z.array(z.string()).min(2),
+        align: z.enum(["left", "center", "right", "top", "middle", "bottom"]).optional(),
+        distribute: z.enum(["horizontal", "vertical"]).optional().describe("Equal gaps between neighbours (needs three or more)"),
+        if_rev: ifRev,
+      },
+      run: async ({ path: p, ids, align, distribute, if_rev }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        if (!align === !distribute) throw new Error("Pass either align or distribute");
+        const r = await ctx.op({ op: "arrange", path: file, ids, align, distribute, if_rev });
+        const how = align ? `Aligned ${ids.length} elements (${align})` : `Distributed ${ids.length} elements ${distribute}ly`;
+        return { text: `${how} in ${relPath(ctx, file)}.${after(r)}`, drawing: other(ctx, file) };
+      },
+    },
+    {
+      name: "snapshot_drawing",
+      title: "Snapshot drawing",
+      description:
+        "Saves the drawing's current state (kept outside the project, newest 20 per drawing) so restore_drawing can put it back. Take one before a large or risky edit.",
+      input: { path: pathArg, name: z.string().optional().describe('e.g. "before sync"') },
+      run: async ({ path: p, name }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        const r = (await ctx.op({ op: "snapshot", path: file, name })) as { snapshot: { id: string; name: string; elements: number; rev: string } };
+        const s = r.snapshot;
+        return { text: `Saved snapshot ${s.id} "${s.name}" of ${relPath(ctx, file)} (${s.elements} elements, rev ${s.rev}).` };
+      },
+    },
+    {
+      name: "list_snapshots",
+      title: "List snapshots",
+      description: "Lists a drawing's saved snapshots, newest first.",
+      input: { path: pathArg },
+      readOnly: true,
+      run: async ({ path: p }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        const r = (await ctx.op({ op: "snapshots", path: file })) as { snapshots: { id: string; name: string; created: number; elements: number; rev: string }[] };
+        if (!r.snapshots.length) return { text: `${relPath(ctx, file)} has no snapshots.` };
+        return {
+          text: r.snapshots.map((s) => `${s.id}  "${s.name}"  ${new Date(s.created).toISOString().slice(0, 19)}  ${s.elements} elements  rev ${s.rev}`).join("\n"),
+        };
+      },
+    },
+    {
+      name: "restore_drawing",
+      title: "Restore snapshot",
+      description:
+        "Puts the drawing back to a snapshot (by id or name; default the newest) in one revision. The current state is snapshotted first, so a restore can itself be undone.",
+      input: { path: pathArg, snapshot: z.string().optional().describe("Snapshot id or name from list_snapshots") },
+      destructive: true,
+      run: async ({ path: p, snapshot }, ctx) => {
+        const file = resolveDrawing(ctx, p);
+        const r = (await ctx.op({ op: "restore", path: file, snapshot })) as Record<string, unknown> & {
+          restored: { id: string; name: string };
+          saved: { id: string };
+        };
+        return {
+          text: `Restored ${relPath(ctx, file)} to snapshot ${r.restored.id} "${r.restored.name}". The state before is snapshot ${r.saved.id}.${after(r)}`,
+          drawing: other(ctx, file),
+        };
       },
     },
     {
       name: "mermaid_to_drawing",
       title: "Mermaid to drawing",
       description:
-        "Converts Mermaid (flowchart, sequence, class diagrams) into editable Excalidraw elements, appended to the drawing. Runs in an open tab of the drawing, else in a local headless browser.",
-      input: { path: pathArg, mermaid: z.string().describe("Mermaid source") },
+        "Converts Mermaid into Excalidraw elements, appended to the drawing. Only flowchart and sequenceDiagram become editable shapes and arrows; " +
+        "classDiagram, erDiagram, stateDiagram and the rest arrive as a single uneditable image, so draw those with create_diagram instead. Runs in an open tab of the drawing, else in a local headless browser.",
+      input: { path: pathArg, mermaid: z.string().describe("Mermaid source (flowchart or sequenceDiagram)") },
       run: async ({ path: p, mermaid }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const r = await ctx.withEditor(file, { op: "mermaid", path: file, text: mermaid });
-        return { text: `Converted Mermaid into ${(r.created as string[]).length} elements in ${relPath(ctx, file)}.`, drawing: other(ctx, file) };
+        const created = r.created as string[];
+        const kind = /^\s*(?:%%.*\n\s*)*(\w+)/.exec(mermaid)?.[1] ?? "";
+        const image = !/^(flowchart|graph|sequenceDiagram)$/i.test(kind)
+          ? ` A ${kind || "diagram"} of this kind converts to an image, which can't be edited: delete it and use create_diagram if the user will want to change it.`
+          : "";
+        return { text: `Converted Mermaid into ${created.length} elements in ${relPath(ctx, file)}.${image}${after(r)}`, drawing: other(ctx, file) };
       },
     },
     {
       name: "render_drawing",
       title: "Render drawing",
       description:
-        "Returns a PNG of the drawing so you can check layout and readability. Rendered locally, in a headless browser when no tab is open. " +
+        "Returns a PNG of the drawing so you can check your work: run it after every batch of edits, fix what you see, and render again. Rendered locally, in a headless browser when no tab is open. " +
         "Big drawings are scaled down to fit max_size, so small text may be unreadable in the overview; pass element_ids or region to render a close-up at full size.",
       input: {
         path: pathArg,

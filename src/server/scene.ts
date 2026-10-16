@@ -7,6 +7,7 @@
  * deletions are `isDeleted: true` tombstones rather than removals.
  */
 import crypto from "node:crypto";
+import { codeRefOf, formatCodeLink } from "./codelinks.js";
 
 // Excalidraw elements are open-ended JSON; we only rely on a handful of fields.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -418,7 +419,7 @@ function styleFrom(s: SkeletonEl): Partial<El> {
   return out;
 }
 
-const SKELETON_ONLY = new Set(["label", "color", "start", "end", "rounded", "children"]);
+const SKELETON_ONLY = new Set(["label", "color", "start", "end", "rounded", "children", "code"]);
 
 function passthrough(s: SkeletonEl): Partial<El> {
   const out: Partial<El> = {};
@@ -713,7 +714,7 @@ const UPDATABLE = new Set([
   "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness", "fontSize", "fontFamily", "textAlign",
   "verticalAlign", "link", "locked", "groupIds", "frameId", "points", "startArrowhead", "endArrowhead", "name",
   "customData", "lineHeight", "autoResize", "elbowed", "startBinding", "endBinding", "boundElements", "containerId",
-  "originalText", "index", "status", "fileId", "scale", "crop",
+  "originalText", "index", "status", "fileId", "scale", "crop", "code",
 ]);
 const ALIASES: Record<string, string> = {
   fill: "backgroundColor", fillColor: "backgroundColor", background: "backgroundColor", bgColor: "backgroundColor",
@@ -762,7 +763,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
     if (!cur || cur.isDeleted) throw new SceneError(`Element "${u.id}" not found`);
     const patch: Partial<El> = {};
     for (const [k, v] of Object.entries(u)) {
-      if (IMMUTABLE.has(k) || k === "label" || k === "color" || v === undefined) continue;
+      if (IMMUTABLE.has(k) || k === "label" || k === "color" || k === "code" || v === undefined) continue;
       patch[k] = v;
     }
     if (u.color && PALETTE[u.color]) {
@@ -813,6 +814,14 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
         next = addBound(next, { id: t.id, type: "text" });
         extra.push(t);
       }
+    }
+    // A label goes into (or out of) a frame with its container.
+    if ("frameId" in patch) {
+      for (const b of next.boundElements ?? []) {
+        const t = all.get(b.id);
+        if (t && b.type === "text" && !t.isDeleted && t.frameId !== patch.frameId) all.set(t.id, bump(t, { frameId: patch.frameId ?? null }));
+      }
+      for (const t of extra) if (t.containerId === cur.id) t.frameId = patch.frameId ?? null;
     }
     all.set(cur.id, next);
   }
@@ -991,8 +1000,134 @@ export function describe(scene: Scene, only?: Set<string>): string {
     if (stroke && stroke !== "black") parts.push(`stroke=${stroke}`);
     if (e.frameId) parts.push(`in frame ${e.frameId}`);
     if (e.groupIds?.length) parts.push(`groups=${e.groupIds.join(",")}`);
-    if (e.link) parts.push(`link=${e.link}`);
+    const code = codeRefOf({ link: e.link, customData: e.customData });
+    if (code) parts.push(`code=${formatCodeLink(code)}`);
+    else if (e.link) parts.push(`link=${e.link}`);
     lines.push(parts.join(" "));
   }
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Revisions, search, arrangement
+// ---------------------------------------------------------------------------
+
+/**
+ * A short id for the drawing's content: changes whenever any live element does (every edit
+ * bumps an element's version), and stays the same across daemon restarts.
+ */
+export function contentRev(els: El[]): string {
+  const h = crypto.createHash("sha256");
+  for (const e of live(els).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) h.update(`${e.id}:${e.version}:${e.versionNonce};`);
+  return h.digest("hex").slice(0, 12);
+}
+
+export interface ElementFilter {
+  /** Case-insensitive substring of a label, text, frame name or link. */
+  query?: string;
+  ids?: string[];
+  type?: string;
+}
+
+/**
+ * Ids of the elements matching every given filter. A matching label stands for its
+ * container. Unless `type` is given, arrows attached to a match come along, so the result
+ * shows how the matches connect.
+ */
+export function findElements(els: El[], f: ElementFilter): Set<string> {
+  const ls = live(els);
+  const all = new Map(ls.map((e) => [e.id, e]));
+  const q = f.query?.trim().toLowerCase();
+  const ids = f.ids?.length ? new Set(f.ids) : undefined;
+  const textOf = (e: El): string =>
+    [e.type === "text" ? e.text : e.type === "frame" ? e.name : labelOf(e, all), e.link].filter(Boolean).join(" ").toLowerCase();
+  const out = new Set<string>();
+  for (const e of ls) {
+    // Labels are matched through their container.
+    if (e.type === "text" && e.containerId && all.has(e.containerId)) continue;
+    if (ids && !ids.has(e.id) && !(e.boundElements ?? []).some((b: { id: string }) => ids.has(b.id))) continue;
+    if (f.type && e.type !== f.type) continue;
+    if (q && !textOf(e).includes(q)) continue;
+    out.add(e.id);
+  }
+  if (!f.type && (q || ids)) {
+    for (const e of ls) {
+      if (LINEAR.has(e.type) && (out.has(e.startBinding?.elementId) || out.has(e.endBinding?.elementId))) out.add(e.id);
+    }
+  }
+  return out;
+}
+
+export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
+export type Distribute = "horizontal" | "vertical";
+
+/**
+ * Aligns or evenly spaces elements. Each id moves as a unit with the rest of its group (a
+ * library shape) or, for a frame, with its children; labels and bound arrows follow.
+ * Distribution keeps the outermost two in place and makes the gaps between the others equal.
+ */
+export function arrangeElements(existing: El[], ids: string[], how: { align?: Align; distribute?: Distribute }): El[] {
+  if (!how.align === !how.distribute) throw new SceneError("Pass either align or distribute");
+  const ls = live(existing);
+  const byId = new Map(ls.map((e) => [e.id, e]));
+  const units = new Map<string, { anchor: El; box: { minX: number; minY: number; maxX: number; maxY: number } }>();
+  for (const raw of ids) {
+    let e = byId.get(raw);
+    if (!e) throw new SceneError(`Element "${raw}" not found`);
+    if (e.type === "text" && e.containerId && byId.has(e.containerId)) e = byId.get(e.containerId)!;
+    if (LINEAR.has(e.type)) throw new SceneError(`"${raw}" is ${e.type === "arrow" ? "an arrow" : "a line"}; arrange the shapes it connects instead`);
+    const group = e.groupIds?.at(-1);
+    const key = group ? `g:${group}` : e.id;
+    if (units.has(key)) continue;
+    const members = group ? ls.filter((m) => m.groupIds?.at(-1) === group) : [e];
+    units.set(key, { anchor: e, box: bounds(members.filter((m) => !LINEAR.has(m.type)))! });
+  }
+  const list = [...units.values()];
+  if (list.length < (how.distribute ? 3 : 2)) {
+    throw new SceneError(how.distribute ? "Distribute needs at least three separate elements" : "Align needs at least two separate elements");
+  }
+  const moves: { el: El; dx: number; dy: number }[] = [];
+  if (how.align) {
+    const minX = Math.min(...list.map((u) => u.box.minX));
+    const maxX = Math.max(...list.map((u) => u.box.maxX));
+    const minY = Math.min(...list.map((u) => u.box.minY));
+    const maxY = Math.max(...list.map((u) => u.box.maxY));
+    for (const { anchor, box } of list) {
+      const cx = (box.minX + box.maxX) / 2;
+      const cy = (box.minY + box.maxY) / 2;
+      const dx = { left: minX - box.minX, center: (minX + maxX) / 2 - cx, right: maxX - box.maxX }[how.align as string] ?? 0;
+      const dy = { top: minY - box.minY, middle: (minY + maxY) / 2 - cy, bottom: maxY - box.maxY }[how.align as string] ?? 0;
+      moves.push({ el: anchor, dx, dy });
+    }
+  } else {
+    const h = how.distribute === "horizontal";
+    const lo = (u: (typeof list)[number]) => (h ? u.box.minX : u.box.minY);
+    const hi = (u: (typeof list)[number]) => (h ? u.box.maxX : u.box.maxY);
+    const sorted = [...list].sort((a, b) => lo(a) + hi(a) - (lo(b) + hi(b)));
+    const span = hi(sorted.at(-1)!) - lo(sorted[0]);
+    const used = sorted.reduce((n, u) => n + hi(u) - lo(u), 0);
+    const gap = (span - used) / (sorted.length - 1);
+    let at = lo(sorted[0]);
+    for (const u of sorted) {
+      const d = at - lo(u);
+      moves.push({ el: u.anchor, dx: h ? d : 0, dy: h ? 0 : d });
+      at += hi(u) - lo(u) + gap;
+    }
+  }
+  const updates = moves
+    .filter((m) => Math.abs(m.dx) > 0.01 || Math.abs(m.dy) > 0.01)
+    .map((m) => ({ id: m.el.id, x: m.el.x + m.dx, y: m.el.y + m.dy }));
+  return updates.length ? updateElements(existing, updates) : existing;
+}
+
+/**
+ * Elements that put a drawing back to an earlier state when merged with `replace`: each
+ * outranks the current copy of the same id, so the merge takes the old content.
+ */
+export function restoreElements(current: El[], snapshot: El[]): El[] {
+  const now = new Map(current.map((e) => [e.id, e]));
+  return live(snapshot).map((e) => {
+    const cur = now.get(e.id);
+    return { ...e, version: Math.max(e.version ?? 1, cur?.version ?? 0) + 1, versionNonce: randInt(), updated: Date.now() };
+  });
 }

@@ -24,23 +24,31 @@ import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.j
 import { layoutGraph, type GraphSpec } from "./layout.js";
 import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
 import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
+import { formatCodeLink, hashFile, parseCodeLink } from "./codelinks.js";
 import {
   addSkeletons,
+  type Align,
+  arrangeElements,
   bounds,
   cleared,
   connectArrow,
+  contentRev,
   deleteElements,
   describe,
+  type Distribute,
+  findElements,
   type El,
   type ElementUpdate,
   live,
   type Region,
   type Scene,
+  restoreElements,
   SceneError,
   selectForRender,
   type SkeletonEl,
   updateElements,
 } from "./scene.js";
+import { Snapshots } from "./snapshots.js";
 import {
   bearer,
   hostAllowed,
@@ -96,10 +104,53 @@ interface Client {
 
 type Auth = "bearer" | "session" | "renderer" | null;
 
+/** Operations that change a drawing: they take `if_rev` and report the new content revision. */
+const WRITE_OPS = new Set(["add", "update", "delete", "apply", "arrange", "connect", "diagram", "insert_shape", "mermaid", "restore"]);
+
+/**
+ * Turns `code: "src/foo.ts:42"` on new elements or updates into the code-link convention
+ * (codelinks.ts): `link` holds the project-relative path with an optional `#L<line>`, and
+ * `customData.lfxCode` the same plus the file's hash now. A `link` that is already a project
+ * path gets the same treatment; a web link drops any stale code reference. `code: null`
+ * removes the link. Missing files are linked anyway and noted.
+ */
+function codeLinks<T extends { id?: string; code?: unknown; link?: unknown; customData?: unknown; type?: string }>(
+  items: T[],
+  root: string,
+  notes: string[],
+  existing: El[] = [],
+): T[] {
+  const byId = new Map(existing.map((e) => [e.id, e]));
+  return items.map((item) => {
+    if (item.type === "placed" || (item.code === undefined && typeof item.link !== "string" && item.link !== null)) return item;
+    const { code, ...rest } = item;
+    const prev = (item.customData ?? (item.id ? byId.get(item.id)?.customData : undefined) ?? {}) as Record<string, unknown>;
+    const { lfxCode: _old, ...custom } = prev;
+    const raw = code !== undefined ? code : item.link;
+    if (raw === null || raw === "") return { ...rest, link: null, customData: custom } as unknown as T;
+    if (typeof raw !== "string") throw new SceneError(`${item.id ?? "element"}: code must be a project path like "src/foo.ts" or "src/foo.ts:42"`);
+    let s = raw.trim();
+    if (path.isAbsolute(s)) {
+      const rel = path.relative(root, s);
+      if (!rel.startsWith("..") && !path.isAbsolute(rel)) s = rel.split(path.sep).join("/");
+    }
+    const ref = parseCodeLink(s);
+    if (!ref) {
+      if (code !== undefined) throw new SceneError(`${item.id ?? "element"}: "${raw}" isn't a path inside the project (use e.g. "src/foo.ts" or "src/foo.ts:42")`);
+      // An ordinary web link: drop a stale code reference, if there was one.
+      return ("lfxCode" in prev ? { ...rest, customData: custom } : rest) as unknown as T;
+    }
+    const sha = hashFile(path.resolve(root, ref.path));
+    if (!sha) notes.push(`${item.id ?? "element"}: ${ref.path} doesn't exist (linked anyway)`);
+    return { ...rest, link: formatCodeLink(ref), customData: { ...custom, lfxCode: { ...ref, ...(sha ? { sha } : {}) } } } as unknown as T;
+  });
+}
+
 export async function startDaemon(cfg: Config): Promise<http.Server> {
   ensureStateDir(cfg);
   const token = loadOrCreateToken(cfg);
   const store = new DocStore({ stateDir: cfg.stateDir });
+  const snapshots = new Snapshots(cfg.stateDir);
 
   // ---- persisted state -------------------------------------------------------
   const rootsFile = path.join(cfg.stateDir, "roots.json");
@@ -294,6 +345,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     withSpan(`lfx.op ${String(body.op)}`, { "lfx.op": String(body.op) }, async (span) => {
       const out = (await runOp(body)) as Record<string, unknown>;
       const p = String(out.path ?? body.path);
+      // Writes report the new content revision, so the caller can chain if_rev.
+      if (WRITE_OPS.has(String(body.op)) && typeof out.rev === "number") out.contentRev = contentRev(store.get(p).scene.elements);
       let rel = path.basename(p);
       try {
         rel = path.relative(projectRootFor(p), p) || rel;
@@ -315,18 +368,79 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     if (body.op === "create" && body.overwrite) store.discardInvalid(p);
     const { scene } = store.get(p);
     const origin = agentPaths.has(p) ? "agent" : undefined;
+    // Read-modify-write safety: refuse the write if the drawing changed since the caller read it.
+    if (typeof body.if_rev === "string" && body.if_rev && WRITE_OPS.has(String(body.op))) {
+      const now = contentRev(scene.elements);
+      if (now !== body.if_rev) {
+        throw new HttpError(
+          409,
+          `The drawing changed since you read it (you had rev ${body.if_rev}, it is now ${now}). Call read_drawing again and redo the edit against what is there now; the user may have edited it.`,
+          { code: "stale-rev", rev: now },
+        );
+      }
+    }
+    const notes: string[] = [];
+    const root = () => projectRootFor(p);
     switch (body.op) {
       case "read": {
         const doc = store.getLive(p);
         if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
-        return { path: p, rev: doc.rev, summary: describe(doc.scene), scene: body.full ? doc.scene : undefined };
+        const filter = { query: body.query as string | undefined, ids: body.ids as string[] | undefined, type: body.type as string | undefined };
+        const only = filter.query || filter.ids?.length || filter.type ? findElements(doc.scene.elements, filter) : undefined;
+        return {
+          path: p,
+          rev: doc.rev,
+          contentRev: contentRev(doc.scene.elements),
+          total: doc.scene.elements.filter((e) => !(e.type === "text" && e.containerId)).length,
+          matched: only?.size,
+          summary: describe(doc.scene, only),
+          scene: body.full ? (only ? { ...doc.scene, elements: doc.scene.elements.filter((e) => only.has(e.id) || only.has(e.containerId)) } : doc.scene) : undefined,
+        };
+      }
+      case "snapshot": {
+        const doc = store.getLive(p);
+        if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
+        return { path: p, snapshot: snapshots.save(p, doc.scene, body.name as string | undefined) };
+      }
+      case "snapshots":
+        return { path: p, snapshots: snapshots.list(p) };
+      case "restore": {
+        const snap = snapshots.get(p, body.snapshot as string | undefined);
+        if (!snap) {
+          const have = snapshots.list(p);
+          throw new HttpError(404, have.length ? `No snapshot "${String(body.snapshot)}". Snapshots: ${have.map((s) => `${s.id} (${s.name})`).join(", ")}` : `${p} has no snapshots`);
+        }
+        // Keep what is being replaced, so a restore can itself be undone.
+        const before = snapshots.save(p, store.getLive(p).scene, `before restoring ${snap.info.name}`);
+        const r = store.apply(p, { elements: restoreElements(scene.elements, snap.elements), files: snap.files, replace: true }, origin);
+        return { path: p, rev: r.rev, restored: snap.info, saved: before };
+      }
+      case "apply": {
+        // Deletes first (so their ids can be reused), then adds, then updates (which may refer to new elements).
+        let elements = scene.elements;
+        let deleted: string[] = [];
+        if (Array.isArray(body.delete) && body.delete.length) ({ elements, deleted } = deleteElements(elements, body.delete as string[]));
+        let created: string[] = [];
+        if (Array.isArray(body.add) && body.add.length) {
+          const cur = { ...scene, elements };
+          const els = codeLinks(appendPlacement(cur, body.add as SkeletonEl[], (body.placement as string) ?? "absolute"), root(), notes);
+          ({ elements, created } = addSkeletons(elements, els));
+        }
+        if (Array.isArray(body.update) && body.update.length) elements = updateElements(elements, codeLinks(body.update as ElementUpdate[], root(), notes, elements));
+        const r = store.apply(p, { elements }, origin);
+        return { path: p, rev: r.rev, created, deleted, notes };
+      }
+      case "arrange": {
+        const elements = arrangeElements(scene.elements, (body.ids as string[]) ?? [], { align: body.align as Align | undefined, distribute: body.distribute as Distribute | undefined });
+        const r = store.apply(p, { elements }, origin);
+        return { path: p, rev: r.rev };
       }
       case "create": {
         if (store.exists(p) && !body.overwrite) throw new HttpError(409, `${p} already exists (pass overwrite: true to replace it)`);
         // Built over tombstones of the old content, so reused ids outrank it.
-        const { elements, created } = addSkeletons(cleared(scene.elements), (body.elements as SkeletonEl[]) ?? []);
+        const { elements, created } = addSkeletons(cleared(scene.elements), codeLinks((body.elements as SkeletonEl[]) ?? [], root(), notes));
         const r = store.apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
-        return { path: p, rev: r.rev, created };
+        return { path: p, rev: r.rev, created, notes };
       }
       case "connect": {
         // Re-bind an existing arrow, or draw a new one.
@@ -350,10 +464,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return { path: p, rev: r.rev, id: existing.id, rebound: true };
       }
       case "add": {
-        const els = appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined);
+        const els = codeLinks(appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined), root(), notes);
         const { elements, created } = addSkeletons(scene.elements, els);
         const r = store.apply(p, { elements }, origin);
-        return { path: p, rev: r.rev, created };
+        return { path: p, rev: r.rev, created, notes };
       }
       case "diagram": {
         const spec = body.graph as GraphSpec;
@@ -403,9 +517,19 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           return placed.elements.map((el): SkeletonEl => ({ type: "placed", element: el }));
         });
         for (const e of expanded) if (e.type === "frame" && e.children) e.children = e.children.flatMap((c) => parts.get(c) ?? [c]);
-        const { elements, created } = addSkeletons(base, expanded);
+        // Node code links go on the node's shape (a library shape's main part).
+        const code = new Map(spec.nodes.filter((n) => typeof n.code === "string" && n.code).map((n) => [ren(n.id)!, n.code!]));
+        const linked = expanded.map((e): SkeletonEl => {
+          const id = e.type === "placed" ? (e.element as El).id : e.id;
+          const c = id ? code.get(id) : undefined;
+          if (!c) return e;
+          if (e.type !== "placed") return { ...e, code: c };
+          const [withLink] = codeLinks([{ type: "rectangle", id, code: c } as SkeletonEl], root(), notes);
+          return { ...e, element: { ...(e.element as El), link: withLink.link, customData: { ...(e.element as El).customData, ...(withLink.customData as object) } } };
+        });
+        const { elements, created } = addSkeletons(base, codeLinks(linked, root(), notes));
         const r = store.apply(p, { elements }, origin);
-        return { path: p, rev: r.rev, created };
+        return { path: p, rev: r.rev, created, notes };
       }
       case "shapes": {
         const shapes = libraries.shapes(projectRootFor(p));
@@ -461,9 +585,9 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return { path: p, rev: r.rev, shape: shape.key, anchor: placed.anchorId, created: placed.ids, bounds: placed.bounds };
       }
       case "update": {
-        const elements = updateElements(scene.elements, (body.updates as ElementUpdate[]) ?? []);
+        const elements = updateElements(scene.elements, codeLinks((body.updates as ElementUpdate[]) ?? [], root(), notes, scene.elements));
         const r = store.apply(p, { elements }, origin);
-        return { path: p, rev: r.rev };
+        return { path: p, rev: r.rev, notes };
       }
       case "delete": {
         const { elements, deleted } = deleteElements(scene.elements, (body.ids as string[]) ?? []);

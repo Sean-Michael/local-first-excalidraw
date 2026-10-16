@@ -10,7 +10,8 @@
   "files": [
     "dist/src",
     "dist/web",
-    "libraries"
+    "libraries",
+    "plugin/skills/architecture-diagrams/references"
   ],
   "engines": {
     "node": ">=20"

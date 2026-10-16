@@ -14,7 +14,13 @@ claude mcp add excalidraw -- lfx mcp
 
 ### Claude Code plugin
 
-The plugin adds the MCP server, two skills (diagramming, and a readability review with a rubric for vision-capable models), and three commands: `/excalidraw:diagram <what>` investigates the code, draws, renders to check the layout and fixes problems; `/excalidraw:review <drawing>` renders the drawing and close-ups of each part, checks them against the readability rubric and fixes what's hard to read; `/excalidraw:open` opens the editor. In Claude Code:
+The plugin adds the MCP server and three skills:
+
+- **Diagramming:** drawing with the MCP tools.
+- **Architecture diagrams:** choosing the right diagram for the question and the audience (C4 levels, UML sequence, state and class, ER, deployment and infrastructure, data flow with trust boundaries, event flows), with a recipe for each and reference notes on notation, visual principles, and keeping diagrams in step with the code.
+- **Review:** a readability review with a rubric for vision-capable models.
+
+It also adds three commands: `/excalidraw:diagram <what>` investigates the code, draws, renders to check the layout and fixes problems; `/excalidraw:review <drawing>` renders the drawing and close-ups of each part, checks them against the readability rubric and fixes what's hard to read; `/excalidraw:open` opens the editor. In Claude Code:
 
 ```
 /plugin marketplace add /path/to/local-first-excalidraw

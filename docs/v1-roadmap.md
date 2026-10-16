@@ -59,6 +59,7 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
   - read-modify-write safety: `read_drawing` returns a revision, and writes take `if_rev`
 - [ ] A convention for linking diagram nodes to code: `link: "src/foo.ts:42"`, which `read_drawing` shows and `create_diagram` nodes accept as `code`.
 - [ ] Skill evals (`plugin/skills/*/evals/evals.json`) in the same shape as the prior art.
+- [x] Diagram knowledge: an `architecture-diagrams` skill. It picks the diagram for the audience and question (C4, UML behaviour and structure, DFD and threat models, ER, infrastructure, messaging), and has per-topic reference files in `references/` that a future tool can serve to the in-app assistant.
 
 ## WS5: IDE for diagrams
 

@@ -108,6 +108,9 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 - [x] `files-changed` pushed over the WebSocket (and `/api/events` for the app) when the drawing set changes, instead of polling.
 - [x] The drawing list uses the same tree, full width.
 - [x] macOS: a folder tree sidebar with the same actions, refreshed by the event stream; the app checks the running daemon's version.
+- [x] Opening or viewing a drawing never rewrites it: the editor's load-time text normalization (real font metrics, arrow labels recentred) is kept in memory and saved only with the next real edit. Agent edits still save straight away.
+- [x] The sidebar and drawing list respect `.gitignore` (the enclosing repository's and nested ones).
+- [x] The first open fits the drawing (at most 100%) once the canvas has its settled size, so a tab opened hidden or mid-layout doesn't show a blank canvas.
 
 ## WS9: Agentic code search and referencing code
 

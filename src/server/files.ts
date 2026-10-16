@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gitignoreFor } from "./code.js";
 import { SKIP_DIRS } from "./store.js";
 
 export class FileOpError extends Error {
@@ -120,11 +121,13 @@ export function moveToTrash(file: string, env: NodeJS.ProcessEnv = process.env, 
 }
 
 /**
- * Folders under the roots (bounded), for "move to folder" and the drawing tree. `empty` marks a
- * folder with nothing in it at all, such as one just made with New folder.
+ * Folders under the roots (bounded), for "move to folder" and the drawing tree, leaving out
+ * gitignored ones. `empty` marks a folder with nothing in it at all, such as one just made with
+ * New folder.
  */
 export function listFolders(roots: string[], maxDepth = 4, limit = 300): { path: string; root: string; empty?: boolean }[] {
   const out: { path: string; root: string; empty?: boolean }[] = [];
+  let ignored: (abs: string, isDir: boolean) => boolean = () => false;
   /** Returns how many entries `dir` has, or -1 when it wasn't read. */
   const walk = (root: string, dir: string, depth: number): number => {
     if (depth > maxDepth || out.length >= limit) return -1;
@@ -138,12 +141,16 @@ export function listFolders(roots: string[], maxDepth = 4, limit = 300): { path:
       if (out.length >= limit) break;
       if (!e.isDirectory() || SKIP_DIRS.has(e.name) || e.name.startsWith(".")) continue;
       const full = path.join(dir, e.name);
+      if (ignored(full, true)) continue;
       const item: { path: string; root: string; empty?: boolean } = { path: full, root };
       out.push(item);
       if (walk(root, full, depth + 1) === 0) item.empty = true;
     }
     return entries.length;
   };
-  for (const r of roots) walk(r, r, 0);
+  for (const r of roots) {
+    ignored = gitignoreFor(r);
+    walk(r, r, 0);
+  }
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }

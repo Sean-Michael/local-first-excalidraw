@@ -5,6 +5,7 @@
  * build directories, and refuses files that look like secrets even when asked by name.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -178,6 +179,36 @@ export class Gitignore {
     }
     return out;
   }
+}
+
+/**
+ * The enclosing git work tree of `dir`: the nearest ancestor (or `dir` itself) with a `.git`.
+ * The home directory doesn't count, so a dotfiles repo there (often ignoring `*`) can't hide
+ * everything under it.
+ */
+export function gitTopOf(dir: string): string | undefined {
+  const home = path.resolve(os.homedir());
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (d === home) return undefined;
+    if (fs.existsSync(path.join(d, ".git"))) return d;
+    if (path.dirname(d) === d) return undefined;
+  }
+}
+
+/**
+ * A gitignore check for walks that start at `start`, which may sit inside a repository: rules
+ * come from the enclosing work tree's .gitignore files down to each path checked (and from any
+ * repositories nested below `start`). Takes absolute paths.
+ */
+export function gitignoreFor(start: string): (abs: string, isDir: boolean) => boolean {
+  const top = gitTopOf(start) ?? path.resolve(start);
+  const ignore = new Gitignore(top);
+  return (abs, isDir) => {
+    const rel = relOf(top, abs);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+    ignore.loadAncestors(rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+    return ignore.ignored(rel, isDir);
+  };
 }
 
 /** A project file found by walking: absolute path, and root-relative path with forward slashes. */

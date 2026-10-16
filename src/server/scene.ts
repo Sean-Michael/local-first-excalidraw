@@ -167,8 +167,9 @@ export function fontFamily(v: unknown): number {
 export const LINE_HEIGHT = 1.25;
 
 /**
- * Rough text metrics. The editor recomputes exact metrics with real fonts the first time
- * it loads the drawing, so this only needs to be close enough for layout.
+ * Rough text metrics. An open editor recomputes exact metrics with real fonts and saves them
+ * with the agent's edit (or, for a drawing it loads, with the user's next edit, never on
+ * open), so this only needs to be close enough for layout.
  */
 export function measureText(text: string, fontSize: number, family = 5): { width: number; height: number } {
   const mono = family === 3 || family === 8;

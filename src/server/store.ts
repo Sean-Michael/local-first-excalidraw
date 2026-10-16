@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
+import { gitignoreFor } from "./code.js";
 import { readJson, writeFileAtomic } from "./config.js";
 import {
   assertFinite,
@@ -314,9 +315,14 @@ export interface DrawingInfo {
   mtime: number;
 }
 
-/** Finds .excalidraw files under the roots (bounded depth and count). */
-export function listDrawings(roots: string[], maxDepth = 6, limit = 500): DrawingInfo[] {
+/**
+ * Finds .excalidraw files under the roots (bounded depth and count), skipping dependency and
+ * build folders and, unless `gitignore` is false, whatever the enclosing repository ignores
+ * (eval output, generated files). Ignored drawings can still be opened by path.
+ */
+export function listDrawings(roots: string[], maxDepth = 6, limit = 500, opts: { gitignore?: boolean } = {}): DrawingInfo[] {
   const out: DrawingInfo[] = [];
+  let ignored: (abs: string, isDir: boolean) => boolean = () => false;
   const walk = (root: string, dir: string, depth: number) => {
     if (depth > maxDepth || out.length >= limit) return;
     let entries: fs.Dirent[];
@@ -329,13 +335,16 @@ export function listDrawings(roots: string[], maxDepth = 6, limit = 500): Drawin
       if (out.length >= limit) return;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith(".")) walk(root, full, depth + 1);
-      } else if (e.isFile() && e.name.endsWith(".excalidraw")) {
+        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith(".") && !ignored(full, true)) walk(root, full, depth + 1);
+      } else if (e.isFile() && e.name.endsWith(".excalidraw") && !ignored(full, false)) {
         const st = fs.statSync(full);
         out.push({ path: full, root, size: st.size, mtime: st.mtimeMs });
       }
     }
   };
-  for (const r of roots) walk(r, r, 0);
+  for (const r of roots) {
+    if (opts.gitignore !== false) ignored = gitignoreFor(r);
+    walk(r, r, 0);
+  }
   return out.sort((a, b) => b.mtime - a.mtime);
 }

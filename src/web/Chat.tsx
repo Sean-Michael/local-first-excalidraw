@@ -10,6 +10,7 @@ import {
   revertSummary,
   type ToolPart,
 } from "../shared/chat";
+import { mentionLabel } from "../shared/mentions";
 import { ChatSettings } from "./ChatSettings";
 import { Markdown } from "./Markdown";
 import { Shapes } from "./Shapes";
@@ -30,7 +31,16 @@ interface Suggestion {
   kind: Mention["kind"];
   path: string;
   rel: string;
+  /** A line range typed after the path (`@src/a.ts:10-40`), or a symbol's definition. */
+  lines?: [number, number];
+  symbol?: string;
+  /** Has uncommitted changes in git. */
+  changed?: boolean;
+  detail?: string;
 }
+
+/** Two mentions of the same thing: same path, lines and symbol. */
+const mentionKey = (m: Suggestion) => `${m.kind}:${m.path}:${m.lines?.join("-") ?? ""}:${m.symbol ?? ""}`;
 
 const TOOL_LABELS: Record<string, string> = {
   excalidraw_guide: "Read the element guide",
@@ -321,9 +331,9 @@ export function Chat({
     const el = inputRef.current!;
     const caret = el.selectionStart;
     // Keep the name in the sentence ("based on @daemon.ts"); the chip carries the actual context.
-    const before = text.slice(0, caret).replace(/@([^\s@]*)$/, `@${s.rel.split("/").pop()} `);
+    const before = text.slice(0, caret).replace(/@([^\s@]*)$/, `@${mentionLabel(s)} `);
     setText(before + text.slice(caret));
-    if (!mentions.some((m) => m.path === s.path)) setMentions([...mentions, s]);
+    if (!mentions.some((m) => mentionKey(m) === mentionKey(s))) setMentions([...mentions, s]);
     setSuggest(null);
     requestAnimationFrame(() => {
       el.focus();
@@ -346,7 +356,7 @@ export function Chat({
         session,
         text: body,
         selection,
-        mentions: mentions.map((m) => ({ kind: m.kind, path: m.path })),
+        mentions: mentions.map((m) => ({ kind: m.kind, path: m.path, lines: m.lines, symbol: m.symbol })),
         image,
       });
       stick.current = true;
@@ -513,7 +523,7 @@ export function Chat({
             ) : items.length === 0 ? (
               <div className="lfx-empty-chat">
                 <p className="lfx-empty-title">What should we draw?</p>
-                <p>Select items on the canvas to ask about them, or type @ to mention a file or another drawing.</p>
+                <p>Select items on the canvas to ask about them, or type @ to mention a file, a folder, lines (@file:10-40), a symbol or another drawing.</p>
                 <div className="lfx-starters">
                   {STARTERS.map((s) => (
                     <button type="button" key={s} onClick={() => submit(s)} disabled={busy || !!otherBusy}>
@@ -575,9 +585,9 @@ export function Chat({
                   </button>
                 )}
                 {mentions.map((m) => (
-                  <span key={m.path} className="lfx-chip lfx-chip-on" title={m.rel}>
-                    @{m.rel.split("/").pop()}
-                    <button type="button" aria-label={`Remove ${m.rel}`} onClick={() => setMentions(mentions.filter((x) => x.path !== m.path))}>
+                  <span key={mentionKey(m)} className="lfx-chip lfx-chip-on" title={m.lines ? `${m.rel}:${m.lines[0]}-${m.lines[1]}` : m.rel}>
+                    @{mentionLabel(m)}
+                    <button type="button" aria-label={`Remove ${mentionLabel(m)}`} onClick={() => setMentions(mentions.filter((x) => mentionKey(x) !== mentionKey(m)))}>
                       ×
                     </button>
                   </span>
@@ -588,7 +598,7 @@ export function Chat({
               <ul className="lfx-suggest" role="listbox">
                 {suggest.items.map((s, i) => (
                   <li
-                    key={s.path}
+                    key={mentionKey(s)}
                     role="option"
                     aria-selected={i === suggest.index}
                     className={i === suggest.index ? "lfx-sel" : ""}
@@ -597,8 +607,23 @@ export function Chat({
                       pick(s);
                     }}
                   >
-                    <span className="lfx-kind">{s.kind === "drawing" ? "drawing" : "file"}</span>
-                    {s.rel}
+                    <span className="lfx-kind">{s.kind}</span>
+                    {s.kind === "symbol" ? (
+                      <>
+                        {s.symbol}
+                        <span className="lfx-muted">{s.detail}</span>
+                      </>
+                    ) : (
+                      <>
+                        {s.rel}
+                        {s.lines && <span className="lfx-muted">lines {s.lines[0]}-{s.lines[1]}</span>}
+                        {s.changed && (
+                          <span className="lfx-muted" title="Uncommitted changes">
+                            modified
+                          </span>
+                        )}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>

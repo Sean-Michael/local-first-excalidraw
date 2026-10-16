@@ -27,18 +27,21 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - `connect_elements` can attach an existing arrow by its `id`.
 - `render_drawing` renders close-ups with `element_ids` or `region`, and says how large the smallest text appears.
 - Plugin: the architecture-diagrams skill (choosing and drawing C4, UML, data flow, ER, infrastructure and messaging diagrams, with reference notes), the diagram-review skill with `/excalidraw:review`, and `/excalidraw:sync` to update diagrams for the current code changes.
+- The assistant explores code like an engineer: new read-only tools `project_overview` (tree, languages, manifests, Compose services, Kubernetes and OpenAPI files, entry points, README, drawings), `outline_file` (classes, functions, methods, types and routes in TS/JS, Python, Go, Rust, Java/Kotlin, C# and Ruby), `find_symbol` (definitions, best first, and references) and `git_changes` (uncommitted changes, the last N commits or a ref range, with an optional capped diff). `search_files` takes `context` and `files_only`. See [Using the assistant](docs/assistant.md#how-it-explores-code).
+- Mention code in the assistant: `@folder/` attaches an overview of the folder, `@file:10-40` a line range, `@OrderRepository` a symbol's definition. Typed mentions work without the picker, and the picker lists files with uncommitted or recent changes first. Asking about a selected element with a code link attaches the linked code.
+- `project_overview` and `git_changes` are also MCP tools.
 - Assistant chat history: each drawing keeps several chats, reopenable from the history menu. A chat remembers its model, and chats on different drawings reply at the same time.
 - Opt-in OpenTelemetry tracing of assistant replies, model calls, tool calls and drawing operations, to an OTLP receiver or a JSON-lines file. See [Tracing](docs/tracing.md).
 - `lfx roots` lists the folders the daemon may use, and `lfx roots remove DIR` forgets one.
 - The daemon stops with the macOS app (`LFX_PARENT_PID`), and a daemon started on demand stops after 30 idle minutes (`LFX_IDLE_EXIT_MIN`).
-- An eval harness (`npm run evals`) that drives Claude Code against a fixture project and grades the drawings. See [Evals](docs/evals.md).
+- An eval harness (`npm run evals`) that drives Claude Code against a fixture project and grades the drawings, either over MCP or through the in-app assistant (`--via assistant`). See [Evals](docs/evals.md).
 - GitHub Actions run typecheck, build and tests on Ubuntu and macOS with Node 20 and 22.
 
 ### Changed
 
 - A client replaces an older daemon that was started on demand, and refuses to use a daemon of any other version with a message that says what to do. `lfx status` flags a version mismatch.
 - The project root registered by an MCP server lasts only until the daemon restarts, instead of being saved forever.
-- `create_diagram` layout: edges that skip layers route around the boxes in between, groups get their own bands so frames don't overlap or enclose other nodes, self-loops are drawn, and parallel edges are spread apart.
+- `create_diagram` layout: node order keeps the fewest edge crossings found, edges that skip layers route around the boxes in between, groups get their own bands so frames don't overlap or enclose other nodes, self-loops are drawn, and parallel edges are spread apart.
 - `create_diagram` with `replace: true` replaces the drawing in one atomic write.
 - Moving a frame moves its children, and moving part of a group (such as a library shape) moves the whole group.
 - The excalidraw skill, the review skill, the drawing guide, the MCP server instructions and the assistant's prompt were rewritten as one set, with sizing rules, layout anti-patterns, a check after every batch, error recovery, and a workflow for updating a diagram after a code change.
@@ -62,6 +65,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Security
 
+- The assistant's file listing and search respect nested `.gitignore` files and `!` exceptions.
 - The assistant's project-file tools also refuse `.git/`, `.kube/`, `.docker/config.json`, `*.tfvars`, `.envrc`, `.vault-token` and similar files.
 - Claude Code endpoints get matching `Read(...)` deny rules, since Claude Code's own Read, Grep and Glob tools don't go through the daemon's checks.
 - Regular-expression searches run in a worker thread with a time limit (`LFX_SEARCH_TIMEOUT_MS`) and a pattern length cap, so a pathological pattern can't stall the daemon.

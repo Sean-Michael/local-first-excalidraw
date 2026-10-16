@@ -41,6 +41,26 @@ const git = (cwd: string, args: string[]) =>
   });
 
 /**
+ * Files under `root` with uncommitted changes (modified, staged, untracked or conflicted),
+ * as paths relative to `root`. Empty when git is missing, slow or the root isn't a repository.
+ */
+export async function changedFiles(root: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const realRoot = fs.realpathSync.native(root);
+    const top = fs.realpathSync.native((await git(realRoot, ["rev-parse", "--show-toplevel"])).trim());
+    const status = await git(realRoot, ["-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]);
+    for (const rel of parsePorcelain(status).keys()) {
+      const fromRoot = path.relative(realRoot, path.join(top, rel));
+      if (!fromRoot.startsWith("..") && !path.isAbsolute(fromRoot)) out.add(fromRoot.split(path.sep).join("/"));
+    }
+  } catch {
+    // no badges, no boost
+  }
+  return out;
+}
+
+/**
  * States of the drawings under each root, keyed by absolute path spelled from the root (as
  * listDrawings spells it). Clean files are left out.
  */

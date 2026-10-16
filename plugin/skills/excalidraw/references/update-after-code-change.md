@@ -4,6 +4,7 @@ Use this when the code changed and a diagram documents it: `/excalidraw:sync`, "
 
 ## 1. Find what changed
 
+- The `git_changes` tool summarises any of these in one call (files with +/- counts, and the diff with `diff: true` and `path`), and works where you have no shell.
 - Uncommitted work: `git status` and `git diff`. The last commit: `git log -1 --stat` and `git show`. A branch: `git diff main...HEAD --stat`, then the relevant files.
 - Write down only what is visible at the diagram's level:
   - a component (service, module, datastore, queue, external API) added, removed or renamed

@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assistantSettings, runAssistant, summariseChat, traceFileFor } from "./assistant.js";
 import { runClaude, summariseTranscript } from "./claude.js";
 import { baseEnv, CLI, EvalDaemon, freePort, isolatedEnv } from "./daemon.js";
 import { grade, type SceneLike } from "./grade.js";
@@ -29,11 +30,16 @@ interface Options {
   out?: string;
   regrade?: string;
   list: boolean;
+  /** Who does the work: Claude Code over MCP (`claude -p`), or the daemon's in-app assistant. */
+  via: "claude" | "assistant";
 }
 
 const HELP = `Usage: npm run evals -- [options]
 
   --scenario ID[,ID]   Only these scenarios (repeatable). Default: all
+  --via claude|assistant
+                       claude: claude -p over MCP with the plugin (default).
+                       assistant: the daemon's in-app assistant with a Claude Code endpoint
   --model NAME         Model for Claude Code (default: Claude Code's own choice)
   --runs N             Runs per scenario (default 1)
   --judge              Also render the result and ask an LLM judge to score it
@@ -46,7 +52,7 @@ const HELP = `Usage: npm run evals -- [options]
 `;
 
 function parseArgs(argv: string[]): Options {
-  const o: Options = { scenarios: [], runs: 1, judge: false, keep: false, list: false };
+  const o: Options = { scenarios: [], runs: 1, judge: false, keep: false, list: false, via: "claude" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => {
@@ -56,6 +62,11 @@ function parseArgs(argv: string[]): Options {
     };
     if (a === "--scenario") o.scenarios.push(...val().split(",").filter(Boolean));
     else if (a === "--model") o.model = val();
+    else if (a === "--via") {
+      const v = val();
+      if (v !== "claude" && v !== "assistant") throw new Error("--via is claude or assistant");
+      o.via = v;
+    }
     else if (a === "--runs") o.runs = Math.max(1, Number.parseInt(val(), 10) || 1);
     else if (a === "--judge") o.judge = true;
     else if (a === "--keep") o.keep = true;
@@ -110,6 +121,11 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
   const stateDir = path.join(tmp, "state");
   const port = await freePort();
   const env = isolatedEnv(port, stateDir, project);
+  if (o.via === "assistant") {
+    // The daemon traces each turn, which is where Claude Code's cost and turn count are reported.
+    env.LFX_TRACE_FILE = traceFileFor(runDir);
+    if (process.env.CLAUDE_BIN) env.LFX_CLAUDE_BIN = process.env.CLAUDE_BIN;
+  }
   const daemon = new EvalDaemon(port, stateDir, env);
   const startedAt = new Date().toISOString();
   const result: RunResult = {
@@ -130,6 +146,10 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
 
   try {
     initProject(s.fixture, project);
+    if (o.via === "assistant") {
+      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(stateDir, "ai.json"), JSON.stringify(assistantSettings(o.model), null, 2), { mode: 0o600 });
+    }
     await daemon.start(path.join(runDir, "daemon.log"));
     await daemon.request("/api/roots", { path: project });
 
@@ -145,35 +165,48 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
     if (s.patch) applyPatch(project, s.fixture, s.patch);
     const before = new Map(listProjectFiles(project).filter((f) => f.endsWith(".excalidraw")).map((f) => [f, fs.statSync(path.join(project, f)).mtimeMs]));
 
-    // MCP server and plugin, both pointing at this run's daemon only.
-    const mcpConfig = path.join(tmp, "mcp.json");
-    fs.writeFileSync(
-      mcpConfig,
-      JSON.stringify({ mcpServers: { excalidraw: { command: process.execPath, args: [CLI, "mcp", "--root", project], env } } }, null, 2),
-    );
-    const plugin = pluginCopy(path.join(tmp, "plugin"));
-    const args = [
-      "-p", s.prompt,
-      "--output-format", "stream-json", "--verbose",
-      "--mcp-config", mcpConfig, "--strict-mcp-config",
-      "--plugin-dir", plugin,
-      "--setting-sources", "project",
-      "--permission-mode", "dontAsk",
-      "--allowedTools", ...ALLOWED_TOOLS,
-      "--no-session-persistence",
-      ...(o.model ? ["--model", o.model] : []),
-      ...(o.budgetUsd ? ["--max-budget-usd", o.budgetUsd] : []),
-    ];
-    fs.writeFileSync(path.join(runDir, "command.json"), JSON.stringify({ cwd: project, args }, null, 2));
     const transcriptFile = path.join(runDir, "transcript.jsonl");
     const timeoutSec = o.timeoutSec ?? s.timeoutSec ?? 900;
-    console.log(`[${s.id} #${n}] running claude (port ${port}, timeout ${timeoutSec}s)…`);
-    const run = await runClaude(args, { cwd: project, env: { ...baseEnv(), ...env }, transcriptFile, timeoutSec });
-    Object.assign(result, { exitCode: run.exitCode, timedOut: run.timedOut, wallMs: run.wallMs, stderr: run.stderr || undefined });
-
-    const sum = summariseTranscript(fs.readFileSync(transcriptFile, "utf8").split("\n"));
-    result.model = sum.model ?? o.model;
-    result.transcript = { ...sum, toolCalls: sum.toolCalls.map((c) => ({ name: c.name, error: c.error })) };
+    if (o.via === "assistant") {
+      // The in-app assistant works on the drawing open in its tab: the scenario's, or a new one.
+      const drawing = path.join(project, s.drawing ?? `docs/diagrams/${s.id}.excalidraw`);
+      fs.writeFileSync(path.join(runDir, "command.json"), JSON.stringify({ via: "assistant", cwd: project, drawing, prompt: s.prompt, settings: assistantSettings(o.model) }, null, 2));
+      console.log(`[${s.id} #${n}] running the in-app assistant (port ${port}, timeout ${timeoutSec}s)…`);
+      const run = await runAssistant(daemon, drawing, s.prompt, { transcriptFile, timeoutSec });
+      Object.assign(result, { exitCode: run.status === "done" ? 0 : 1, timedOut: run.status === "timeout", wallMs: run.wallMs, stderr: run.error });
+      // The trace is written as spans end; the turn's span ends just after its last event.
+      await new Promise((r) => setTimeout(r, 500));
+      const sum = summariseChat(fs.readFileSync(transcriptFile, "utf8").split("\n"), traceFileFor(runDir));
+      result.model = sum.model ?? o.model;
+      result.transcript = { ...sum, toolCalls: sum.toolCalls.map((c) => ({ name: c.name, error: c.error })) };
+    } else {
+      // MCP server and plugin, both pointing at this run's daemon only.
+      const mcpConfig = path.join(tmp, "mcp.json");
+      fs.writeFileSync(
+        mcpConfig,
+        JSON.stringify({ mcpServers: { excalidraw: { command: process.execPath, args: [CLI, "mcp", "--root", project], env } } }, null, 2),
+      );
+      const plugin = pluginCopy(path.join(tmp, "plugin"));
+      const args = [
+        "-p", s.prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--mcp-config", mcpConfig, "--strict-mcp-config",
+        "--plugin-dir", plugin,
+        "--setting-sources", "project",
+        "--permission-mode", "dontAsk",
+        "--allowedTools", ...ALLOWED_TOOLS,
+        "--no-session-persistence",
+        ...(o.model ? ["--model", o.model] : []),
+        ...(o.budgetUsd ? ["--max-budget-usd", o.budgetUsd] : []),
+      ];
+      fs.writeFileSync(path.join(runDir, "command.json"), JSON.stringify({ cwd: project, args }, null, 2));
+      console.log(`[${s.id} #${n}] running claude (port ${port}, timeout ${timeoutSec}s)…`);
+      const run = await runClaude(args, { cwd: project, env: { ...baseEnv(), ...env }, transcriptFile, timeoutSec });
+      Object.assign(result, { exitCode: run.exitCode, timedOut: run.timedOut, wallMs: run.wallMs, stderr: run.stderr || undefined });
+      const sum = summariseTranscript(fs.readFileSync(transcriptFile, "utf8").split("\n"));
+      result.model = sum.model ?? o.model;
+      result.transcript = { ...sum, toolCalls: sum.toolCalls.map((c) => ({ name: c.name, error: c.error })) };
+    }
 
     // Which drawing to grade: the named one, else whichever changed most recently.
     const files = listProjectFiles(project);
@@ -253,7 +286,7 @@ async function main() {
   const runs: RunResult[] = [];
   for (const s of picked) for (let n = 1; n <= o.runs; n++) runs.push(await runOne(s, data.graphs, n, o, outDir));
 
-  const title = `Eval results ${stamp}${o.model ? ` (${o.model})` : ""}`;
+  const title = `Eval results ${stamp}${o.via === "assistant" ? " via the in-app assistant" : ""}${o.model ? ` (${o.model})` : ""}`;
   fs.writeFileSync(path.join(outDir, "summary.md"), summaryMarkdown(title, runs));
   console.log(`\nResults: ${path.join(outDir, "summary.md")}`);
   process.exitCode = runs.every((r) => r.grade.pass && !r.error) ? 0 : 1;

@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { assistantSettings, summariseChat } from "../evals/assistant.js";
 import { summariseTranscript } from "../evals/claude.js";
+import { SettingsStore } from "../src/server/ai/settings.js";
 import { grade, idPreservation, linkTarget, matches, measure, nonFinite, overlaps, textOverflow } from "../evals/grade.js";
 import { parseJudgeReply } from "../evals/judge.js";
 import { loadScenarios, REPO_ROOT } from "../evals/scenarios.js";
@@ -41,6 +43,37 @@ test("text fit trusts a label's measured width unless the server clamped it", ()
   // At the clamp width (container - 20) the estimate decides.
   const clamped = { ...real, width: 130, text: "turnstile-gateway-and-more" };
   assert.equal(textOverflow([box, clamped]).length, 1);
+  // The Mermaid converter's `alt` tag: 16 px of measured text in a 26 px box fits exactly.
+  const tag = el("tag", "rectangle", 64, 397, 26, 30, { groupIds: [], boundElements: [{ id: "alt", type: "text" }] });
+  const alt = el("alt", "text", 69, 402, 15.99, 20, { groupIds: [], containerId: "tag", text: "alt", fontSize: 16, fontFamily: 5 });
+  assert.deepEqual(textOverflow([tag, alt]), []);
+});
+
+/** Pairs of arrows whose paths cross, by their bound ends. */
+function arrowCrossings(els: El[]): string[] {
+  const segs = (a: El) => {
+    const pts = (a.points as number[][]).map(([x, y]) => [a.x + x, a.y + y]);
+    return pts.slice(1).map((p, i) => [pts[i], p]);
+  };
+  const cross = ([[x1, y1], [x2, y2]]: number[][], [[x3, y3], [x4, y4]]: number[][]) => {
+    const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+    if (Math.abs(d) < 1e-9) return false;
+    const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+    const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+    return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
+  };
+  const arrows = els.filter((e) => e.type === "arrow");
+  const out: string[] = [];
+  for (let i = 0; i < arrows.length; i++)
+    for (let j = i + 1; j < arrows.length; j++)
+      if (segs(arrows[i]).some((s) => segs(arrows[j]).some((t) => cross(s, t)))) out.push(`${arrows[i].startBinding?.elementId}->${arrows[i].endBinding?.elementId} x ${arrows[j].startBinding?.elementId}->${arrows[j].endBinding?.elementId}`);
+  return out;
+}
+
+test("the code-change scenarios' starting drawing has no crossing arrows", () => {
+  // keymaster-auth -> shopapp-pg used to cross ledger-orders -> postbox-mq, capping readability for every run.
+  const graph = data.graphs["shopapp-arch"] as GraphSpec;
+  assert.deepEqual(arrowCrossings(addSkeletons([], layoutGraph(graph)).elements), []);
 });
 
 test("required frames match frame names only", () => {
@@ -224,6 +257,50 @@ test("transcript summary counts tools, errors, skills and cost", () => {
   assert.equal(s.costUsd, 0.25);
   assert.equal(s.permissionDenials.length, 1);
   assert.equal(s.finalText, "Done");
+});
+
+test("--via assistant: settings load as one Claude Code endpoint, and chat events summarise like a transcript", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lfx-via-"));
+  fs.writeFileSync(path.join(dir, "ai.json"), JSON.stringify(assistantSettings("sonnet")));
+  const settings = new SettingsStore(dir).get();
+  assert.equal(settings.enabled, true);
+  assert.equal(settings.codeAccess, true);
+  assert.deepEqual(settings.endpoints.map((e) => [e.kind, e.model]), [["claude-code", "sonnet"]]);
+
+  const trace = path.join(dir, "trace.jsonl");
+  fs.writeFileSync(
+    trace,
+    [
+      { name: "execute_tool create_diagram", attributes: {} },
+      { name: "invoke_agent lfx-assistant", durationMs: 1200, attributes: { "lfx.claude_code.cost_usd": 0.25, "lfx.claude_code.turns": 7, "gen_ai.request.model": "sonnet" } },
+    ]
+      .map((s) => JSON.stringify(s))
+      .join("\n"),
+  );
+  const events = [
+    { type: "turn-start", id: "t" },
+    { type: "tool-start", id: "t", callId: "1", name: "Grep", args: '{"pattern":"status"}' },
+    { type: "tool-end", id: "t", callId: "1", ok: true, result: "" },
+    { type: "tool-start", id: "t", callId: "2", name: "project_overview", args: "{}" },
+    { type: "tool-start", id: "t", callId: "3", name: "create_diagram", args: "{}" },
+    { type: "tool-end", id: "t", callId: "3", ok: false, result: "Error: bad" },
+    { type: "delta", id: "t", part: "text", text: "Drew " },
+    { type: "delta", id: "t", part: "text", text: "it." },
+    { type: "turn-end", id: "t", status: "done" },
+  ].map((e) => JSON.stringify(e));
+  const s = summariseChat(events, trace);
+  assert.deepEqual(s.toolCounts, { Grep: 1, mcp__excalidraw__project_overview: 1, mcp__excalidraw__create_diagram: 1 });
+  assert.deepEqual(s.toolErrors, [{ name: "mcp__excalidraw__create_diagram", error: "Error: bad" }]);
+  assert.equal(s.finalText, "Drew it.");
+  assert.equal(s.costUsd, 0.25);
+  assert.equal(s.turns, 7);
+  assert.equal(s.model, "sonnet");
+});
+
+test("the judge gets the drawing's text listing as well as the picture", () => {
+  const src = fs.readFileSync(path.join(REPO_ROOT, "evals", "judge.ts"), "utf8");
+  assert.match(src, /op: "read"/);
+  assert.match(src, /checked separately by deterministic graders/);
 });
 
 test("judge replies are parsed from the first JSON object", () => {

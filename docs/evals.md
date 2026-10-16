@@ -17,7 +17,8 @@ npm run evals                                  # everything (expensive)
 | Option | Meaning |
 |---|---|
 | `--scenario ID[,ID]` | Only these scenarios. Repeatable. Default: all |
-| `--model NAME` | Passed to `claude --model`. Default: Claude Code's own choice |
+| `--via claude\|assistant` | Who does the work: `claude -p` over MCP with the plugin (default), or the daemon's in-app assistant ([below](#via-the-in-app-assistant)) |
+| `--model NAME` | Passed to `claude --model` (or set as the assistant endpoint's model). Default: Claude Code's own choice |
 | `--runs N` | Runs per scenario (default 1). Models vary from run to run, so compare several |
 | `--judge` | Also render the result to PNG and have a second `claude -p` score it (see below) |
 | `--timeout SEC` | Per-run limit (default: the scenario's `timeoutSec`, else 900) |
@@ -47,6 +48,20 @@ npm run evals                                  # everything (expensive)
    The MCP config starts `node dist/src/server/cli.js mcp --root <project>` with the same isolated environment. The plugin is a copy of `plugin/` without its `.mcp.json`, so only the isolated server is configured. `--setting-sources project` keeps your own settings, hooks and plugins out of the run. Anything not on the allowed list (file edits, other shell commands) is denied, and the denials are recorded.
 6. Grades the drawing (the scenario's `drawing`, or else the most recently changed `.excalidraw` file), stops the daemon and deletes the temporary directory.
 
+### Via the in-app assistant
+
+`--via assistant` tests the in-app assistant's path instead: its system prompt, its context block (mentions, linked code) and the tools it gets. Steps 1 to 4 are the same. Then:
+
+5. Before the daemon starts, the harness writes its `ai.json`: the assistant on, project file access on, and one Claude Code endpoint (which uses your `claude` login, with `--model` as its model). The daemon also writes a trace (`LFX_TRACE_FILE`) to the run's directory.
+6. The harness connects to the daemon's WebSocket as an editor tab would (bearer token, same-origin `Origin`), opens the scenario's `drawing` (or `docs/diagrams/<scenario>.excalidraw`), and sends the prompt as a chat message. It records every chat event in `transcript.jsonl` and waits for the turn to end, stopping it after the time limit.
+7. The drawing is graded the same way. Tool counts come from the chat events (drawing and code tools count as MCP tools); cost and turns come from the turn's span in `trace.jsonl`.
+
+```bash
+npm run evals -- --via assistant --scenario arch-overview,code-change-update --runs 1
+```
+
+The plugin's skills and commands aren't loaded in this mode; the assistant's own system prompt and `excalidraw_guide` take their place. Tests for the assistant's tool loop with other endpoints (Ollama, OpenAI-compatible, Anthropic) use a scripted fake model instead of a real one; see `test/code-search.test.ts`.
+
 Rendering (`render_drawing`, `export_drawing`) and Mermaid conversion need an editor tab, or headless rendering where the daemon supports it (`LFX_HEADLESS`). Without either, those tool calls fail. The failures show up as tool errors in the report, and the agent has to manage without them.
 
 ## Scenarios
@@ -66,6 +81,7 @@ They live in `evals/scenarios.json`. Each has the common skill-eval fields (`pro
 | `readability-review` | A deliberately messy drawing (overlaps, unbound arrows, 8px text, overflowing labels) given to the diagram-review skill |
 | `mermaid` | Converting a Mermaid flowchart: nodes, edge directions, bound arrows |
 | `code-links` | Architecture whose nodes link to the files that implement them |
+| `reference-code-mention` | `@services/ledger-orders/ Explain and diagram how an order's payment status changes`: a state diagram with the real statuses (pending, paid, payment_failed) and none the code doesn't have |
 
 The fixture, `evals/fixtures/shopapp/`, is a small TypeScript shop: `turnstile-gateway`, `keymaster-auth`, `ledger-orders` (with the `PaylodeClient` for an external card processor and an `OrderRepository` over Postgres `shopapp-pg`), `courier-worker` consuming the `order-events` queue on `postbox-mq` and mailing through Pigeonpost, Redis `token-cache`, all wired in `docker-compose.yml`. The names are unusual on purpose, so a check for them shows that the agent read the code and didn't guess.
 
@@ -92,11 +108,11 @@ The graders in `evals/grade.ts` are deterministic and read only the `.excalidraw
 | `links` | At least `minLinked` elements link to files in the project (relative, absolute, `file://` or `vscode://file/`, with an optional `#L12` or `:12`), and with `allExist`, none link anywhere else |
 | `improves` | The chosen metrics (overlaps, bound-arrow share, smallest font, overflow) are better than the baseline's, or already perfect |
 
-`text-fit` uses a label's stored size when it was measured with real fonts (by the editor or the Mermaid converter). Labels the server made, and ones clamped to their container's width, are estimated with the metrics the server uses for layout, which run wide for the hand-drawn font, so `text-fit` errs towards reporting an overflow.
+`text-fit` uses a label's stored size when it was measured with real fonts (by the editor or the Mermaid converter). Labels at exactly the width the server clamps to (the container's width minus 20) are estimated with the metrics the server uses for layout, which run wide for the hand-drawn font, so `text-fit` errs towards reporting an overflow.
 
 ### LLM judge
 
-With `--judge`, the harness renders the final drawing to PNG through the run's daemon and asks a separate `claude -p` (allowed only the Read tool) to score readability and correctness from 1 to 5 against `expected_output`, replying in JSON. The judge's score is reported but doesn't affect pass/fail. If rendering isn't available, the judge is skipped and the report says why.
+With `--judge`, the harness renders the final drawing to PNG through the run's daemon and asks a separate `claude -p` (allowed only the Read tool) to score readability and correctness from 1 to 5 against `expected_output`, replying in JSON. Along with the picture it gets the drawing's text listing (`final-listing.txt`, the `read_drawing` summary), so it can check code links and which shapes each arrow connects, which the image can't show. It is told that ids are checked by the deterministic graders. The judge's score is reported but doesn't affect pass/fail. If rendering isn't available, the judge is skipped and the report says why.
 
 ## Reading results
 

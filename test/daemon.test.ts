@@ -244,7 +244,12 @@ test("MCP over stdio: list tools, draw a diagram and read it back", async () => 
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "mcp", "--root", project], env: env as Record<string, string>, stderr: "ignore" }));
   try {
     const { tools } = await client.listTools();
-    for (const t of ["create_diagram", "read_drawing", "render_drawing"]) assert.ok(tools.some((x) => x.name === t), t);
+    for (const t of ["create_diagram", "read_drawing", "render_drawing", "project_overview", "git_changes"]) assert.ok(tools.some((x) => x.name === t), t);
+    // Coding agents have their own search and read tools; only the two code tools they lack are served.
+    for (const t of ["search_files", "read_file", "find_symbol", "outline_file"]) assert.ok(!tools.some((x) => x.name === t), t);
+    assert.ok(tools.find((x) => x.name === "git_changes")?.annotations?.readOnlyHint);
+    const overview = (await client.callTool({ name: "project_overview", arguments: {} })) as { content: { text: string }[] };
+    assert.match(overview.content[0].text, /^Project — 0 files/);
     const made = (await client.callTool({
       name: "create_diagram",
       arguments: { path: "arch", nodes: [{ id: "api", label: "API" }, { id: "db", label: "Database" }], edges: [{ from: "api", to: "db", label: "queries" }] },

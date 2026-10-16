@@ -117,30 +117,84 @@ function globMatcher(glob?: string): (rel: string) => boolean {
   return glob.includes("/") ? (rel) => re.test(rel) : (rel) => re.test(path.basename(rel));
 }
 
-/** Simple root .gitignore support: plain names, `dir/`, `*.ext` and anchored paths. */
-function gitignore(root: string): (rel: string, isDir: boolean) => boolean {
-  let lines: string[] = [];
-  try {
-    lines = fs.readFileSync(path.join(root, ".gitignore"), "utf8").split("\n");
-  } catch {
-    return () => false;
-  }
-  const rules = lines
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#") && !l.startsWith("!"))
-    .map((l) => {
-      const dirOnly = l.endsWith("/");
-      const pat = l.replace(/\/$/, "");
-      const anchored = pat.startsWith("/") || pat.includes("/");
-      const re = globToRegExp(pat.replace(/^\//, ""));
-      return { dirOnly, anchored, re };
-    });
-  return (rel, isDir) =>
-    rules.some((r) => (!r.dirOnly || isDir) && (r.anchored ? r.re.test(rel) : rel.split("/").some((seg) => r.re.test(seg))));
+interface IgnoreRule {
+  /** Directory of the .gitignore, relative to the walk root ("" for the root). */
+  base: string;
+  re: RegExp;
+  negate: boolean;
+  dirOnly: boolean;
+  anchored: boolean;
 }
 
-function* walk(root: string, start: string): Generator<{ abs: string; rel: string }> {
-  const ignored = gitignore(root);
+/**
+ * .gitignore support: the root's and every nested directory's, with `!` negation, `dir/`,
+ * anchored paths and `**`. As in git, the last matching rule wins, and nothing inside an
+ * ignored directory can be re-included (the walk never enters it).
+ */
+export class Gitignore {
+  private rules: IgnoreRule[] = [];
+  private loaded = new Set<string>();
+
+  constructor(private root: string) {}
+
+  /** Reads `<dir>/.gitignore` once; `dir` is relative to the root. */
+  load(dir: string) {
+    if (this.loaded.has(dir)) return;
+    this.loaded.add(dir);
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(this.root, dir, ".gitignore"), "utf8");
+    } catch {
+      return;
+    }
+    for (let line of text.split(/\r?\n/)) {
+      line = line.replace(/\s+$/, "");
+      if (!line || line.startsWith("#")) continue;
+      const negate = line.startsWith("!");
+      if (negate) line = line.slice(1);
+      line = line.replace(/^\\([#!])/, "$1");
+      const dirOnly = line.endsWith("/");
+      const pat = line.replace(/\/+$/, "");
+      if (!pat) continue;
+      // A slash at the start or in the middle anchors the pattern to the .gitignore's directory.
+      const anchored = pat.includes("/");
+      this.rules.push({ base: dir, re: globToRegExp(pat.replace(/^\//, "")), negate, dirOnly, anchored });
+    }
+  }
+
+  /** Loads the .gitignore files from the root down to `rel`, for a walk that starts below the root. */
+  loadAncestors(rel: string) {
+    const parts = rel === "." || rel === "" ? [] : rel.split("/");
+    for (let i = 0; i <= parts.length; i++) this.load(parts.slice(0, i).join("/"));
+  }
+
+  ignored(rel: string, isDir: boolean): boolean {
+    let out = false;
+    for (const r of this.rules) {
+      if (r.dirOnly && !isDir) continue;
+      if (r.base && !rel.startsWith(`${r.base}/`)) continue;
+      const sub = r.base ? rel.slice(r.base.length + 1) : rel;
+      if (r.anchored ? r.re.test(sub) : r.re.test(sub.slice(sub.lastIndexOf("/") + 1))) out = !r.negate;
+    }
+    return out;
+  }
+}
+
+/** A project file found by walking: absolute path, and root-relative path with forward slashes. */
+export interface WalkEntry {
+  abs: string;
+  rel: string;
+}
+
+const relOf = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join("/");
+
+/**
+ * Every non-secret, non-ignored file under `start` (inside `root`), skipping dependency, build
+ * and VCS directories. Stops after MAX_WALK directory entries.
+ */
+export function* walk(root: string, start: string): Generator<WalkEntry> {
+  const ignore = new Gitignore(root);
+  ignore.loadAncestors(relOf(root, start));
   const stack = [start];
   let seen = 0;
   while (stack.length) {
@@ -151,24 +205,25 @@ function* walk(root: string, start: string): Generator<{ abs: string; rel: strin
     } catch {
       continue;
     }
+    ignore.load(relOf(root, dir));
     entries.sort((a, b) => (a.name < b.name ? 1 : -1));
     for (const e of entries) {
       if (++seen > MAX_WALK) return;
       // Symlinks are never followed while walking; read_file can still open one that stays inside.
       if (e.isSymbolicLink()) continue;
       const abs = path.join(dir, e.name);
-      const rel = path.relative(root, abs).split(path.sep).join("/");
+      const rel = relOf(root, abs);
       if (e.isDirectory()) {
-        if (SKIP_DIRS.has(e.name) || (e.name.startsWith(".") && e.name !== ".github") || ignored(rel, true)) continue;
+        if (SKIP_DIRS.has(e.name) || (e.name.startsWith(".") && e.name !== ".github") || ignore.ignored(rel, true)) continue;
         stack.push(abs);
-      } else if (e.isFile() && !ignored(rel, false) && !isSecretFile(rel)) {
+      } else if (e.isFile() && !ignore.ignored(rel, false) && !isSecretFile(rel)) {
         yield { abs, rel };
       }
     }
   }
 }
 
-function isBinary(buf: Buffer): boolean {
+export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);
   for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
   return false;
@@ -201,6 +256,10 @@ export interface SearchOptions {
   regex?: boolean;
   case_sensitive?: boolean;
   max_results?: number;
+  /** Lines of context before and after each match, like grep -C. */
+  context?: number;
+  /** Only the files that match, with their match counts (like grep -c). */
+  files_only?: boolean;
 }
 
 const MAX_PATTERN = 500;
@@ -249,8 +308,11 @@ export function searchFilesSync(root: string, opts: SearchOptions): string {
   const start = resolveInRoot(realRoot, opts.dir ?? ".").abs;
   const re = compile(opts);
   const match = globMatcher(opts.glob);
-  const max = Math.min(opts.max_results ?? 80, 400);
+  const max = Math.min(opts.max_results ?? (opts.files_only ? 200 : 80), 400);
+  const ctx = Math.max(0, Math.min(opts.context ?? 0, 10));
+  const short = (s: string) => (s.length > 240 ? s.slice(0, 240) + "…" : s);
   const out: string[] = [];
+  let matches = 0;
   for (const f of walk(realRoot, start)) {
     if (!match(f.rel)) continue;
     let buf: Buffer;
@@ -262,11 +324,34 @@ export function searchFilesSync(root: string, opts: SearchOptions): string {
     }
     if (isBinary(buf)) continue;
     const lines = buf.toString("utf8").split("\n");
+    if (opts.files_only) {
+      const n = lines.filter((l) => re.test(l)).length;
+      if (!n) continue;
+      out.push(`${f.rel} (${n} match${n === 1 ? "" : "es"})`);
+      if (out.length >= max) return out.join("\n") + `\n… stopped at ${max} files (narrow with glob or dir)`;
+      continue;
+    }
+    // With context, matches are grouped into hunks: `path:12: match`, `path-11- context`, `--` between hunks.
+    let shownTo = -1;
     for (let i = 0; i < lines.length; i++) {
       if (!re.test(lines[i])) continue;
-      const line = lines[i].length > 240 ? lines[i].slice(0, 240) + "…" : lines[i];
-      out.push(`${f.rel}:${i + 1}: ${line.trim()}`);
-      if (out.length >= max) return out.join("\n") + `\n… stopped at ${max} matches`;
+      if (ctx) {
+        const from = Math.max(0, i - ctx, shownTo + 1);
+        if (out.length && (shownTo < 0 || from > shownTo + 1)) out.push("--");
+        for (let j = from; j < i; j++) out.push(`${f.rel}-${j + 1}- ${short(lines[j])}`);
+        out.push(`${f.rel}:${i + 1}: ${short(lines[i])}`);
+        let to = Math.min(lines.length - 1, i + ctx);
+        // Context after runs until the next match, which prints itself.
+        for (let j = i + 1; j <= to; j++) {
+          if (re.test(lines[j])) {
+            to = j - 1;
+            break;
+          }
+          out.push(`${f.rel}-${j + 1}- ${short(lines[j])}`);
+        }
+        shownTo = to;
+      } else out.push(`${f.rel}:${i + 1}: ${short(lines[i]).trim()}`);
+      if (++matches >= max) return out.join("\n") + `\n… stopped at ${max} matches (narrow with glob or dir, or use files_only)`;
     }
   }
   return out.length ? out.join("\n") : "No matches.";
@@ -293,25 +378,4 @@ export function readFile(root: string, opts: { path: string; start_line?: number
   }
   const more = to < lines.length ? `\n… ${lines.length - to} more lines (use start_line ${to + 1})` : "";
   return `${rel} (lines ${from}-${to} of ${lines.length})\n${body}${more}`;
-}
-
-/** File names under the root matching a query, for the @-mention picker. */
-export function suggestFiles(root: string, query: string, limit = 30): string[] {
-  const realRoot = fs.realpathSync.native(root);
-  const q = query.toLowerCase();
-  const scored: { rel: string; score: number }[] = [];
-  for (const f of walk(realRoot, realRoot)) {
-    const lower = f.rel.toLowerCase();
-    const base = path.basename(lower);
-    let score: number;
-    if (!q) score = f.rel.split("/").length;
-    else if (base.startsWith(q)) score = 0;
-    else if (base.includes(q)) score = 1;
-    else if (lower.includes(q)) score = 2;
-    else continue;
-    scored.push({ rel: f.rel, score });
-    if (scored.length > 5000) break;
-  }
-  scored.sort((a, b) => a.score - b.score || a.rel.length - b.rel.length || (a.rel < b.rel ? -1 : 1));
-  return scored.slice(0, limit).map((s) => path.join(realRoot, s.rel));
 }

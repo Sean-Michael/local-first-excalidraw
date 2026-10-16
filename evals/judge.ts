@@ -46,16 +46,34 @@ export async function judge(opts: {
   } catch (e) {
     return { error: `render failed: ${(e as Error).message}` };
   }
+  // The image can't show code links or which shapes an arrow is attached to; the text listing can.
+  const listing = path.join(opts.runDir, "final-listing.txt");
+  let haveListing = false;
+  try {
+    const r = await opts.daemon.op<{ summary: string }>({ op: "read", path: opts.drawing });
+    fs.writeFileSync(listing, r.summary);
+    haveListing = true;
+  } catch {
+    // grade from the image alone
+  }
   const question = [
     `You are grading a diagram an AI assistant drew. Look at the image with the Read tool: ${png}`,
+    ...(haveListing
+      ? [
+          `Also read its text listing: ${listing}`,
+          "Each line is one element: `[id] type at (x,y) size WxH \"label\"`, with `code=path#Lnn` when the element links to source code, and arrows as `[id] arrow from -> to` naming the elements they are attached to. Use it for what the image can't show: which code each node links to and which shapes each arrow connects.",
+        ]
+      : []),
     "",
     `The request was:\n${opts.prompt}`,
     "",
     `A good answer looks like:\n${opts.expected}`,
     "",
+    "Element ids, and whether ids were kept from an earlier version of the drawing, are checked separately by deterministic graders: don't score them.",
+    "",
     "Score two things from 1 (bad) to 5 (excellent):",
-    "- readability: clear flow direction, no overlaps, legible labels, arrows easy to follow",
-    "- correctness: shows what the request and the expected answer describe, with the right names",
+    "- readability (from the image): clear flow direction, no overlaps, legible labels, arrows easy to follow",
+    "- correctness: shows what the request and the expected answer describe, with the right names, the right connections and, where asked for, code links",
     'Reply with only JSON: {"readability": n, "correctness": n, "notes": "one or two sentences"}',
   ].join("\n");
   const transcript = path.join(opts.runDir, "judge.jsonl");

@@ -7,7 +7,7 @@ export const SERVER_INSTRUCTIONS = `Local-first Excalidraw: drawings are plain .
 
 Call excalidraw_guide once per session before your first edit: it has the sizing rules, layout anti-patterns, error recovery and the update-after-a-code-change workflow.
 
-Workflow: read the real code first and use its names. Draw boxes and arrows with create_diagram (automatic layout; nodes take code: "path:line" links); use mermaid_to_drawing only for flowcharts and sequence diagrams. Edit existing drawings in place: read_drawing (returns ids and a rev; filter with query), then targeted apply_changes / update_elements / add_elements / delete_elements with if_rev, keeping ids. Never redraw a drawing the user has edited. After every batch, render_drawing, check it, fix what you see, and render again. snapshot_drawing before risky edits; restore_drawing undoes them. diagram_reference has notes on choosing and drawing C4, UML, DFD, ER, infrastructure and messaging diagrams. open_drawing shows a drawing to the user. Relative paths resolve against the project root; a bare name goes to docs/diagrams/.`;
+Workflow: read the real code first and use its names (project_overview maps an unfamiliar project: manifests, Compose services, entry points, existing drawings). Draw boxes and arrows with create_diagram (automatic layout; nodes take code: "path:line" links); use mermaid_to_drawing only for flowcharts and sequence diagrams. Edit existing drawings in place: read_drawing (returns ids and a rev; filter with query), then targeted apply_changes / update_elements / add_elements / delete_elements with if_rev, keeping ids. Never redraw a drawing the user has edited. After every batch, render_drawing, check it, fix what you see, and render again. snapshot_drawing before risky edits; restore_drawing undoes them. diagram_reference has notes on choosing and drawing C4, UML, DFD, ER, infrastructure and messaging diagrams. open_drawing shows a drawing to the user. Relative paths resolve against the project root; a bare name goes to docs/diagrams/.`;
 
 export const GUIDE = `# Local-first Excalidraw: drawing guide
 
@@ -28,6 +28,7 @@ export const GUIDE = `# Local-first Excalidraw: drawing guide
 - **list_drawings** / **create_drawing** / **open_drawing**: find drawings, start one (empty or from elements), show one to the user.
 - **export_drawing**: \`name.excalidraw.svg\` (viewable in a README and still editable) or \`.png\`.
 - **diagram_reference**: which diagram answers which question, and recipes for C4, UML, DFD, ER, infrastructure and messaging.
+- **project_overview** / **git_changes** (read-only): a map of the project (tree, manifests, Compose services, entry points, drawings), and what changed in git (uncommitted, the last N commits, or between refs, with an optional diff).
 
 ## Element format (add_elements, apply_changes add, create_drawing)
 Coordinates are canvas pixels, x right, y down. Only \`type\` is required. Give your own readable ids (\`orders-api\`, not \`n1\`).
@@ -85,7 +86,7 @@ After each create_diagram, add or apply call, run render_drawing and check:
 If anything fails, say what you see ("I see the orders arrow crossing the cache box, fixing it"), fix it with update_elements or arrange_elements, and render that part again (\`element_ids\` of what changed). Only report the result when a render passes. On a big drawing the overview is scaled down: render a close-up before calling text unreadable.
 
 ## Update a diagram after a code change
-1. **Find what changed:** \`git diff\` / \`git log -p -1\`, or the files the user names. List only what is visible at the diagram's level: components added, removed or renamed; calls, events or dependencies added or removed; technology changes.
+1. **Find what changed:** git_changes (uncommitted changes; \`last: 1\` for the latest commit; \`diff: true\` with \`path\` for the code), \`git diff\` / \`git log -p -1\`, or the files the user names. List only what is visible at the diagram's level: components added, removed or renamed; calls, events or dependencies added or removed; technology changes.
 2. **Find the diagrams:** list_drawings, then read_drawing (it ends with the state of the code links; check_code_links lists the changed and missing ones). \`query\` with changed paths or names (\`"src/orders"\`, \`"ledger"\`) finds the affected elements by their \`code=\` links and labels.
 3. **snapshot_drawing** (name "before sync").
 4. **Plan one edit per change:** renamed → update the label and \`code\`, keep the id. New component → add a shape beside its main neighbour (same size and colour as its siblings, inside the right frame with \`frameId\`, with \`code\`), plus bound arrows. Removed → delete it and its arrows. New relationship → add a bound arrow. Moved boundary → update x/y and \`frameId\`.

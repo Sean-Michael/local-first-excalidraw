@@ -148,9 +148,12 @@ export function textOverflow(els: El[]): string[] {
     const f = INNER[c.type] ?? 1;
     // A label's stored size is the real one when the editor or the Mermaid converter measured it
     // with real fonts; the estimate runs ~30% wide for Excalifont. The server clamps the labels it
-    // makes to the container's width minus 20, so a label at that width may be wider in truth: estimate those.
+    // makes to the container's width minus 20, so a label at exactly that width may be wider in truth:
+    // estimate those. A measured label wider than that (the Mermaid converter's small `alt` and `loop`
+    // tags: 16 px of text in a 26 px box) is real and fits.
     const est = measureText(String(t.text ?? ""), Number(t.fontSize) || 20, Number(t.fontFamily) || 5);
-    const stored = Number(t.width) > 0 && Number(t.height) > 0 && Number(t.width) < c.width - 20.5;
+    const clamped = Math.abs(Number(t.width) - (c.width - 20)) <= 0.5;
+    const stored = Number(t.width) > 0 && Number(t.height) > 0 && !clamped;
     const m = stored ? { width: Number(t.width), height: Math.max(Number(t.height), est.height) } : est;
     const tol = 4;
     if (m.width > c.width * f - 2 * PAD + tol || m.height > c.height * f - 2 * PAD + tol) out.push(`${t.containerId}: "${String(t.text).slice(0, 40)}"`);

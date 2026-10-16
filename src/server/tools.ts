@@ -8,6 +8,8 @@ import path from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "./config.js";
 import { listFiles, readFile, searchFiles } from "./code.js";
+import { findSymbol, outlineFile, projectOverview } from "./explore.js";
+import { gitChanges } from "./git-changes.js";
 import { GUIDE } from "./guide.js";
 import { type LibraryShape, searchShapes } from "./library.js";
 import { listTopics, readTopic } from "./references.js";
@@ -650,9 +652,46 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
   ];
 }
 
-/** Read-only project search for the assistant. Confined to the project root. */
+/** A map of the project: the first call when asked to diagram it. Also served over MCP. */
+const projectOverviewTool: ToolDef = {
+  name: "project_overview",
+  title: "Project overview",
+  description:
+    "A compact map of the project (read-only): directory tree with file counts, languages, manifests and deployment files (package.json, go.mod, pyproject, Cargo.toml, Compose services, Dockerfiles, Kubernetes manifests, .proto, OpenAPI), likely entry points, the README's headline and existing drawings. Call it first when asked to diagram a project or an unfamiliar folder.",
+  input: {
+    dir: z.string().optional().describe("Folder relative to the project root (default: the whole project)"),
+    depth: z.number().int().min(1).max(6).optional().describe("Directory levels in the tree (default 3)"),
+  },
+  readOnly: true,
+  run: async (args, ctx) => ({ text: projectOverview(ctx.projectRoot, args) }),
+};
+
+/** What changed in the code, for updating a diagram after a change. Also served over MCP. */
+const gitChangesTool: ToolDef = {
+  name: "git_changes",
+  title: "Git changes",
+  description:
+    "What changed in the project's code, from git (read-only). Default: uncommitted changes (working tree and staged, plus untracked files) against HEAD. `last: N` lists the last N commits with their files; `from` (and `to`) compares refs (`main`, `HEAD~3`, `v1.2..HEAD`). Each lists files as added/modified/deleted/renamed with +/- line counts. `diff: true` adds the unified diff, capped; pass `path` for one file or folder. Use it to update a diagram after a code change.",
+  input: {
+    last: z.number().int().min(1).max(50).optional().describe("The last N commits instead of uncommitted changes"),
+    from: z.string().optional().describe("Base ref; alone it compares with the working tree. `A..B` is accepted"),
+    to: z.string().optional().describe("Target ref (default: the working tree)"),
+    path: z.string().optional().describe("Only this file or folder"),
+    diff: z.boolean().optional().describe("Include the unified diff (capped at 20K characters)"),
+  },
+  readOnly: true,
+  run: async (args, ctx) => ({ text: await gitChanges(ctx.projectRoot, args) }),
+};
+
+/** Code tools that coding agents don't already have: served over MCP as well as to the assistant. */
+export function sharedCodeTools(): ToolDef[] {
+  return [projectOverviewTool, gitChangesTool];
+}
+
+/** Read-only project exploration for the assistant. Confined to the project root. */
 export function codeTools(): ToolDef[] {
   return [
+    projectOverviewTool,
     {
       name: "list_files",
       title: "List project files",
@@ -669,17 +708,43 @@ export function codeTools(): ToolDef[] {
     {
       name: "search_files",
       title: "Search project files",
-      description: "Searches file contents in the project (like grep). Returns `path:line: text` matches.",
+      description:
+        "Searches file contents in the project (like grep), skipping .gitignored, vendored and secret files. Returns `path:line: text` matches; `context` adds lines around each (`path-line- text`, hunks split by `--`); `files_only` lists just the matching files with counts, a cheap first pass.",
       input: {
         pattern: z.string().min(1).describe("Text to find (or a regular expression with regex: true)"),
         regex: z.boolean().optional(),
         case_sensitive: z.boolean().optional(),
         glob: z.string().optional().describe("Only search files matching this glob"),
         dir: z.string().optional(),
+        context: z.number().int().min(0).max(10).optional().describe("Lines of context before and after each match"),
+        files_only: z.boolean().optional().describe("Only list matching files, with match counts"),
         max_results: z.number().int().min(1).max(400).optional(),
       },
       readOnly: true,
       run: async (args, ctx) => ({ text: await searchFiles(ctx.projectRoot, args) }),
+    },
+    {
+      name: "outline_file",
+      title: "Outline a file",
+      description:
+        "Lists a source file's declarations with line numbers: classes, interfaces, types, functions, methods, exported constants and HTTP routes (TS/JS, Python, Go, Rust, Java/Kotlin, C#, Ruby). Cheaper than reading the whole file; read_file the lines you need after.",
+      input: { path: z.string().describe("Path relative to the project root") },
+      readOnly: true,
+      run: async (args, ctx) => ({ text: outlineFile(ctx.projectRoot, args.path) }),
+    },
+    {
+      name: "find_symbol",
+      title: "Find a symbol",
+      description:
+        "Where a class, function, type or method is defined, best match first, as `path:start-end kind name signature`. `Class.method` narrows to a member. `references: true` also lists the lines that use it.",
+      input: {
+        name: z.string().min(1).max(200).describe("Symbol name, e.g. OrderRepository, placeOrder or OrderRepository.markPaid"),
+        references: z.boolean().optional().describe("Also list references (whole-word matches outside the definition)"),
+        dir: z.string().optional().describe("Only look in this folder"),
+        max_references: z.number().int().min(1).max(200).optional(),
+      },
+      readOnly: true,
+      run: async (args, ctx) => ({ text: findSymbol(ctx.projectRoot, args) }),
     },
     {
       name: "read_file",
@@ -693,6 +758,7 @@ export function codeTools(): ToolDef[] {
       readOnly: true,
       run: async (args, ctx) => ({ text: readFile(ctx.projectRoot, args) }),
     },
+    gitChangesTool,
   ];
 }
 

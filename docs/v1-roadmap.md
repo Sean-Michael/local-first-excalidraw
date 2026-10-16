@@ -109,10 +109,19 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 - [x] The drawing list uses the same tree, full width.
 - [x] macOS: a folder tree sidebar with the same actions, refreshed by the event stream; the app checks the running daemon's version.
 
+## WS9: Agentic code search and referencing code
+
+- [x] Code exploration tools for the in-app assistant: `project_overview`, `outline_file`, `find_symbol` and `git_changes`, and `search_files` with context lines, a files-only mode and full `.gitignore` support. Results stay bounded with hints to narrow.
+- [x] An explore-then-draw system prompt with a step budget, real names and code links. The Claude Code endpoint gets `project_overview` and `git_changes` over MCP instead of a shell.
+- [x] Mentions of folders (`@src/orders/`), line ranges (`@src/a.ts:10-40`) and symbols (`@OrderRepository`), picked or typed. The picker ranks git-modified and recently changed files first. Asking about a code-linked element attaches its code.
+- [x] `project_overview` and `git_changes` over MCP.
+- [x] Evals through the in-app assistant (`--via assistant`), a `reference-code-mention` scenario, and tests of the tool loop with a scripted non-Claude-Code model.
+- [x] Eval fixes: the Mermaid `alt` tag no longer fails text-fit, the judge sees the text listing, and the layout keeps the sweep with the fewest crossings (the code-change fixture had one).
+
 ## Later (post-1.0)
 
 - Tabs or multiple windows in the macOS app
 - Full-text search inside drawings
 - Compare with HEAD (ghost and highlight diff view)
-- `@file:10-40` and element-level mentions
+- Element-level mentions
 - An in-app update check

@@ -945,7 +945,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           if (!name || /[\\/\0]/.test(name) || name === "." || name === "..") throw new HttpError(400, "Give the folder a plain name, without slashes");
           const to = path.join(path.dirname(from), name);
           if (to === from) return { path: to };
-          const inside = listDrawings([from], 12, 5_000).map((d) => d.path);
+          const inside = listDrawings([from], 12, 5_000, { gitignore: false }).map((d) => d.path);
           moveFile(from, to);
           for (const p of inside) announceMove(p, path.join(to, path.relative(from, p)));
           for (const p of inside) store.get(p);

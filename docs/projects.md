@@ -6,7 +6,7 @@ Drawings are `.excalidraw` files inside your project. This page covers managing 
 
 ### The sidebar
 
-The editor has a sidebar of drawings on the left, organised by your project's real folders, like a code editor's file explorer. It shows one tree per root (each folder you added, or the project an agent registered); a root inside another root shows once, inside the outer one. Folders appear when they contain drawings. Empty folders you made with **New folder…** appear too, so you can fill them. Other folders, such as `src/`, stay hidden until you press the folder button next to the filter, which shows every folder.
+The editor has a sidebar of drawings on the left, organised by your project's real folders, like a code editor's file explorer. It shows one tree per root (each folder you added, or the project an agent registered); a root inside another root shows once, inside the outer one. Folders appear when they contain drawings. Empty folders you made with **New folder…** appear too, so you can fill them. Other folders, such as `src/`, stay hidden until you press the folder button next to the filter, which shows every folder. Drawings and folders your repository's `.gitignore` files ignore (eval output, generated diagrams), plus `node_modules`, `.git` and build output, are left out of the sidebar and the drawing list; you can still open an ignored drawing by its path, for example with `lfx open`.
 
 - ⌘B (Ctrl+B) or the sidebar button shows and hides it. Drag its right edge to resize it. The width, whether it's open, which folders are expanded and the folder toggle are remembered in the browser.
 - **Recent** at the top lists the last 8 drawings you opened.

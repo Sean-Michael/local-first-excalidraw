@@ -13,7 +13,9 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { relevantChange } from "../src/server/drawing-watch.js";
+import { gitTopOf } from "../src/server/code.js";
 import { listFolders } from "../src/server/files.js";
+import { listDrawings } from "../src/server/store.js";
 import { ancestorFolders, buildTree, type FolderNode, type TreeNode, visibleRows } from "../src/shared/tree.js";
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "server", "cli.js");
@@ -103,6 +105,53 @@ test("listFolders marks empty folders and relevantChange ignores noise", () => {
   assert.equal(relevantChange("src/a.ts"), false);
   assert.equal(relevantChange(".git/index"), false);
   assert.equal(relevantChange("node_modules/x/y"), false);
+});
+
+/** A repository with ignored eval output, build output and a nested .gitignore. */
+function ignoringRepo(): string {
+  const repo = tmp("ignore-repo");
+  const write = (rel: string, text = "{}") => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  };
+  fs.mkdirSync(path.join(repo, ".git"));
+  write(".gitignore", "evals/results/*\n!evals/results/README.md\n*.tmp.excalidraw\nscratch/\n");
+  write("docs/diagrams/a.excalidraw");
+  write("docs/diagrams/b.tmp.excalidraw");
+  write("evals/results/run-1/final.excalidraw");
+  write("evals/results/README.md", "");
+  write("evals/kept.excalidraw");
+  write("scratch/s.excalidraw");
+  write("node_modules/pkg/x.excalidraw");
+  write("dist/x.excalidraw");
+  write("pkg/.gitignore", "local/\n");
+  write("pkg/local/l.excalidraw");
+  write("pkg/p.excalidraw");
+  return repo;
+}
+
+test("listDrawings and listFolders leave out what git ignores", () => {
+  const repo = ignoringRepo();
+  const rels = (ps: { path: string }[], from = repo) => ps.map((p) => path.relative(from, p.path).split(path.sep).join("/")).sort();
+  assert.deepEqual(rels(listDrawings([repo])), ["docs/diagrams/a.excalidraw", "evals/kept.excalidraw", "pkg/p.excalidraw"]);
+  const folders = rels(listFolders([repo]));
+  for (const f of ["evals/results/run-1", "scratch", "pkg/local", "node_modules", "dist"]) assert.ok(!folders.includes(f), f);
+  assert.ok(folders.includes("docs/diagrams") && folders.includes("evals/results"));
+  // A root inside the repository still follows the repository's .gitignore.
+  assert.deepEqual(rels(listDrawings([path.join(repo, "evals")]), repo), ["evals/kept.excalidraw"]);
+  // Callers that must see everything (moving a folder's drawings) can opt out.
+  assert.ok(rels(listDrawings([repo], 6, 500, { gitignore: false })).includes("evals/results/run-1/final.excalidraw"));
+});
+
+test("a .gitignore outside any repository applies only below its folder", () => {
+  const dir = tmp("ignore-norepo");
+  fs.mkdirSync(path.join(dir, "a", "out"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "a", ".gitignore"), "out/\n");
+  fs.writeFileSync(path.join(dir, "a", "out", "x.excalidraw"), "{}");
+  fs.mkdirSync(path.join(dir, "out"));
+  fs.writeFileSync(path.join(dir, "out", "y.excalidraw"), "{}");
+  assert.deepEqual(listDrawings([dir]).map((d) => path.relative(dir, d.path)), [path.join("out", "y.excalidraw")]);
+  assert.equal(gitTopOf(dir), undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -282,6 +331,26 @@ test("a folder rename tells open tabs where their drawing went", async () => {
   assert.equal((await call("POST", "/api/files/rename-folder", { path: path.join(root, "crew"), name: "a/b" })).status, 400);
   fs.mkdirSync(path.join(root, "taken"));
   assert.equal((await call("POST", "/api/files/rename-folder", { path: path.join(root, "crew"), name: "taken" })).status, 409);
+});
+
+test("the drawing list skips gitignored drawings, which still open by path", async () => {
+  const repo = path.join(root, "proj");
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".gitignore"), "results/\n");
+  fs.mkdirSync(path.join(repo, "results"));
+  const ignored = path.join(repo, "results", "out.excalidraw");
+  const kept = path.join(repo, "kept.excalidraw");
+  const scene = JSON.stringify({ type: "excalidraw", version: 2, elements: [], appState: {}, files: {} });
+  fs.writeFileSync(ignored, scene);
+  fs.writeFileSync(kept, scene);
+  const list = await call("GET", "/api/files");
+  const paths = list.body.drawings.map((d: { path: string }) => d.path);
+  assert.ok(paths.includes(kept));
+  assert.ok(!paths.includes(ignored));
+  assert.ok(!list.body.folders.some((f: { path: string }) => f.path === path.join(repo, "results")));
+  const opened = await call("GET", `/api/scene?path=${encodeURIComponent(ignored)}`);
+  assert.equal(opened.status, 200);
+  assert.equal(opened.body.exists, true);
 });
 
 test("/api/events streams files-changed for the macOS app", async () => {

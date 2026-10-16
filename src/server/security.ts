@@ -128,5 +128,5 @@ export function resolveSafePath(
     const realRoot = realpathOrNull(root) ?? path.resolve(root);
     if (isWithin(real, realRoot)) return real;
   }
-  throw new PathError(`Path is outside the allowed roots: ${input}`);
+  throw new PathError(`Path is outside the allowed roots: ${input}. Allowed roots: ${roots.join(", ") || "(none)"}`);
 }

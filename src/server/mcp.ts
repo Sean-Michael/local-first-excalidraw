@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -26,7 +27,8 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
   const ensure = () =>
     (ready ??= (async () => {
       await client.ensure();
-      await client.request("POST", "/api/roots", { path: projectRoot }).catch((e: DaemonError) => {
+      // Session-scoped: the daemon forgets it on restart instead of keeping every project forever.
+      await client.request("POST", "/api/roots", { path: projectRoot, session: true }).catch((e: DaemonError) => {
         // Locked roots (e.g. Docker) are fine as long as the project is inside one of them.
         if (e.status !== 403) throw e;
       });
@@ -41,7 +43,9 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
     try {
       return await f();
     } catch (e) {
-      if (e instanceof DaemonError || (await client.healthy())) throw e;
+      // A daemon restarted since (the macOS app, say) has forgotten this session's root.
+      const lostRoot = e instanceof DaemonError && e.code === "outside-roots";
+      if (!lostRoot && (e instanceof DaemonError || (await client.healthy()))) throw e;
       ready = undefined;
       await ensure();
       return f();
@@ -70,19 +74,24 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
   );
 
   // Prefer the client's declared workspace root (MCP roots) when it provides one.
-  server.server.oninitialized = async () => {
+  // Tool calls wait for the answer, so the first one doesn't run against cwd.
+  let rootsKnown: Promise<void> = Promise.resolve();
+  server.server.oninitialized = () => {
     if (opts.root || process.env.LFX_PROJECT_ROOT) return;
     if (!server.server.getClientCapabilities()?.roots) return;
-    try {
-      const { roots } = await server.server.listRoots();
-      const first = roots.find((r) => r.uri.startsWith("file://"));
-      if (first) {
-        projectRoot = new URL(first.uri).pathname;
-        ready = undefined;
+    rootsKnown = (async () => {
+      try {
+        const { roots } = await server.server.listRoots();
+        const first = roots.find((r) => r.uri.startsWith("file://"));
+        if (first) {
+          // fileURLToPath, not URL.pathname: that would keep %20 and other escapes.
+          projectRoot = fileURLToPath(first.uri);
+          ready = undefined;
+        }
+      } catch {
+        // keep cwd
       }
-    } catch {
-      // keep cwd
-    }
+    })();
   };
 
   const openMsg = async (file: string) => {
@@ -132,6 +141,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
           attrs,
           async (span) => {
             try {
+              await rootsKnown;
               const out = await def.run(args, ctx);
               span.setAttributes({ "lfx.tool.result_chars": out.text.length, "lfx.tool.image": !!out.image, ...contentAttrs({ "gen_ai.tool.call.result": out.text, "output.value": out.text }) });
               return toResult(out);

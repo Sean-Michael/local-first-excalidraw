@@ -22,14 +22,14 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS2: Daemon lifecycle and security
 
-- [ ] An old daemon is silently reused after an upgrade. Compare versions in `ensure()` and restart it or refuse, and have `lfx status` flag the mismatch.
-- [ ] MCP roots with spaces keep `%20` in the path. Use `fileURLToPath`.
-- [ ] Secret refusal gaps:
+- [x] An old daemon is silently reused after an upgrade. Compare versions in `ensure()` and restart it or refuse, and have `lfx status` flag the mismatch.
+- [x] MCP roots with spaces keep `%20` in the path. Use `fileURLToPath`.
+- [x] Secret refusal gaps:
   - `.git/config`, `.kube/config`, `.docker/config.json`, `*.tfvars`, `.envrc` and `.vault-token` aren't refused.
   - The Claude Code provider's Read/Grep/Glob bypass `isSecretFile`.
-- [ ] A model-supplied regex can hang the daemon. Bound the work or run it with a timeout.
-- [ ] Editor RPCs aren't rejected when their tab closes, so callers wait the full 30 s.
-- [ ] Smaller fixes:
+- [x] A model-supplied regex can hang the daemon. Bound the work or run it with a timeout.
+- [x] Editor RPCs aren't rejected when their tab closes, so callers wait the full 30 s.
+- [x] Smaller fixes:
   - `lfx stop` prints "Stopped." even when the daemon is still running.
   - Token creation races with a concurrent reader.
   - `writeFileAtomic` doesn't fsync, leaves its temp file on failure, and resets permissions to 0644.
@@ -74,8 +74,8 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS6: End-to-end tests, evals and CI
 
-- [ ] Daemon integration tests over HTTP and WebSocket: Host/Origin checks, bearer-only endpoints, the no-editor 409, and MCP over stdio end to end.
-- [ ] An eval harness that drives Claude Code (`claude -p`) against a fixture codebase through `lfx mcp` and the plugin skills, in an isolated daemon (its own port and state dir, headless rendering). Scenarios:
+- [x] Daemon integration tests over HTTP and WebSocket: Host/Origin checks, bearer-only endpoints, the no-editor 409, and MCP over stdio end to end.
+- [x] An eval harness that drives Claude Code (`claude -p`) against a fixture codebase through `lfx mcp` and the plugin skills, in an isolated daemon (its own port and state dir, headless rendering). Scenarios:
   1. Architecture diagram from a codebase
   2. Request-flow diagram for one path through the code
   3. Responding to a code change: apply a patch that adds a service, then ask for the diagram to be updated. Ids should be kept and only the delta drawn.
@@ -83,11 +83,11 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
   5. A readability review of a deliberately messy drawing
   6. Mermaid conversion
   7. Code-linked nodes, then staleness after a change
-- [ ] Graders:
+- [x] Graders:
   - Deterministic: expected component names present, arrows bound at both ends, no overlapping shapes, labels fit, ids preserved, no NaN.
   - An optional LLM judge on the rendered PNG.
-- [ ] A results report, saved under `evals/results/`.
-- [ ] GitHub Actions: typecheck, build and unit/integration tests on push. Evals stay manual, because they need a Claude login.
+- [x] A results report, saved under `evals/results/`.
+- [x] GitHub Actions: typecheck, build and unit/integration tests on push. Evals stay manual, because they need a Claude login.
 
 ## WS7: Release
 

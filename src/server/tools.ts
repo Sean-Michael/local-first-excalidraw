@@ -378,7 +378,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "mermaid_to_drawing",
       title: "Mermaid to drawing",
       description:
-        "Converts Mermaid (flowchart, sequence, class diagrams) into editable Excalidraw elements, appended to the drawing. Runs in the local editor tab, which is opened if needed.",
+        "Converts Mermaid (flowchart, sequence, class diagrams) into editable Excalidraw elements, appended to the drawing. Runs in an open tab of the drawing, else in a local headless browser.",
       input: { path: pathArg, mermaid: z.string().describe("Mermaid source") },
       run: async ({ path: p, mermaid }, ctx) => {
         const file = resolveDrawing(ctx, p);
@@ -390,7 +390,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "render_drawing",
       title: "Render drawing",
       description:
-        "Returns a PNG of the drawing so you can check layout and readability. Rendered by the local editor tab (opened if needed). " +
+        "Returns a PNG of the drawing so you can check layout and readability. Rendered locally, in a headless browser when no tab is open. " +
         "Big drawings are scaled down to fit max_size, so small text may be unreadable in the overview; pass element_ids or region to render a close-up at full size.",
       input: {
         path: pathArg,

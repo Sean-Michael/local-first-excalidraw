@@ -21,6 +21,10 @@ ENV NODE_ENV=production \
     LFX_LOCK_ROOTS=1 \
     LFX_NO_BROWSER=1
 WORKDIR /app
+# Optional: a headless Chromium so render_drawing, export_drawing and mermaid_to_drawing work
+# without a browser tab (about 250 MB). Build with --build-arg WITH_CHROMIUM=1.
+ARG WITH_CHROMIUM=0
+RUN if [ "$WITH_CHROMIUM" = "1" ]; then apk add --no-cache chromium; fi
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/src ./dist/src

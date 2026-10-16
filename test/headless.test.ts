@@ -6,6 +6,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { browserArgs, findBrowser, headlessMode } from "../src/server/headless.js";
+import { el } from "./fixtures.js";
 
 // dist/test -> repository root
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -50,7 +51,13 @@ class TestDaemon {
   token = "";
 
   async start(env: Record<string, string>) {
-    fs.copyFileSync(path.join(repo, "docs", "diagrams", "architecture.excalidraw"), this.drawing);
+    const docs = path.join(repo, "docs", "diagrams", "architecture.excalidraw");
+    if (fs.existsSync(docs)) fs.copyFileSync(docs, this.drawing);
+    else {
+      // Docker builds don't copy docs/: a small drawing with text does.
+      const elements = [el("box", "rectangle", 0, 0, 600, 300), el("t", "text", 40, 40, 300, 25, { text: "Headless", originalText: "Headless", fontSize: 20, fontFamily: 5, groupIds: [] })];
+      fs.writeFileSync(this.drawing, JSON.stringify({ type: "excalidraw", version: 2, elements, appState: { viewBackgroundColor: "#ffffff" }, files: {} }));
+    }
     this.proc = spawn(process.execPath, [cli, "serve"], {
       env: { ...process.env, LFX_PORT: String(this.port), LFX_STATE_DIR: this.state, LFX_ROOTS: this.root, LFX_NO_BROWSER: "1", ...env },
       stdio: ["ignore", "ignore", process.env.LFX_TEST_VERBOSE ? "inherit" : "ignore"],

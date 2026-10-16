@@ -6,7 +6,7 @@ export const GUIDE = `# Local-first Excalidraw - element guide
 
 ## Pick the right tool
 - **create_diagram** - nodes + edges, laid out automatically (LR or TB). Best default for architecture, flows, pipelines, dependency graphs. Groups become labelled frames.
-- **mermaid_to_drawing** - flowcharts / sequence / class diagrams from Mermaid source (needs the editor open; it is opened for you).
+- **mermaid_to_drawing** - flowcharts / sequence / class diagrams from Mermaid source.
 - **list_shapes** / **insert_shape** - reusable icons and components from the user's library and project \`.excalidrawlib\` files (AWS, Kubernetes, …). A create_diagram node can also use a shape key as its \`shape\`.
 - **add_elements** - hand-placed elements in the simplified format below (annotations, callouts, sketches).
 - **connect_elements** - an arrow from one element id to another; it stays attached when either moves.

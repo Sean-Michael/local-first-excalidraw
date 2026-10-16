@@ -63,7 +63,9 @@ const SESSION_COOKIE = "lfx_session";
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const LOGIN_CODE_TTL_MS = 120 * 1000;
 const RPC_TIMEOUT_MS = 30_000;
-const HEADLESS_START_MS = 30_000;
+// How long a new headless browser gets to load the renderer page and connect (overridable for tests).
+const HEADLESS_START_MS = Number(process.env.LFX_HEADLESS_START_MS) || 15_000;
+const HEADLESS_RETRY_MS = 5 * 60_000;
 const CLAUDE_CODE_MODELS = ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 
 const MIME: Record<string, string> = {
@@ -238,30 +240,53 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         if (!headless.running) throw new HttpError(502, "The headless browser exited before it connected; see the daemon log");
         await new Promise((r) => setTimeout(r, 100));
       }
+      // Usually an editor bundle without renderer mode (a stale dist/web) or a browser that can't load it.
       headless.stop();
-      throw new HttpError(504, "The headless browser did not connect in time");
+      throw new HttpError(504, "The headless browser did not connect in time; see the daemon log");
     })().finally(() => {
       launching = undefined;
     }));
   };
 
+  // A launch that failed isn't retried for a while, so every render doesn't wait out the start timeout again.
+  let headlessFailed: { message: string; until: number } | undefined;
+
   /**
    * Who serves a browser-backed request: a visible tab of that drawing (so the user sees the
-   * work happen), else the headless renderer, else any visible tab (LFX_HEADLESS=off, or no
-   * browser binary to run headless).
+   * work happen), else the headless renderer, else any visible tab (LFX_HEADLESS=off, no
+   * browser binary, or a headless launch that failed).
    */
   const editorFor = async (onPath: string | undefined, waitMs: number): Promise<Client> => {
     if (headlessModeSetting !== "always" && onPath) {
       const own = pickClient(onPath);
       if (own) return own;
     }
-    if (headlessModeSetting !== "off" && headless.available) return rendererClient();
+    if (headlessModeSetting !== "off" && headless.available) {
+      if (headlessFailed && headlessFailed.until < Date.now()) headlessFailed = undefined;
+      if (!headlessFailed) {
+        try {
+          return await rendererClient();
+        } catch (e) {
+          if (!(e instanceof HttpError)) throw e;
+          headlessFailed = { message: e.message, until: Date.now() + HEADLESS_RETRY_MS };
+          console.error(`Headless rendering failed: ${e.message}`);
+        }
+      }
+      if (headlessModeSetting === "always") {
+        throw new HttpError(502, `Headless rendering is unavailable: ${headlessFailed!.message}`, { code: "headless-failed" });
+      }
+    }
     const c = await waitForClient(waitMs);
     if (c) return c;
-    const hint = headlessModeSetting === "off" ? "" : " Headless rendering needs a Chromium-family browser: install Chrome/Chromium or set LFX_BROWSER.";
+    const hint =
+      headlessModeSetting === "off"
+        ? ""
+        : headlessFailed
+          ? ` Headless rendering failed: ${headlessFailed.message}.`
+          : " Headless rendering needs a Chromium-family browser: install Chrome/Chromium or set LFX_BROWSER.";
     throw new HttpError(409, `No editor is open. Open the drawing in the browser first (open_drawing / \`lfx open\`).${hint}`, {
       code: "no-editor",
-      headless: headlessModeSetting === "off" ? "off" : "unavailable",
+      headless: headlessModeSetting === "off" ? "off" : headlessFailed ? "failed" : "unavailable",
     });
   };
 
@@ -1027,7 +1052,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         pid: process.pid,
         roots: roots(),
         editors: visibleClients().map((c) => ({ path: c.path ?? null })),
-        headless: { mode: headlessModeSetting, browser: headless.browser ?? null, pid: headless.pid ?? null, connected: !!liveRenderer() },
+        headless: { mode: headlessModeSetting, browser: headless.browser ?? null, pid: headless.pid ?? null, connected: !!liveRenderer(), failed: headlessFailed?.message ?? null },
       });
     }
     if (pathname === "/api/shutdown" && method === "POST") {

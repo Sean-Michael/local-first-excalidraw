@@ -97,8 +97,8 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
   - a shortcuts reference
   - a "diagrams that reference code" guide
   - the revert caveats
-- [ ] Sync the plugin.json version with package.json.
-- [ ] Bump to 1.0.0.
+- [x] Sync the plugin.json version with package.json.
+- [x] Bump to 1.0.0.
 
 ## WS8: Project sidebar
 

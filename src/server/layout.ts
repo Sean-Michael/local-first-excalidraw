@@ -18,6 +18,8 @@ export interface NodeSpec {
   group?: string;
   /** Fixed size, for library shapes. */
   size?: { w: number; h: number };
+  /** Project file (optionally `:line`) the node stands for; the caller turns it into a code link. */
+  code?: string;
 }
 
 export interface EdgeSpec {

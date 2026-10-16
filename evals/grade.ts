@@ -38,6 +38,7 @@ export interface Metrics {
   minFontSize: number | null;
   nonFinite: string[];
   texts: string[];
+  frames: string[];
   edges: { from: string; to: string; bidirectional: boolean }[];
   links: { id: string; link: string }[];
 }
@@ -145,7 +146,12 @@ export function textOverflow(els: El[]): string[] {
     const c = byId.get(t.containerId);
     if (!c || LINEAR.has(c.type)) continue;
     const f = INNER[c.type] ?? 1;
-    const m = measureText(String(t.text ?? ""), Number(t.fontSize) || 20, Number(t.fontFamily) || 5);
+    // A label's stored size is the real one when the editor or the Mermaid converter measured it
+    // with real fonts; the estimate runs ~30% wide for Excalifont. The server clamps the labels it
+    // makes to the container's width minus 20, so a label at that width may be wider in truth: estimate those.
+    const est = measureText(String(t.text ?? ""), Number(t.fontSize) || 20, Number(t.fontFamily) || 5);
+    const stored = Number(t.width) > 0 && Number(t.height) > 0 && Number(t.width) < c.width - 20.5;
+    const m = stored ? { width: Number(t.width), height: Math.max(Number(t.height), est.height) } : est;
     const tol = 4;
     if (m.width > c.width * f - 2 * PAD + tol || m.height > c.height * f - 2 * PAD + tol) out.push(`${t.containerId}: "${String(t.text).slice(0, 40)}"`);
   }
@@ -180,6 +186,7 @@ export function measure(scene: SceneLike): Metrics {
     minFontSize: fonts.length ? Math.min(...fonts) : null,
     nonFinite: nonFinite(all),
     texts: [...all.filter((e) => e.type === "text").map((e) => String(e.text ?? "")), ...all.filter((e) => e.type === "frame" && e.name).map((e) => String(e.name))],
+    frames: all.filter((e) => e.type === "frame").map((e) => String(e.name ?? "")),
     edges: bound.map((a) => ({
       from: labels.get(a.startBinding.elementId) ?? "",
       to: labels.get(a.endBinding.elementId) ?? "",
@@ -255,6 +262,10 @@ export function grade(input: GradeInput): Grade {
   if (c.requiredLabels) {
     const missing = c.requiredLabels.filter((syn) => !texts.some((t) => matches(t, syn))).map((s) => s[0]);
     add("required-labels", missing.length === 0, `${c.requiredLabels.length - missing.length}/${c.requiredLabels.length} present${missing.length ? `; missing ${missing.join(", ")}` : ""}`);
+  }
+  if (c.requiredFrames) {
+    const missing = c.requiredFrames.filter((syn) => !m.frames.some((t) => matches(t, syn))).map((s) => s[0]);
+    add("required-frames", missing.length === 0, `${c.requiredFrames.length - missing.length}/${c.requiredFrames.length} frames present${missing.length ? `; missing ${missing.join(", ")}` : ""}${m.frames.length ? ` (frames: ${m.frames.join(", ")})` : " (no frames)"}`);
   }
   if (c.forbiddenLabels) {
     const found = c.forbiddenLabels.filter((f) => texts.some((t) => matches(t, [f])));

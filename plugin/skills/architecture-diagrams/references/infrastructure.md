@@ -82,5 +82,5 @@ For Kubernetes, use one group per namespace (or per node, if the question is abo
 - **Icons without labels,** or icons from three different vendors' styles mixed together.
 - **Nesting implied by position only.** Draw the VPC and subnet boundaries.
 - **Single boxes hiding redundancy or AZ spread** when the question is about availability.
-- **Names that don't match the IaC.** Readers can't find the resource. Use the terraform/Helm names, and link nodes to the file that defines them (`"link": "infra/alb.tf"`).
+- **Names that don't match the IaC.** Readers can't find the resource. Use the terraform/Helm names, and link nodes to the file that defines them (`"code": "infra/alb.tf"`).
 - **One diagram for all environments.** Draw one per environment, or label clearly what differs.

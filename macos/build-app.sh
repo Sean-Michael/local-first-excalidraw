@@ -71,6 +71,9 @@ install -m 0755 macos/Resources/lfx "$contents/Resources/bin/lfx"
 rt="$contents/Resources/lfx"
 cp -R dist/src dist/web "$rt/dist/"
 cp -R libraries "$rt/"
+# Served by the diagram_reference tool; found relative to dist/src/server.
+mkdir -p "$rt/plugin/skills/architecture-diagrams"
+cp -R plugin/skills/architecture-diagrams/references "$rt/plugin/skills/architecture-diagrams/"
 cp package.json package-lock.json .npmrc LICENSE "$rt/"
 (cd "$rt" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
 rm -f "$rt/package-lock.json" "$rt/.npmrc"

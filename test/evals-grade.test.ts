@@ -33,6 +33,29 @@ test("the reference architecture graph passes the arch-overview checks", () => {
   assert.equal(g.score, 1);
 });
 
+test("text fit trusts a label's measured width unless the server clamped it", () => {
+  const box = el("c", "rectangle", 0, 0, 150, 65, { groupIds: [], boundElements: [{ id: "t", type: "text" }] });
+  // Measured by the Mermaid converter with real fonts: fits, though the estimate says it doesn't.
+  const real = el("t", "text", 20, 22, 111, 20, { groupIds: [], containerId: "c", text: "turnstile-gateway", fontSize: 16, fontFamily: 5 });
+  assert.deepEqual(textOverflow([box, real]), []);
+  // At the clamp width (container - 20) the estimate decides.
+  const clamped = { ...real, width: 130, text: "turnstile-gateway-and-more" };
+  assert.equal(textOverflow([box, clamped]).length, 1);
+});
+
+test("required frames match frame names only", () => {
+  const checks = { requiredFrames: [["shopapp", "system"]] };
+  const framed = scene([
+    { type: "rectangle", id: "a", x: 0, y: 0, label: "api" },
+    { type: "frame", id: "f", name: "shopapp [Software System]", children: ["a"] },
+  ]);
+  assert.equal(grade({ final: framed, checks, ...noFiles }).pass, true);
+  const unframed = scene([{ type: "rectangle", id: "a", x: 0, y: 0, label: "shopapp system" }]);
+  const g = grade({ final: unframed, checks, ...noFiles });
+  assert.equal(g.pass, false);
+  assert.match(g.checks.find((c) => c.name === "required-frames")!.detail, /no frames/);
+});
+
 test("overlaps: partial overlaps count, containers and groups don't", () => {
   const els = [
     el("a", "rectangle", 0, 0, 100, 50, { groupIds: [] }),

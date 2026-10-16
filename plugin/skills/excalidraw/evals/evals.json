@@ -13,6 +13,15 @@
     },
     {
       "id": 1,
+      "name": "c4-container",
+      "prompt": "Draw a C4 container diagram of this shop system for a new developer: the people who use it, the system boundary, each container with its technology, and the external systems it depends on.",
+      "expected_output": "A C4 container diagram: a Shopper person (ellipse or stick figure) outside a frame that marks the shopapp system boundary; inside it the containers turnstile-gateway, keymaster-auth, ledger-orders and courier-worker, the Postgres database shopapp-pg, the Redis token-cache and the RabbitMQ broker postbox-mq, each labelled with its technology (Node.js/TypeScript, Fastify, Postgres, Redis, RabbitMQ); Paylode and Pigeonpost outside the boundary as external systems. Arrows are bound and labelled with what flows, kept short.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ]
+    },
+    {
+      "id": 2,
       "name": "request-flow",
       "prompt": "Make a diagram of what happens when a user places an order, from the HTTP request hitting the gateway to the confirmation email going out. Show the steps in order, including the failure path when the card is declined.",
       "expected_output": "A top-to-bottom flow or sequence diagram: turnstile-gateway checks the session with keymaster-auth (introspect), forwards POST /orders to ledger-orders, which inserts a pending order through OrderRepository into Postgres, charges through the Paylode client, marks the order paid (or payment_failed on decline), publishes order.placed to the order-events queue, and courier-worker sends the email through Pigeonpost. Names match the code.",
@@ -21,7 +30,7 @@
       ]
     },
     {
-      "id": 2,
+      "id": 3,
       "name": "code-change-update",
       "prompt": "I just added a service (see the latest commit). Update docs/diagrams/architecture.excalidraw so it matches the code again.",
       "expected_output": "The existing diagram is edited in place: a new stockroom-inventory node with an arrow from ledger-orders (reserve stock) and to Postgres. Every existing element keeps its id (at least 80% of them, no full redraw) and nothing that still exists in the code is removed.",
@@ -32,7 +41,18 @@
       "setup": "Needs a prepared project: npm run evals -- --scenario code-change-update"
     },
     {
-      "id": 3,
+      "id": 4,
+      "name": "sync-after-change",
+      "prompt": "/excalidraw:sync",
+      "expected_output": "The sync command finds the last commit (a new stockroom-inventory service) and updates docs/diagrams/architecture.excalidraw in place: a stockroom-inventory node with a code link to its source, an arrow from ledger-orders and one to Postgres, every existing id kept and the existing code links intact. It reports the code change and the edit it caused.",
+      "files": [
+        "evals/fixtures/shopapp",
+        "evals/fixtures/shopapp.patches/add-inventory-service.patch"
+      ],
+      "setup": "Needs a prepared project: npm run evals -- --scenario sync-after-change"
+    },
+    {
+      "id": 5,
       "name": "code-change-remove",
       "prompt": "The code changed in the last commit. Bring docs/diagrams/architecture.excalidraw up to date, including the code links on its nodes.",
       "expected_output": "Redis (token-cache) is gone from the diagram and keymaster-auth no longer points at it; sessions are now kept in memory inside keymaster-auth (a note or label is fine, a separate datastore box is not needed). Every node link points at a file that exists, so the link to redisTokenCache.ts is updated or removed. Other elements keep their ids.",
@@ -43,7 +63,7 @@
       "setup": "Needs a prepared project: npm run evals -- --scenario code-change-remove"
     },
     {
-      "id": 4,
+      "id": 6,
       "name": "code-change-webhook",
       "prompt": "We added a payment provider webhook in the latest commit. Update the architecture diagram in docs/diagrams/ to show it.",
       "expected_output": "An arrow from Paylode back into the system (through turnstile-gateway or straight to ledger-orders) labelled as a webhook, and ideally the order.disputed event. Existing elements keep their ids.",
@@ -54,7 +74,7 @@
       "setup": "Needs a prepared project: npm run evals -- --scenario code-change-webhook"
     },
     {
-      "id": 5,
+      "id": 7,
       "name": "preserve-manual-edits",
       "prompt": "Add the new stockroom-inventory service to docs/diagrams/architecture.excalidraw. I've been tidying that drawing by hand, so don't undo my changes.",
       "expected_output": "stockroom-inventory is added with arrows from ledger-orders and to Postgres. The user's manual edits survive: token-cache stays where the user dragged it, ledger-orders keeps its red fill, and the user's free text note is untouched. No element is recreated.",
@@ -65,14 +85,14 @@
       "setup": "Needs a prepared project: npm run evals -- --scenario preserve-manual-edits"
     },
     {
-      "id": 6,
+      "id": 8,
       "name": "mermaid",
       "prompt": "Turn this Mermaid into an Excalidraw drawing at docs/diagrams/checkout.excalidraw:\n\n```mermaid\nflowchart LR\n  U((Shopper)) -->|HTTPS| G[turnstile-gateway]\n  G -->|introspect| A[keymaster-auth]\n  G -->|/orders| O[ledger-orders]\n  O -->|charge| P[Paylode]\n  O -->|order.placed| Q[(postbox-mq)]\n  Q --> W[courier-worker]\n  W -->|email| M[Pigeonpost]\n```",
       "expected_output": "Eight nodes with the Mermaid labels and seven arrows bound at both ends in the same directions, laid out left to right without overlaps.",
       "files": []
     },
     {
-      "id": 7,
+      "id": 9,
       "name": "code-links",
       "prompt": "Draw the architecture of this project and link each component box to the source file that implements it, so clicking a box opens the code.",
       "expected_output": "An architecture diagram like arch-overview where each service and client box carries a link (the element's link property) to a file that exists, e.g. ledger-orders to services/ledger-orders/src/server.ts or placeOrder.ts, Paylode to paylodeClient.ts, Postgres to packages/db/src/pool.ts.",

@@ -43,7 +43,7 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS4: Agent skills, prompts and tools
 
-- [ ] Rewrite the excalidraw skill, the review skill, `guide.ts`, the MCP server instructions and the assistant system prompt as one coherent set, drawing on prior art (yctimlin/mcp_excalidraw):
+- [x] Rewrite the excalidraw skill, the review skill, `guide.ts`, the MCP server instructions and the assistant system prompt as one coherent set, drawing on prior art (yctimlin/mcp_excalidraw):
   - layout anti-patterns
   - a quality checklist after every batch
   - sizing rules
@@ -51,15 +51,16 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
   - zone labels as free text
   - an explicit "update existing diagram after a code change" workflow
   - error recovery
-- [ ] New tools:
+- [x] New tools:
   - snapshots (`snapshot_drawing` / `restore_drawing`)
   - find elements by label (a `read_drawing` filter)
   - align and distribute
   - a batch `apply` (create + update + delete in one revision)
   - read-modify-write safety: `read_drawing` returns a revision, and writes take `if_rev`
-- [ ] A convention for linking diagram nodes to code: `link: "src/foo.ts:42"`, which `read_drawing` shows and `create_diagram` nodes accept as `code`.
-- [ ] Skill evals (`plugin/skills/*/evals/evals.json`) in the same shape as the prior art.
-- [x] Diagram knowledge: an `architecture-diagrams` skill. It picks the diagram for the audience and question (C4, UML behaviour and structure, DFD and threat models, ER, infrastructure, messaging), and has per-topic reference files in `references/` that a future tool can serve to the in-app assistant.
+- [x] A convention for linking diagram nodes to code: `code: "src/foo.ts:42"` on `create_diagram` nodes, added shapes and updates, stored as `link: "src/foo.ts#L42"` plus `customData.lfxCode` with the file's hash, and shown by `read_drawing` as `code=…`.
+- [x] Skill evals (`plugin/skills/*/evals/evals.json`) in the same shape as the prior art.
+- [x] The in-app assistant reads the architecture references through a `diagram_reference` tool, and a `/excalidraw:sync` command updates diagrams for the current code changes.
+- [x] Diagram knowledge: an `architecture-diagrams` skill. It picks the diagram for the audience and question (C4, UML behaviour and structure, DFD and threat models, ER, infrastructure, messaging), and has per-topic reference files in `references/`, served to the in-app assistant by `diagram_reference`.
 
 ## WS5: IDE for diagrams
 

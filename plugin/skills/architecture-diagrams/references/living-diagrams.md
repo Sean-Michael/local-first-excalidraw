@@ -11,7 +11,7 @@ A diagram that disagrees with the code is worse than no diagram, because readers
 
 ## Linking nodes to code
 
-Give every node that documents code a `link` to its source. `read_drawing` shows it as `link=…`, and Excalidraw shows it as a clickable link. Use project-relative paths, with an optional line number:
+Give every node that documents code a code link to its source: `code: "src/orders/repo.ts"` or `code: "src/orders/repo.ts:42"` on a `create_diagram` node, an `add_elements` shape or an `update_elements` entry (`code: null` removes it). The element's `link` then holds the project-relative path with an optional `#L<line>` (`src/orders/repo.ts#L42`), and `customData.lfxCode` records the file's hash, so a later check can tell the code changed. `read_drawing` shows it as `code=src/orders/repo.ts#L42`. Use project-relative paths:
 
 | Node kind | Link to |
 |---|---|
@@ -21,18 +21,21 @@ Give every node that documents code a `link` to its source. `read_drawing` shows
 | Infrastructure | The IaC resource file (`infra/alb.tf`) |
 | Topic or queue | Where it's declared (`config/kafka/topics.yaml`) |
 
-`create_diagram` nodes don't take a link yet, so add the links right after drawing:
+Set them while drawing:
 
-```json update_elements
+```json create_diagram
 {
   "path": "docs/diagrams/server-modules",
-  "updates": [
-    { "id": "daemon", "link": "src/server/daemon.ts" },
-    { "id": "tools", "link": "src/server/tools.ts" },
-    { "id": "scene", "link": "src/server/scene.ts" }
-  ]
+  "nodes": [
+    { "id": "daemon", "label": "daemon", "code": "src/server/daemon.ts" },
+    { "id": "tools", "label": "tools", "code": "src/server/tools.ts" },
+    { "id": "scene", "label": "scene", "code": "src/server/scene.ts" }
+  ],
+  "edges": [{ "from": "daemon", "to": "tools" }, { "from": "tools", "to": "scene" }]
 }
 ```
+
+A tool result that says a linked file "doesn't exist" means the path is wrong: fix it before you finish.
 
 Use node ids that match the code (`daemon`, `scene`, `orders-db`), not `n1`, `n2`. Ids are stable across edits, so later updates and diffs stay readable.
 
@@ -59,7 +62,7 @@ An ADR records one significant decision: the context, the decision, its status a
 
 Use this when the user asks to "update the diagram for this change", or when you change code that a diagram documents.
 
-1. **Find affected diagrams.** Run `list_drawings`, then `read_drawing` on each likely one. Search the summaries for `link=` paths and labels that match the changed files, modules, endpoints, topics or tables.
+1. **Find affected diagrams.** Run `list_drawings`, then `read_drawing` on each likely one. Search them for `code=` paths and labels that match the changed files, modules, endpoints, topics or tables: `read_drawing` with `query` (`"src/orders"`, `"ledger"`) lists just the matching elements and their arrows.
 2. **Read the diff** (`git diff main...HEAD -- <paths>`, or the files the user names). List the architectural changes only:
    - an element added, removed or renamed
    - a relationship added, removed or changed (a new call, a new protocol, sync becoming async)
@@ -67,16 +70,16 @@ Use this when the user asks to "update the diagram for this change", or when you
    - a technology changed (Postgres to DynamoDB)
 
    Ignore internal refactors that don't change anything visible at the diagram's level.
-3. **Map each change to an edit,** and keep everything else untouched:
+3. **Map each change to an edit,** and keep everything else untouched. Take a `snapshot_drawing` first, then make the edits as one `apply_changes` call with the `rev` from `read_drawing` as `if_rev`, so the update is one revision and fails cleanly if the user edited the drawing meanwhile:
 
    | Code change | Drawing edit |
    |---|---|
-   | Renamed module, service or topic | `update_elements` the label (and `link`). Keep the id. |
-   | New element | `add_elements` with explicit x/y next to its neighbours from `read_drawing` (inside its frame's bounds if it belongs in one; widen the frame with `update_elements` if needed), then `connect_elements` its relationships |
-   | Removed element | `delete_elements` (bound arrows detach, so delete them too) |
-   | New or changed relationship | `connect_elements` with a label. Relabel or restyle an existing arrow with `update_elements` (`label`, `strokeStyle`). |
-   | Technology change | Update the `[Container: Tech]` line of the label |
-   | Moved between boundaries | Move it with `update_elements` x/y into the new boundary. Frame membership doesn't follow position, so check `read_drawing` (`in frame …`). If it's wrong, tell the user, who can drag it in. |
+   | Renamed module, service or topic | `update`: the label and `code`. Keep the id. |
+   | New element | `add`: a shape with explicit x/y next to its neighbours from `read_drawing` (inside its frame's bounds if it belongs in one, with `frameId`; widen the frame with `update` if needed), the same size and colour as its siblings, its `code` link, and arrows bound with `start`/`end` |
+   | Removed element | `delete`: the element and the arrows attached to it (they only detach otherwise) |
+   | New or changed relationship | `add` an arrow bound at both ends, or `update` an existing one (`label`, `strokeStyle`). `connect_elements` re-binds an existing arrow to new ends. |
+   | Technology change | `update` the `[Container: Tech]` line of the label |
+   | Moved between boundaries | `update` its x/y into the new boundary and its `frameId` to the new frame (the label follows). |
 
 4. **Don't recreate the drawing.** `create_diagram` with `replace: true` throws away the user's manual layout, annotations and colours. Use it only when the user asks to start over, or when most of the elements change.
 5. **Render and check** the changed region with `render_drawing` `element_ids` (the changed ids plus their neighbours). Then apply the diagram-review rubric to that area.
@@ -86,7 +89,7 @@ Use this when the user asks to "update the diagram for this change", or when you
 ## Checks that keep diagrams honest
 
 - **In code review,** a pull request that adds a service, datastore, topic or external dependency should touch the container diagram. A pull request that adds a trust-boundary crossing should touch the DFD.
-- **Spot-check the links.** Every `link=` path in `read_drawing` should exist. A missing file means the diagram describes something that's gone.
+- **Spot-check the links.** Every `code=` path in `read_drawing` should exist. A missing file means the diagram describes something that's gone.
 - **Spot-check the names.** Every label that names a module, table or topic should be greppable in the repo.
 
 ## Common mistakes

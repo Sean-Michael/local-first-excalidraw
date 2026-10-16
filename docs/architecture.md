@@ -41,13 +41,19 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 | Tool registry | `src/server/tools.ts` | Every tool, shared by MCP and the assistant |
 | MCP server | `src/server/mcp.ts` | stdio transport, project root detection |
 | Headless renderer | `src/server/headless.ts`, `src/web/Renderer.tsx` | Finds, starts and stops the hidden browser; the page it loads |
-| Code search | `src/server/code.ts` | Read-only file tools, confined to the project and refusing secrets |
+| Code search | `src/server/code.ts`, `code-worker.ts` | Read-only file tools, confined to the project and refusing secrets; regex searches in a worker with a time limit |
+| Code links | `src/server/codelinks.ts`, `open-code.ts` | Storing and checking code links, opening them in the user's editor |
+| Drawing files | `src/server/files.ts`, `git.ts` | Rename, duplicate, move and trash; status badges from git |
+| Snapshots | `src/server/snapshots.ts` | Saved drawing states in the state directory |
+| Diagram references | `src/server/references.ts` | The architecture-diagrams skill's reference notes for `diagram_reference` |
+| Tracing | `src/server/telemetry.ts` | Opt-in OpenTelemetry spans |
 | Libraries | `src/server/library.ts`, `catalog.ts` | Built-in, installed and project shape libraries, shape search |
 | Assistant | `src/server/ai/agent.ts` | Context building, tool loop, per-turn revert, chat history |
 | Providers | `src/server/ai/openai.ts`, `ollama.ts`, `anthropic.ts`, `claude-code.ts` | One streaming interface per endpoint kind |
 | AI settings | `src/server/ai/settings.ts` | `ai.json`, write-only keys, hot reload |
 | Editor | `src/web/Editor.tsx`, `sync.ts` | Excalidraw, scene sync, selection snapshots, undo integration, rendering |
 | Chat panel | `src/web/Chat.tsx`, `ChatSettings.tsx`, `Shapes.tsx` | Chats and chat history, settings, shape libraries |
+| Drawing list | `src/web/FileBrowser.tsx`, `FileActions.tsx` | The list of drawings, file actions, status badges |
 
 ## How the assistant handles a message
 

@@ -60,6 +60,8 @@ The editor comes from `LFX_EDITOR`, else the `editor` key of `~/.local-first-exc
 | A command with `{file}` and `{line}` | That command, split on spaces and run without a shell, for example `subl {file}:{line}` |
 | Any other word | That command with `file:line` |
 
+The daemon reads `LFX_EDITOR` from its own environment, and the macOS app starts the daemon without your shell's variables, so with the app use `editor.json`. It is read on every click. If a link opens the wrong editor, see [Troubleshooting](troubleshooting.md#code-links-open-the-wrong-editor).
+
 ### Staleness
 
 When a code link is made, by you in the editor, by the assistant or by an MCP agent, the daemon records the linked file's content hash in the element (`customData.lfxCode`). Later checks compare the file with that hash:
@@ -81,6 +83,6 @@ Edits from MCP agents (Claude Code, Cursor and others) and from the in-app assis
 
 ## Shortcuts and status
 
-- ⇧⌘A (Ctrl+Shift+A elsewhere) shows or hides the assistant.
+- ⇧⌘A (Ctrl+Shift+A elsewhere) shows or hides the assistant. [Keyboard shortcuts](shortcuts.md) lists the rest.
 - The dot by the drawing's name is green while the tab is connected to the daemon. After 3 seconds without a connection, a banner says so; edits stay in the tab and are saved when it reconnects.
 - Errors appear in a banner with a **Dismiss** button. Failures to load or save your personal shape library appear as a toast.

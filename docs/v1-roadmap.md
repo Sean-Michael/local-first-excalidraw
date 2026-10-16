@@ -91,8 +91,8 @@ As of 0.1.1, the sync, assistant and MCP core work well. The "IDE" half is thin:
 
 ## WS7: Release
 
-- [ ] CHANGELOG.
-- [ ] Docs:
+- [x] CHANGELOG.
+- [x] Docs:
   - a troubleshooting page
   - a shortcuts reference
   - a "diagrams that reference code" guide

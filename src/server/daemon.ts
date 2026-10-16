@@ -100,9 +100,15 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   const sessionsFile = path.join(cfg.stateDir, "sessions.json");
   const libraryFile = path.join(cfg.stateDir, "library.json");
   const libraries = new Libraries(cfg.stateDir, libraryFile, cfg.librariesDir);
+  // Roots the user added (`lfx open`, the macOS app) persist; roots MCP servers register for
+  // their project last only as long as this daemon, so they don't pile up forever.
   const registered = new Set<string>(readJson<string[]>(rootsFile, []).filter((r) => fs.existsSync(r)));
+  const sessionRoots = new Set<string>();
   for (const r of cfg.defaultRoots) fs.mkdirSync(r, { recursive: true });
-  const roots = () => [...new Set([...cfg.defaultRoots, ...registered])];
+  const roots = () => [...new Set([...cfg.defaultRoots, ...registered, ...sessionRoots])];
+  const saveRoots = () => writeFileAtomic(rootsFile, JSON.stringify([...registered], null, 2), 0o600);
+  const outsideRoots = (what: string) =>
+    new HttpError(403, `${what} is outside the allowed roots. Allowed roots: ${roots().join(", ")}`, { code: "outside-roots" });
 
   const sessions = new Map<string, number>(Object.entries(readJson<Record<string, number>>(sessionsFile, {})));
   const saveSessions = () => {
@@ -128,14 +134,15 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     try {
       return resolveSafePath(String(p ?? ""), roots());
     } catch (e) {
-      if (e instanceof PathError) throw new HttpError(403, e.message);
+      if (e instanceof PathError) throw new HttpError(403, e.message, e.message.startsWith("Path is outside") ? { code: "outside-roots" } : {});
       throw e;
     }
   };
 
   // ---- websocket clients -----------------------------------------------------------
   const clients = new Map<string, Client>();
-  const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+  /** Editor RPCs awaiting a reply, with the tab that owes it. */
+  const pending = new Map<string, { owner: string; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
   const send = (c: Client, msg: unknown) => {
     if (c.ws.readyState === c.ws.OPEN) c.ws.send(JSON.stringify(msg));
@@ -182,7 +189,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         pending.delete(id);
         reject(new HttpError(504, "The editor did not respond in time"));
       }, RPC_TIMEOUT_MS);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { owner: c.id, resolve, reject, timer });
       send(c, { ...msg, id });
     });
   };
@@ -422,7 +429,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const rel = path.relative(rr, file);
       if ((rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) && (!allowed || rr.length > allowed.length)) allowed = rr;
     }
-    if (!allowed) throw new HttpError(403, "Drawing is outside the allowed roots");
+    if (!allowed) throw outsideRoots("Drawing");
     const home = fs.realpathSync.native(os.homedir());
     for (let dir = path.dirname(file); dir !== home && dir !== path.dirname(dir); dir = path.dirname(dir)) {
       if (fs.existsSync(path.join(dir, ".git"))) return dir;
@@ -519,7 +526,12 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   };
 
   const serveStatic = (req: IncomingMessage, res: ServerResponse, pathname: string) => {
-    let rel = decodeURIComponent(pathname);
+    let rel: string;
+    try {
+      rel = decodeURIComponent(pathname);
+    } catch {
+      return json(res, 400, { error: "Malformed URL" });
+    }
     if (rel === "/" || !path.extname(rel)) rel = "/index.html";
     const file = path.resolve(cfg.webDir, "." + rel);
     if (!file.startsWith(path.resolve(cfg.webDir) + path.sep)) return json(res, 403, { error: "Forbidden" });
@@ -544,7 +556,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     const { pathname } = url;
     const method = req.method ?? "GET";
 
-    if (pathname === "/api/health") return json(res, 200, { ok: true, name: "local-first-excalidraw", version: VERSION });
+    if (pathname === "/api/health") {
+      // onDemand: started by DaemonClient.ensure(), which may replace it with a newer version.
+      return json(res, 200, { ok: true, name: "local-first-excalidraw", version: VERSION, pid: process.pid, onDemand: process.env.LFX_ON_DEMAND === "1" });
+    }
 
     if (pathname === "/login" && method === "GET") {
       const code = url.searchParams.get("code") ?? "";
@@ -707,6 +722,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const within = body.root ? [safeDir(String(body.root))] : roots();
       return json(res, 200, { drawings: listDrawings(within) });
     }
+    if (pathname === "/api/roots" && method === "GET") {
+      bearerOnly();
+      return json(res, 200, { roots: roots(), defaults: cfg.defaultRoots, registered: [...registered], session: [...sessionRoots] });
+    }
     if (pathname === "/api/roots" && method === "POST") {
       bearerOnly();
       if (!cfg.allowRootRegistration) throw new HttpError(403, "Root registration is disabled (LFX_LOCK_ROOTS=1)");
@@ -714,8 +733,26 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const r = fs.realpathSync.native(path.resolve(String(body.path)));
       if (!fs.statSync(r).isDirectory()) throw new HttpError(400, "Root must be a directory");
       if (r === path.parse(r).root) throw new HttpError(400, "Refusing to register the filesystem root");
-      registered.add(r);
-      writeFileAtomic(rootsFile, JSON.stringify([...registered], null, 2), 0o600);
+      if (body.session === true) {
+        if (!registered.has(r)) sessionRoots.add(r);
+      } else {
+        sessionRoots.delete(r);
+        registered.add(r);
+        saveRoots();
+      }
+      return json(res, 200, { roots: roots() });
+    }
+    if (pathname === "/api/roots" && method === "DELETE") {
+      bearerOnly();
+      const body = await readBody(req);
+      const input = path.resolve(String(body.path ?? ""));
+      const r = fs.existsSync(input) ? fs.realpathSync.native(input) : input;
+      if (cfg.defaultRoots.includes(r) || cfg.defaultRoots.includes(input)) {
+        throw new HttpError(400, `${input} is a default root; change LFX_ROOTS to remove it`);
+      }
+      const found = [registered.delete(r), registered.delete(input), sessionRoots.delete(r), sessionRoots.delete(input)].some(Boolean);
+      if (!found) throw new HttpError(404, `${input} is not a registered root`);
+      saveRoots();
       return json(res, 200, { roots: roots() });
     }
     if (pathname === "/api/login-code" && method === "POST") {
@@ -752,7 +789,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const rel = path.relative(rr, real);
       if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return real;
     }
-    throw new HttpError(403, "Directory is outside the allowed roots");
+    throw outsideRoots("Directory");
   };
 
   // Anything that talks to the daemon keeps an idle daemon alive (see LFX_IDLE_EXIT_MIN below).
@@ -807,6 +844,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       ws.on("close", () => {
         c.unwatch?.();
         clients.delete(c.id);
+        // Fail this tab's outstanding renders now rather than after the full timeout.
+        for (const [id, p] of pending) {
+          if (p.owner !== c.id) continue;
+          pending.delete(id);
+          clearTimeout(p.timer);
+          p.reject(new HttpError(503, "The editor tab closed before it replied; try again", { code: "editor-closed" }));
+        }
       });
     });
   });

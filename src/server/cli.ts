@@ -15,6 +15,8 @@ Usage:
   lfx mcp [--root DIR]         MCP server over stdio (for coding agents)
   lfx status                   Show daemon status
   lfx stop                     Stop the daemon
+  lfx roots [list]             List the folders the daemon may read and write drawings in
+  lfx roots remove DIR         Forget a registered folder
   lfx proxy LISTEN_PORT TARGET_HOST:PORT
                                Forward TCP (used by the Docker egress-isolation setup)
 
@@ -83,21 +85,55 @@ async function main() {
     }
     case "status": {
       const client = new DaemonClient(cfg);
+      const health = await client.health();
+      if (!health) {
+        console.log("Daemon is not running.");
+        process.exitCode = 1;
+        return;
+      }
+      const status = await client.request("GET", "/api/status");
+      const mismatch = health.version !== VERSION;
+      console.log(JSON.stringify({ ...status, version: health.version, clientVersion: VERSION, versionMismatch: mismatch || undefined }, null, 2));
+      if (mismatch) {
+        console.error(`Version mismatch: daemon v${health.version ?? "?"}, client v${VERSION}. Run \`lfx stop\` and start it again.`);
+        process.exitCode = 2;
+      }
+      return;
+    }
+    case "stop": {
+      const client = new DaemonClient(cfg);
+      const health = await client.health();
+      if (!health) {
+        console.log("Daemon is not running.");
+        return;
+      }
+      if (await client.stop()) {
+        console.log("Stopped.");
+        return;
+      }
+      console.error(`Daemon is still running (pid ${health.pid ?? "?"}); see ${path.join(cfg.stateDir, "daemon.log")}.`);
+      process.exitCode = 1;
+      return;
+    }
+    case "roots": {
+      const client = new DaemonClient(cfg);
+      const [sub = "list", dir] = args;
       if (!(await client.healthy())) {
         console.log("Daemon is not running.");
         process.exitCode = 1;
         return;
       }
-      console.log(JSON.stringify(await client.request("GET", "/api/status"), null, 2));
-      return;
-    }
-    case "stop": {
-      const client = new DaemonClient(cfg);
-      if (await client.healthy()) {
-        await client.request("POST", "/api/shutdown", {});
-        for (let i = 0; i < 30 && (await client.healthy()); i++) await new Promise((r) => setTimeout(r, 100));
+      if (sub === "remove") {
+        if (!dir) throw new Error("Usage: lfx roots remove DIR");
+        await client.request("DELETE", "/api/roots", { path: path.resolve(dir) });
+        console.log(`Removed ${path.resolve(dir)}.`);
+        return;
       }
-      console.log("Stopped.");
+      if (sub !== "list") throw new Error("Usage: lfx roots [list | remove DIR]");
+      const r = await client.request<{ defaults: string[]; registered: string[]; session: string[] }>("GET", "/api/roots");
+      for (const [label, list] of [["default", r.defaults], ["registered", r.registered], ["session", r.session]] as const) {
+        for (const d of list) console.log(`${label.padEnd(10)}  ${d}`);
+      }
       return;
     }
     case "proxy": {

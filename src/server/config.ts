@@ -72,19 +72,24 @@ export function ensureStateDir(cfg: Config): void {
 
 /**
  * The bearer token shared by the daemon and local clients (MCP server, CLI).
- * Created once with O_EXCL so concurrent starters never disagree on it.
+ * Written in full to a temp file and then hard-linked into place, which fails if the token
+ * already exists: concurrent starters never disagree on it, and a reader never sees it half-written.
  */
 export function loadOrCreateToken(cfg: Config): string {
   ensureStateDir(cfg);
   const file = path.join(cfg.stateDir, "token");
-  try {
-    const fd = fs.openSync(file, "wx", 0o600);
+  if (!fs.existsSync(file)) {
     const token = crypto.randomBytes(32).toString("base64url");
-    fs.writeSync(fd, token);
-    fs.closeSync(fd);
-    return token;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    const tmp = tempName(file);
+    try {
+      fs.writeFileSync(tmp, token, { mode: 0o600, flag: "wx" });
+      fs.linkSync(tmp, file);
+      return token;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
   }
   const st = fs.statSync(file);
   if ((st.mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
@@ -101,14 +106,50 @@ export function readJson<T>(file: string, fallback: T): T {
   }
 }
 
-/** Atomic write: temp file in the same directory, then rename. */
-export function writeFileAtomic(file: string, data: string, mode = 0o644): void {
-  const tmp = path.join(
-    path.dirname(file),
-    `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`,
-  );
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
+const tempName = (file: string) =>
+  path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+
+/**
+ * Atomic, durable write: a temp file in the same directory, flushed to disk, then renamed over
+ * the target. Without `mode`, an existing file keeps its permissions (new files get 0644).
+ * The temp file is removed if anything fails.
+ */
+export function writeFileAtomic(file: string, data: string | Uint8Array, mode?: number): void {
+  let perm = mode;
+  if (perm === undefined) {
+    try {
+      perm = fs.statSync(file).mode & 0o7777;
+    } catch {
+      perm = 0o644;
+    }
+  }
+  const tmp = tempName(file);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(tmp, "wx", perm);
+    fs.writeFileSync(fd, data);
+    // The umask may have narrowed the creation mode.
+    fs.fchmodSync(fd, perm);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+  // Persist the rename itself. Not every platform can open a directory, so this is best effort.
+  try {
+    const dfd = fs.openSync(path.dirname(file), "r");
+    try {
+      fs.fsyncSync(dfd);
+    } finally {
+      fs.closeSync(dfd);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export function baseUrl(cfg: Config): string {

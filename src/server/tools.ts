@@ -452,7 +452,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         fs.mkdirSync(path.dirname(out), { recursive: true });
         if (fmt === "svg") writeFileAtomic(out, Buffer.from(r.data, "base64").toString("utf8"));
         else {
-          const tmp = `${out}.tmp`;
+          const tmp = `${out}.${process.pid}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.tmp`;
           fs.writeFileSync(tmp, Buffer.from(r.data, "base64"));
           fs.renameSync(tmp, out);
         }
@@ -503,7 +503,7 @@ export function codeTools(): ToolDef[] {
         max_results: z.number().int().min(1).max(400).optional(),
       },
       readOnly: true,
-      run: async (args, ctx) => ({ text: searchFiles(ctx.projectRoot, args) }),
+      run: async (args, ctx) => ({ text: await searchFiles(ctx.projectRoot, args) }),
     },
     {
       name: "read_file",

@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SECRET_GLOB_EXCEPTIONS, SECRET_GLOBS } from "../code.js";
 import type { Usage } from "./types.js";
 
 export interface ClaudeCodeOptions {
@@ -55,6 +56,15 @@ function resultText(content: unknown): string {
   return "";
 }
 
+/**
+ * Permission rules that keep Claude Code's Read away from the files isSecretFile refuses.
+ * Claude Code applies Read deny rules to Grep and Glob too, on a best-effort basis. Deny
+ * rules win over --allowedTools; the `!` rules are gitignore carve-outs (`.env.example`).
+ */
+export function claudeCodeSettings() {
+  return { permissions: { deny: [...SECRET_GLOBS, ...SECRET_GLOB_EXCEPTIONS.map((g) => `!${g}`)].map((g) => `Read(${g})`) } };
+}
+
 export function claudeCodeArgs(o: ClaudeCodeOptions): string[] {
   const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "cli.js");
   const mcp = {
@@ -75,6 +85,8 @@ export function claudeCodeArgs(o: ClaudeCodeOptions): string[] {
     "--mcp-config", JSON.stringify(mcp),
     "--allowedTools", ["mcp__excalidraw", ...tools].join(","),
     "--disallowedTools", `${MCP_PREFIX}open_drawing`,
+    // Claude Code's own file tools don't go through isSecretFile, so deny the same files in its permissions.
+    "--settings", JSON.stringify(claudeCodeSettings()),
     "--append-system-prompt", o.systemPrompt,
   ];
   if (o.model) args.push("--model", o.model);

@@ -6,6 +6,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 
 const SKIP_DIRS = new Set([
   "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", "target", ".venv", "venv",
@@ -18,25 +19,52 @@ const MAX_WALK = 20_000;
 
 export class CodeError extends Error {}
 
+const KEY_EXTS = ["pem", "key", "p12", "pfx", "jks", "keystore", "kdbx", "asc", "gpg", "ovpn", "mobileprovision", "p8", "ppk", "keychain", "keychain-db"];
+const DOTFILES = ["netrc", "pgpass", "npmrc", "pypirc", "htpasswd", "git-credentials", "vault-token", "boto", "s3cfg", "dockercfg"];
 const SECRET_NAMES = [
   /^\.env(\..+)?$/i,
-  /\.(pem|key|p12|pfx|jks|keystore|kdbx|asc|gpg|ovpn|mobileprovision|p8)$/i,
-  /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i,
-  /^\.?(netrc|pgpass|npmrc|pypirc|htpasswd|git-credentials)$/i,
+  /^\.envrc$/i,
+  new RegExp(`\\.(${KEY_EXTS.join("|")})$`, "i"),
+  /^id_(rsa|dsa|ecdsa|ed25519)[\w.-]*$/i,
+  new RegExp(`^\\.?(${DOTFILES.join("|")})$`, "i"),
   /^credentials(\.json)?$/i,
+  /^kubeconfig$/i,
   /^(secrets?|service-account)[\w.-]*\.(json|ya?ml|toml)$/i,
   /\.tfstate(\.backup)?$/i,
+  /\.tfvars(\.json)?$/i,
 ];
 const ALLOWED_ENV = /^\.env\.(example|sample|template|defaults)$/i;
+/** Directories whose whole contents count as secret: keys, cloud and cluster credentials, git config and remotes. */
+const SECRET_DIRS = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".git"];
+/** Files that are secret only inside a particular directory. */
+const SECRET_PATHS = [".docker/config.json", "gh/hosts.yml", "gcloud/credentials.db"];
 
-/** True for files the assistant must never read (keys, tokens, env files). */
+/** True for files the assistant must never read (keys, tokens, env files, VCS and cloud config). */
 export function isSecretFile(rel: string): boolean {
   const parts = rel.split(/[\\/]/);
-  if (parts.some((p) => p === ".ssh" || p === ".gnupg" || p === ".aws")) return true;
+  if (parts.some((p) => SECRET_DIRS.includes(p))) return true;
   const name = parts[parts.length - 1];
+  if (SECRET_PATHS.includes(parts.slice(-2).join("/"))) return true;
   if (ALLOWED_ENV.test(name)) return false;
   return SECRET_NAMES.some((re) => re.test(name));
 }
+
+/**
+ * The same rules as gitignore-style globs, for tools that enforce their own permissions
+ * (the Claude Code provider's Read, Grep and Glob). SECRET_GLOB_EXCEPTIONS are carved back out.
+ */
+export const SECRET_GLOBS = [
+  "**/.env", "**/.env.*", "**/.envrc",
+  ...KEY_EXTS.map((e) => `**/*.${e}`),
+  "**/id_rsa*", "**/id_dsa*", "**/id_ecdsa*", "**/id_ed25519*",
+  ...DOTFILES.flatMap((n) => [`**/.${n}`, `**/${n}`]),
+  "**/credentials", "**/credentials.json", "**/kubeconfig",
+  ...["secret", "service-account"].flatMap((b) => ["json", "yaml", "yml", "toml"].map((e) => `**/${b}*.${e}`)),
+  "**/*.tfstate", "**/*.tfstate.backup", "**/*.tfvars", "**/*.tfvars.json",
+  ...SECRET_DIRS.map((d) => `**/${d}/**`),
+  ...SECRET_PATHS.map((p) => `**/${p}`),
+];
+export const SECRET_GLOB_EXCEPTIONS = ["example", "sample", "template", "defaults"].map((s) => `**/.env.${s}`);
 
 function within(child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
@@ -166,19 +194,60 @@ export function listFiles(root: string, opts: { dir?: string; glob?: string; lim
   return out.join("\n") + (more ? `\n… more files not shown (narrow with dir or glob)` : "");
 }
 
-export function searchFiles(
-  root: string,
-  opts: { pattern: string; glob?: string; dir?: string; regex?: boolean; case_sensitive?: boolean; max_results?: number },
-): string {
-  const realRoot = fs.realpathSync.native(root);
-  const start = resolveInRoot(realRoot, opts.dir ?? ".").abs;
+export interface SearchOptions {
+  pattern: string;
+  glob?: string;
+  dir?: string;
+  regex?: boolean;
+  case_sensitive?: boolean;
+  max_results?: number;
+}
+
+const MAX_PATTERN = 500;
+/** How long a regular-expression search may run before it is abandoned. */
+export const SEARCH_TIMEOUT_MS = Number(process.env.LFX_SEARCH_TIMEOUT_MS) || 5_000;
+
+/**
+ * Searches file contents. A literal pattern runs here; a model-supplied regular expression
+ * runs in a worker thread with a time limit, so catastrophic backtracking can't stall the daemon.
+ */
+export async function searchFiles(root: string, opts: SearchOptions, timeoutMs = SEARCH_TIMEOUT_MS): Promise<string> {
+  if (!opts.regex) return searchFilesSync(root, opts);
+  if (opts.pattern.length > MAX_PATTERN) throw new CodeError(`Regex is too long (over ${MAX_PATTERN} characters)`);
+  compile(opts);
+  const worker = new Worker(new URL("./code-worker.js", import.meta.url), { workerData: { root, opts } });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new CodeError(`Search timed out after ${timeoutMs / 1000} s. Simplify the regex (avoid nested quantifiers like (a+)+) or narrow it with glob or dir.`));
+    }, timeoutMs);
+    worker.once("message", (m: { text?: string; error?: string; code?: boolean }) => {
+      clearTimeout(timer);
+      void worker.terminate();
+      if (m.text !== undefined) resolve(m.text);
+      else reject(m.code ? new CodeError(m.error) : new Error(m.error));
+    });
+    worker.once("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+function compile(opts: SearchOptions): RegExp {
   const source = opts.regex ? opts.pattern : opts.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  let re: RegExp;
   try {
-    re = new RegExp(source, opts.case_sensitive ? "" : "i");
+    return new RegExp(source, opts.case_sensitive ? "" : "i");
   } catch (e) {
     throw new CodeError(`Invalid regex: ${(e as Error).message}`);
   }
+}
+
+/** The search itself, synchronous. Only safe on the main thread for literal patterns. */
+export function searchFilesSync(root: string, opts: SearchOptions): string {
+  const realRoot = fs.realpathSync.native(root);
+  const start = resolveInRoot(realRoot, opts.dir ?? ".").abs;
+  const re = compile(opts);
   const match = globMatcher(opts.glob);
   const max = Math.min(opts.max_results ?? 80, 400);
   const out: string[] = [];

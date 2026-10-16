@@ -45,7 +45,7 @@ function project(): string {
   return root;
 }
 
-test("code tools list and search the project but skip ignored, vendored and secret files", () => {
+test("code tools list and search the project but skip ignored, vendored and secret files", async () => {
   const root = project();
   const files = listFiles(root, {}).split("\n");
   assert.ok(files.includes("src/api/server.ts"));
@@ -54,10 +54,10 @@ test("code tools list and search the project but skip ignored, vendored and secr
     assert.ok(!files.includes(f), `${f} should be hidden`);
   }
   assert.deepEqual(listFiles(root, { glob: "**/*.ts" }).split("\n"), ["src/api/server.ts", "src/db.ts"]);
-  const hits = searchFiles(root, { pattern: "handlelogin" });
+  const hits = await searchFiles(root, { pattern: "handlelogin" });
   assert.equal(hits, "src/api/server.ts:1: export function handleLogin() {");
-  assert.match(searchFiles(root, { pattern: "db\\.\\w+\\(", regex: true }), /src\/api\/server\.ts:2/);
-  assert.equal(searchFiles(root, { pattern: "hunter2" }), "No matches.");
+  assert.match(await searchFiles(root, { pattern: "db\\.\\w+\\(", regex: true }), /src\/api\/server\.ts:2/);
+  assert.equal(await searchFiles(root, { pattern: "hunter2" }), "No matches.");
 });
 
 test("read_file is confined to the project root and refuses secrets", () => {

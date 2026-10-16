@@ -20,6 +20,7 @@ import {
   VERSION,
   writeFileAtomic,
 } from "./config.js";
+import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.js";
 import { layoutGraph, type GraphSpec } from "./layout.js";
 import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
 import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
@@ -56,6 +57,7 @@ const SESSION_COOKIE = "lfx_session";
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const LOGIN_CODE_TTL_MS = 120 * 1000;
 const RPC_TIMEOUT_MS = 30_000;
+const HEADLESS_START_MS = 30_000;
 const CLAUDE_CODE_MODELS = ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 
 const MIME: Record<string, string> = {
@@ -86,9 +88,11 @@ interface Client {
   path?: string;
   unwatch?: () => void;
   lastActive: number;
+  /** The headless renderer: answers render/mermaid requests only, never opens or saves a drawing. */
+  renderer?: boolean;
 }
 
-type Auth = "bearer" | "session" | null;
+type Auth = "bearer" | "session" | "renderer" | null;
 
 export async function startDaemon(cfg: Config): Promise<http.Server> {
   ensureStateDir(cfg);
@@ -116,13 +120,16 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     for (const [k, t] of sessions) if (now - t > SESSION_TTL_MS) sessions.delete(k);
     writeFileAtomic(sessionsFile, JSON.stringify(Object.fromEntries(sessions)), 0o600);
   };
-  const loginCodes = new Map<string, { expires: number; file?: string }>();
+  const loginCodes = new Map<string, { expires: number; file?: string; renderer?: boolean }>();
+  // The headless renderer's session: in memory only, and good for nothing but the page and its WebSocket.
+  const rendererSessions = new Set<string>();
 
   // ---- auth --------------------------------------------------------------------
   const authOf = (req: IncomingMessage): Auth => {
     const b = bearer(req);
     if (b && safeEqual(b, token)) return "bearer";
     const sid = parseCookies(req)[SESSION_COOKIE];
+    if (sid && rendererSessions.has(sid)) return "renderer";
     if (sid && sessions.has(sid)) {
       const created = sessions.get(sid)!;
       if (Date.now() - created < SESSION_TTL_MS) return "session";
@@ -160,6 +167,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     for (const c of clients.values()) if (c.path === p) send(c, { t: "deleted", path: p });
   });
 
+  const isOpen = (c: Client) => c.ws.readyState === c.ws.OPEN;
+  /** Tabs the user can see; the headless renderer is not one of them. */
+  const visibleClients = () => [...clients.values()].filter((c) => !c.renderer);
+
   const waitForClient = async (ms: number): Promise<Client | undefined> => {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
@@ -169,20 +180,83 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     }
     return pickClient();
   };
-  const pickClient = () =>
-    [...clients.values()].filter((c) => c.ws.readyState === c.ws.OPEN).sort((a, b) => b.lastActive - a.lastActive)[0];
+  const pickClient = (onPath?: string) =>
+    visibleClients()
+      .filter((c) => isOpen(c) && (!onPath || c.path === onPath))
+      .sort((a, b) => b.lastActive - a.lastActive)[0];
 
-  /** Ask a connected editor tab to do something only a real browser can (render, mermaid). */
-  const rpc = (msg: Record<string, unknown>, waitMs: number): Promise<unknown> =>
-    withSpan(`lfx.editor ${String(msg.t)}`, { "lfx.editor.request": String(msg.t), "lfx.editor.wait_ms": waitMs }, () => editorRpc(msg, waitMs));
+  // ---- headless renderer (LFX_HEADLESS) ----
+  const headlessModeSetting = headlessMode();
+  const headless = new HeadlessBrowser({
+    idleMs: (Number(process.env.LFX_HEADLESS_IDLE_MIN) || 5) * 60_000,
+    loginUrl: () => {
+      // Each launch is a fresh browser with a fresh profile: earlier renderer sessions are dead.
+      rendererSessions.clear();
+      const code = crypto.randomBytes(24).toString("base64url");
+      loginCodes.set(code, { expires: Date.now() + LOGIN_CODE_TTL_MS, renderer: true });
+      return `${baseUrl(cfg)}/login?code=${encodeURIComponent(code)}`;
+    },
+  });
+  const liveRenderer = () => [...clients.values()].filter((c) => c.renderer && isOpen(c)).sort((a, b) => b.lastActive - a.lastActive)[0];
+  let launching: Promise<Client> | undefined;
 
-  const editorRpc = async (msg: Record<string, unknown>, waitMs: number): Promise<unknown> => {
-    const c = await waitForClient(waitMs);
-    if (!c) {
-      throw new HttpError(409, "No editor is open. Open the drawing in the browser first (open_drawing / `lfx open`).", {
-        code: "no-editor",
-      });
+  /** The headless renderer's connection, launching the browser and waiting for its page if needed. */
+  const rendererClient = (): Promise<Client> => {
+    const r = liveRenderer();
+    if (r) {
+      headless.touch();
+      return Promise.resolve(r);
     }
+    return (launching ??= (async () => {
+      try {
+        headless.start();
+      } catch (e) {
+        if (e instanceof HeadlessUnavailable) throw new HttpError(503, e.message, { code: "no-editor", headless: "unavailable" });
+        throw e;
+      }
+      const deadline = Date.now() + HEADLESS_START_MS;
+      while (Date.now() < deadline) {
+        const c = liveRenderer();
+        if (c) return c;
+        if (!headless.running) throw new HttpError(502, "The headless browser exited before it connected; see the daemon log");
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      headless.stop();
+      throw new HttpError(504, "The headless browser did not connect in time");
+    })().finally(() => {
+      launching = undefined;
+    }));
+  };
+
+  /**
+   * Who serves a browser-backed request: a visible tab of that drawing (so the user sees the
+   * work happen), else the headless renderer, else any visible tab (LFX_HEADLESS=off, or no
+   * browser binary to run headless).
+   */
+  const editorFor = async (onPath: string | undefined, waitMs: number): Promise<Client> => {
+    if (headlessModeSetting !== "always" && onPath) {
+      const own = pickClient(onPath);
+      if (own) return own;
+    }
+    if (headlessModeSetting !== "off" && headless.available) return rendererClient();
+    const c = await waitForClient(waitMs);
+    if (c) return c;
+    const hint = headlessModeSetting === "off" ? "" : " Headless rendering needs a Chromium-family browser: install Chrome/Chromium or set LFX_BROWSER.";
+    throw new HttpError(409, `No editor is open. Open the drawing in the browser first (open_drawing / \`lfx open\`).${hint}`, {
+      code: "no-editor",
+      headless: headlessModeSetting === "off" ? "off" : "unavailable",
+    });
+  };
+
+  /** Ask a browser to do something only a real browser can (render, mermaid). */
+  const rpc = (msg: Record<string, unknown>, waitMs: number, onPath?: string): Promise<unknown> =>
+    withSpan(`lfx.editor ${String(msg.t)}`, { "lfx.editor.request": String(msg.t), "lfx.editor.wait_ms": waitMs }, async (span) => {
+      const c = await editorFor(onPath, waitMs);
+      span.setAttribute("lfx.editor.headless", !!c.renderer);
+      return editorRpc(c, msg);
+    });
+
+  const editorRpc = (c: Client, msg: Record<string, unknown>): Promise<unknown> => {
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -324,6 +398,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return (await rpc(
           { t: "render", scene: { elements, appState: { viewBackgroundColor: "#ffffff" }, files: {} }, opts: { format: "png", maxSize: 1200 } },
           Math.max(3_000, Number(body.waitMs ?? 0)),
+          p,
         )) as { data: string; mime: string };
       }
       case "insert_shape": {
@@ -392,13 +467,14 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         const out = (await rpc(
           { t: "render", scene, opts: body.opts ?? {} },
           Math.max(3_000, Number(body.waitMs ?? 0)),
+          p,
         )) as { data: string; mime: string; scale?: number };
         const texts = scene.elements.filter((e) => e.type === "text" && !e.isDeleted && typeof e.fontSize === "number");
         const minFont = texts.length ? Math.min(...texts.map((e) => e.fontSize as number)) : undefined;
         return { ...out, missing, minFont, elements: scene.elements.filter((e) => !e.isDeleted).length };
       }
       case "mermaid": {
-        const conv = (await rpc({ t: "mermaid", text: body.text }, Math.max(3_000, Number(body.waitMs ?? 0)))) as {
+        const conv = (await rpc({ t: "mermaid", text: body.text }, Math.max(3_000, Number(body.waitMs ?? 0)), p)) as {
           elements: El[];
           files?: Record<string, unknown>;
         };
@@ -569,6 +645,15 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return page(res, 401, "Link expired", "This sign-in link was already used or has expired. Run <code>lfx open</code> to get a new one.");
       }
       const sid = crypto.randomBytes(32).toString("base64url");
+      if (entry.renderer) {
+        rendererSessions.add(sid);
+        res.writeHead(303, {
+          ...SECURITY_HEADERS,
+          "Set-Cookie": `${SESSION_COOKIE}=${sid}; HttpOnly; SameSite=Strict; Path=/`,
+          Location: "/?renderer=1",
+        });
+        return res.end();
+      }
       sessions.set(sid, Date.now());
       saveSessions();
       res.writeHead(303, {
@@ -588,6 +673,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       return serveStatic(req, res, pathname);
     }
     if (!auth) return json(res, 401, { error: "Unauthorized" });
+    // The headless renderer reads nothing and writes nothing: drawings reach it only inside render requests.
+    if (auth === "renderer") return json(res, 403, { error: "Not available to the renderer" });
     const bearerOnly = () => {
       if (auth !== "bearer") throw new HttpError(403, "This endpoint is only available to local clients");
     };
@@ -762,7 +849,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const code = crypto.randomBytes(24).toString("base64url");
       loginCodes.set(code, { expires: Date.now() + LOGIN_CODE_TTL_MS, file });
       for (const [k, v] of loginCodes) if (v.expires < Date.now()) loginCodes.delete(k);
-      return json(res, 200, { code, file, editors: clients.size });
+      return json(res, 200, { code, file, editors: visibleClients().length });
     }
     if (pathname === "/api/status" && method === "GET") {
       bearerOnly();
@@ -770,7 +857,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         version: VERSION,
         pid: process.pid,
         roots: roots(),
-        editors: [...clients.values()].map((c) => ({ path: c.path ?? null })),
+        editors: visibleClients().map((c) => ({ path: c.path ?? null })),
+        headless: { mode: headlessModeSetting, browser: headless.browser ?? null, pid: headless.pid ?? null, connected: !!liveRenderer() },
       });
     }
     if (pathname === "/api/shutdown" && method === "POST") {
@@ -824,8 +912,9 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       return socket.destroy();
     }
+    const renderer = authOf(req) === "renderer";
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const c: Client = { id: crypto.randomUUID(), ws, lastActive: Date.now() };
+      const c: Client = { id: crypto.randomUUID(), ws, lastActive: Date.now(), renderer };
       clients.set(c.id, c);
       ws.on("message", (raw) => {
         c.lastActive = lastActivity = Date.now();
@@ -856,6 +945,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   });
 
   const onMessage = (c: Client, msg: Record<string, unknown>) => {
+    // The headless renderer only answers requests: it never opens, saves or chats.
+    if (c.renderer && msg.t !== "reply") return;
     switch (msg.t) {
       case "open": {
         const p = safe(msg.path);
@@ -951,7 +1042,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   const idleMin = Number(process.env.LFX_IDLE_EXIT_MIN) || 0;
   if (idleMin > 0) {
     setInterval(() => {
-      if (clients.size || assistant.busy() || Date.now() - lastActivity < idleMin * 60_000) return;
+      if (visibleClients().length || assistant.busy() || Date.now() - lastActivity < idleMin * 60_000) return;
       exit(`idle for ${idleMin} minutes`);
     }, 30_000).unref();
   }

@@ -13,6 +13,17 @@ Every diagram on this page was drawn by the tool itself and is a normal `.excali
 - **The browser tab or macOS app** loads the editor from the daemon and syncs the scene over a WebSocket, authenticated with a session cookie.
 - **`lfx mcp`** is a thin stdio MCP server. Each tool call becomes an HTTP request to the daemon with a bearer token.
 - **The assistant** runs inside the daemon, so the page never talks to a model and API keys never reach it.
+- **The headless renderer** is a hidden Chrome or Chromium the daemon starts on demand. Rendering and Mermaid conversion need a browser, and the user may not have a tab open, so the daemon uses this one instead of opening theirs.
+
+## Rendering without a tab
+
+Render, export and Mermaid requests go to an open tab of that drawing if there is one, so the user sees the result. Otherwise they go to the headless renderer ([src/server/headless.ts](../src/server/headless.ts)). With no such browser installed, or with `LFX_HEADLESS=off`, they go to any open tab, and the MCP server opens one if none is open.
+
+The renderer is the same editor bundle loaded at `/?renderer=1`. The daemon starts the browser with `--headless=new`, a throwaway profile and a single-use sign-in link. The page mounts Excalidraw so the bundled fonts load as they do in a normal tab, then connects back over the WebSocket. It doesn't open a drawing. Each request carries its scene, and the page replies with the image or the converted elements. The daemon treats the connection as a renderer, not an editor:
+
+- It only accepts replies from it. Saves, opens and chat messages are ignored, and the session can't call the HTTP API.
+- It doesn't count as an open editor for presence, `lfx status`, or the idle-exit timer.
+- It is stopped after `LFX_HEADLESS_IDLE_MIN` minutes without a request, and when the daemon exits. The browser is started with `--remote-debugging-pipe`, so it also exits when the daemon is killed or crashes and the pipe closes.
 
 The macOS app is a SwiftUI shell around the same editor in a `WKWebView`. It reuses a daemon that's already running (started by the CLI or an agent) and otherwise starts its own.
 
@@ -29,12 +40,13 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 | Auto-layout | `src/server/layout.ts` | Layered layout for `create_diagram` |
 | Tool registry | `src/server/tools.ts` | Every tool, shared by MCP and the assistant |
 | MCP server | `src/server/mcp.ts` | stdio transport, project root detection |
+| Headless renderer | `src/server/headless.ts`, `src/web/Renderer.tsx` | Finds, starts and stops the hidden browser; the page it loads |
 | Code search | `src/server/code.ts` | Read-only file tools, confined to the project and refusing secrets |
 | Libraries | `src/server/library.ts`, `catalog.ts` | Built-in, installed and project shape libraries, shape search |
 | Assistant | `src/server/ai/agent.ts` | Context building, tool loop, per-turn revert, chat history |
 | Providers | `src/server/ai/openai.ts`, `ollama.ts`, `anthropic.ts`, `claude-code.ts` | One streaming interface per endpoint kind |
 | AI settings | `src/server/ai/settings.ts` | `ai.json`, write-only keys, hot reload |
-| Editor | `src/web/Editor.tsx`, `sync.ts` | Excalidraw, scene sync, selection snapshots, undo integration |
+| Editor | `src/web/Editor.tsx`, `sync.ts` | Excalidraw, scene sync, selection snapshots, undo integration, rendering |
 | Chat panel | `src/web/Chat.tsx`, `ChatSettings.tsx`, `Shapes.tsx` | Chats and chat history, settings, shape libraries |
 
 ## How the assistant handles a message

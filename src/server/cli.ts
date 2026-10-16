@@ -25,6 +25,8 @@ Environment:
   LFX_DEFAULT_DIR (docs/diagrams)  LFX_NO_BROWSER=1  LFX_LOCK_ROOTS=1
   LFX_IDLE_EXIT_MIN  stop the daemon after this many idle minutes (30 when started on demand)
   LFX_PARENT_PID     stop the daemon when this process exits
+  LFX_HEADLESS       auto | always | off: render in a hidden browser when no tab is open (auto)
+  LFX_BROWSER        Chrome/Chromium binary for headless rendering (found automatically)
   Tracing: OTEL_EXPORTER_OTLP_ENDPOINT (http/protobuf)  LFX_TRACE_FILE (JSON lines)
            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true  (record prompts and replies)
 `;

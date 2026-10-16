@@ -82,7 +82,7 @@ async function normalize(elements: any[]): Promise<{ elements: any[]; fixed: num
   return { elements: out, fixed };
 }
 
-async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: string; mime: string; scale?: number }> {
+export async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: string; mime: string; scale?: number }> {
   const elements = (await normalize(scene.elements)).elements.filter((e) => !e.isDeleted);
   if (!elements.length) throw new Error("The drawing is empty");
   const appState = {
@@ -112,7 +112,7 @@ async function render(scene: SceneData, opts: RenderOpts): Promise<{ data: strin
   return { data: toBase64(new Uint8Array(await blob.arrayBuffer())), mime: "image/png", scale };
 }
 
-async function mermaid(text: string): Promise<{ elements: any[]; files: Record<string, unknown> }> {
+export async function mermaid(text: string): Promise<{ elements: any[]; files: Record<string, unknown> }> {
   const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");
   const { elements, files } = await parseMermaidToExcalidraw(text, { themeVariables: { fontSize: "16px" } } as any);
   return { elements: convertToExcalidrawElements(elements as any, { regenerateIds: true }) as any[], files: files ?? {} };

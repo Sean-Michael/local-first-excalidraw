@@ -54,7 +54,11 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
 
   const op = (body: Record<string, unknown>) => call(() => client.request<Record<string, unknown>>("POST", "/api/op", body));
 
-  /** Runs a browser-backed op, opening the editor first if no tab is connected. */
+  /**
+   * Runs a browser-backed op (render, export, Mermaid, shape preview). The daemon uses an open
+   * tab of the drawing or its own headless browser, so this only opens the user's browser when
+   * headless rendering is off (LFX_HEADLESS=off) or no Chromium-family browser is installed.
+   */
   const withEditor = async (file: string, body: Record<string, unknown>) => {
     try {
       return await op(body);
@@ -62,7 +66,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
       if (!(e instanceof DaemonError && e.code === "no-editor")) throw e;
       const url = await client.loginUrl(file);
       if (!openInBrowser(url)) {
-        throw new Error(`No editor is open. Ask the user to open this link (valid 2 minutes): ${url}`);
+        throw new Error(`${e.message} Or ask the user to open this link (valid 2 minutes): ${url}`);
       }
       return op({ ...body, waitMs: 20_000 });
     }

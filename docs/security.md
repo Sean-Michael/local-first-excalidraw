@@ -26,6 +26,10 @@ Editor code and fonts are bundled. The build strips Excalidraw's CDN fallback an
 
 Links in Excalidraw's Help dialog and the library catalog open external sites, but only when you click them. Installing a library from the catalog is the only download the app makes.
 
+## Opening code
+
+Clicking a [code link](projects.md#opening-code) asks the daemon to open a file in your code editor. The page sends only the drawing and the link. The daemon resolves the path inside the drawing's project, refuses anything outside it and files that look like secrets, and checks that it is a file. The command it runs comes from `LFX_EDITOR` or `editor.json` in the state directory, never from the page, and runs without a shell.
+
 ## Headless renderer
 
 When no tab is open, the daemon renders and converts Mermaid in a [headless Chrome or Chromium](configuration.md#headless-rendering) that it starts itself. The browser binary comes from `LFX_BROWSER` or a fixed list of install locations, never from the page or a request. It runs as a local child process:

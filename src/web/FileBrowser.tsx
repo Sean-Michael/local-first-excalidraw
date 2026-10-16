@@ -30,8 +30,10 @@ function ago(ms: number): string {
 }
 
 /** Git badges for the listed drawings, refreshed on focus and every 10 s while the page is visible. */
-function useGitStatus(): Record<string, GitState> {
+function useGitStatus(): [Record<string, GitState>, () => void] {
   const [status, setStatus] = useState<Record<string, GitState>>({});
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
     let stopped = false;
     const load = () => {
@@ -50,8 +52,8 @@ function useGitStatus(): Record<string, GitState> {
       window.removeEventListener("focus", load);
       document.removeEventListener("visibilitychange", load);
     };
-  }, []);
-  return status;
+  }, [tick]);
+  return [status, refresh];
 }
 
 export function FileBrowser() {
@@ -63,7 +65,7 @@ export function FileBrowser() {
   const [root, setRoot] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
   const [dialog, ask] = useDialog();
-  const git = useGitStatus();
+  const [git, refreshGit] = useGitStatus();
 
   const reload = useCallback(
     () =>
@@ -112,6 +114,7 @@ export function FileBrowser() {
       await what();
       if (done) setNotice(done);
       await reload();
+      refreshGit();
     } catch (err) {
       setError((err as Error).message);
     }

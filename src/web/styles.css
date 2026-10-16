@@ -491,3 +491,6 @@ body { background: var(--lfx-bg); color: var(--lfx-fg); font-family: system-ui, 
 .lfx-toast button.lfx-toast-close { border: 0; background: transparent; color: var(--color-gray-50, #868e96); font-size: 1.1rem; padding: 0 .35rem; }
 .lfx-offline-banner { bottom: auto; top: 4.5rem; background: #495057; cursor: default; }
 .lfx-error button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.lfx-links-review svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 1280px) { .lfx-kbd { display: none; } }
+.lfx-editor[data-theme="dark"] .lfx-toast { background: #232329; color: #e3e3e8; }

@@ -873,7 +873,8 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     }
     if (pathname === "/api/links/review" && method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, await op({ op: "review_links", path: body.path, ids: body.ids }));
+      // Only bookkeeping changes, so tabs take it quietly.
+      return json(res, 200, await op({ op: "review_links", path: body.path, ids: body.ids }, "daemon"));
     }
     if (pathname === "/api/scene" && method === "GET") {
       const p = safe(url.searchParams.get("path"));

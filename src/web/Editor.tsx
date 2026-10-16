@@ -249,11 +249,13 @@ export function Editor({ path }: { path: string }) {
   }, [agentEdit]);
 
   // A short blip isn't worth a banner; a few seconds without the daemon is.
+  // (Keyed on live or not: reconnect attempts flip between offline and connecting.)
+  const live = status === "live";
   useEffect(() => {
-    if (status === "live") return setOffline(false);
+    if (live) return setOffline(false);
     const t = window.setTimeout(() => setOffline(true), OFFLINE_BANNER_MS);
     return () => window.clearTimeout(t);
-  }, [status]);
+  }, [live]);
 
   // Code-link staleness: the linked files change outside the app, so poll while visible.
   linksImpl.current = () => {
@@ -613,8 +615,16 @@ export function Editor({ path }: { path: string }) {
                   <span className="lfx-dot lfx-connecting" aria-hidden />
                   {linksLabel(stale)}
                 </button>
-                <button type="button" className="lfx-links-btn lfx-links-review" onClick={reviewLinks} title="The diagram is up to date with this code: record the files' current state">
-                  Mark as reviewed
+                <button
+                  type="button"
+                  className="lfx-links-btn lfx-links-review"
+                  onClick={reviewLinks}
+                  aria-label="Mark as reviewed"
+                  title="Mark as reviewed: the diagram is up to date with this code"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden>
+                    <path d="M4 10.5l4 4 8-9" />
+                  </svg>
                 </button>
               </div>
             )}
@@ -669,9 +679,17 @@ export function Editor({ path }: { path: string }) {
         </div>
       )}
       {agentEdit && (
-        <div className="lfx-toast" role="status" key={agentEdit.key}>
+        // Pointer events stay here, or the canvas treats the click as one on empty space and deselects.
+        <div className="lfx-toast" role="status" key={agentEdit.key} onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
           {agentEdit.who} edited {agentEdit.ids.length} element{agentEdit.ids.length === 1 ? "" : "s"}
-          <button type="button" onClick={() => (select(agentEdit.ids), setAgentEdit(null))}>
+          <button
+            type="button"
+            onClick={() => {
+              const ids = agentEdit.ids;
+              setAgentEdit(null);
+              requestAnimationFrame(() => select(ids));
+            }}
+          >
             Select
           </button>
           <button type="button" className="lfx-toast-close" aria-label="Dismiss" onClick={() => setAgentEdit(null)}>

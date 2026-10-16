@@ -61,20 +61,31 @@ async function ensureFonts(elements: any[]): Promise<void> {
   await Promise.all(loads.values());
 }
 
-/** Restores agent-authored elements with real font metrics; bumps any whose geometry changed so the fix is saved. */
+const GEOMETRY = ["x", "y", "width", "height"] as const;
+const moved = (a: any, b: any) => GEOMETRY.some((k) => Math.abs((a[k] ?? 0) - (b[k] ?? 0)) > 0.5);
+
+/**
+ * Restores elements with real font metrics and bumps any text whose geometry changed, so the
+ * fix is saved with the next save. It doesn't save anything itself.
+ */
 async function normalize(elements: any[]): Promise<{ elements: any[]; fixed: number }> {
   await ensureFonts(elements);
   const before = new Map(elements.map((e) => [e.id, e]));
-  const restored = restoreElements(elements, null, { refreshDimensions: true, repairBindings: true });
+  const opts = { refreshDimensions: true, repairBindings: true };
+  let restored = restoreElements(elements, null, opts);
+  // Excalidraw needs a second pass when a label's line count changes: the first fixes its height,
+  // the second recentres it on an arrow with that height. Run to the fixed point so the next
+  // load doesn't find more to fix.
+  for (let i = 0; i < 2; i++) {
+    const again = restoreElements(restored, null, opts);
+    const prev = new Map(restored.map((e: any) => [e.id, e]));
+    restored = again;
+    if (!again.some((e: any) => e.type === "text" && prev.has(e.id) && moved(prev.get(e.id), e))) break;
+  }
   let fixed = 0;
   const out = restored.map((el: any) => {
     const o = before.get(el.id);
-    if (
-      o &&
-      el.type === "text" &&
-      !el.isDeleted &&
-      ["x", "y", "width", "height"].some((k) => Math.abs((o[k] ?? 0) - el[k]) > 0.5)
-    ) {
+    if (o && el.type === "text" && !el.isDeleted && moved(o, el)) {
       fixed++;
       return bumpVersion({ ...el });
     }
@@ -100,6 +111,8 @@ const HIGHLIGHT_MS = 1500;
 const AGENT_TOAST_MS = 6000;
 const OFFLINE_BANNER_MS = 3000;
 const LINKS_REFRESH_MS = 10_000;
+// A canvas smaller than this is hidden or collapsed: too small to fit a drawing into.
+const MIN_FIT_PX = 50;
 
 /** "claude-code" -> "Claude Code"; the in-app assistant and unnamed clients get generic names. */
 export function agentName(by: string | undefined): string {
@@ -366,6 +379,51 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
     createNext.current = false;
   }, [excalidraw, path]);
 
+  // The first fit waits until Excalidraw has measured the canvas at its settled size and place.
+  // Fitting earlier (a tab or window still sized 0x0, the shell's layout not yet applied) centres
+  // the drawing on a stale viewport and leaves it off-screen at the top-left.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const pendingFit = useRef(false);
+  const fitTries = useRef(0);
+  const tryFit = useRef<() => void>(() => {});
+  tryFit.current = () => {
+    const x = excalidraw;
+    const box = canvasRef.current?.querySelector(".excalidraw") ?? canvasRef.current;
+    if (!x || !box || !pendingFit.current) return;
+    const r = box.getBoundingClientRect();
+    if (r.width < MIN_FIT_PX || r.height < MIN_FIT_PX) return; // hidden or collapsed: the resize observer tries again
+    const st = x.getAppState();
+    const measured = [st.width - r.width, st.height - r.height, st.offsetLeft - r.left, st.offsetTop - r.top].every((d) => Math.abs(d) < 1);
+    if (!measured && fitTries.current++ < 30) {
+      // Excalidraw re-measures its container on a window resize; then try again next frame.
+      window.dispatchEvent(new Event("resize"));
+      requestAnimationFrame(() => tryFit.current());
+      return;
+    }
+    pendingFit.current = false;
+    x.scrollToContent(undefined, { fitToContent: true, animate: false, maxZoom: 1 });
+  };
+  const fitWhenSized = useCallback(() => {
+    pendingFit.current = true;
+    fitTries.current = 0;
+    requestAnimationFrame(() => tryFit.current());
+  }, []);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => pendingFit.current && requestAnimationFrame(() => tryFit.current()));
+    ro.observe(el);
+    // The user took the viewport into their own hands before the first fit happened.
+    const cancel = () => (pendingFit.current = false);
+    el.addEventListener("pointerdown", cancel, true);
+    el.addEventListener("wheel", cancel, true);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("pointerdown", cancel, true);
+      el.removeEventListener("wheel", cancel, true);
+    };
+  }, []);
+
   const applyRemote = useCallback(
     async (scene: SceneData, first: boolean, agent = false, by?: string, quiet = false) => {
       const x = excalidraw!;
@@ -384,13 +442,16 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
         captureUpdate: agent ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
       });
       lastBg.current = x.getAppState().viewBackgroundColor;
-      if (fixed === 0) lastHash.current = hashElementsVersion(x.getSceneElementsIncludingDeleted());
+      // Whatever the load normalized (real font metrics, label positions, indices) is not an edit:
+      // opening or viewing a drawing must never rewrite the file. The fixes stay in the scene and
+      // ride along with the next real edit. An agent's edit has already changed the file, so its
+      // fixes are saved straight away.
+      const saveFixes = fixed > 0 && agent && !first;
+      if (!saveFixes) lastHash.current = hashElementsVersion(x.getSceneElementsIncludingDeleted());
       if (first) {
         loaded.current = true;
-        // Wait a frame so the canvas has its real size before fitting.
-        if (merged.some((e) => !e.isDeleted)) {
-          requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: false }));
-        }
+        // Drawings don't store a viewport: fit the content (never past 100%) once the canvas has its real size.
+        if (merged.some((e) => !e.isDeleted)) fitWhenSized();
       } else if (!agent) {
         if (!quiet) x.setToast({ message: "Drawing updated", duration: 1200, closable: false });
       } else {
@@ -400,10 +461,10 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
         }
         if (changed.length) showAgentEdit(changed, by);
       }
-      if (fixed > 0) flush();
+      if (saveFixes) flush();
       refreshLinks();
     },
-    [excalidraw, flush],
+    [excalidraw, flush, fitWhenSized],
   );
 
   const fileAction = useCallback(
@@ -605,7 +666,7 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
 
   return (
     <div className={`lfx-editor${chatOpen ? " lfx-with-chat" : ""}`} data-theme={liveTheme}>
-      <div className="lfx-canvas">
+      <div className="lfx-canvas" ref={canvasRef}>
       <Excalidraw
         excalidrawAPI={setExcalidraw}
         initialData={{ appState: { theme } }}

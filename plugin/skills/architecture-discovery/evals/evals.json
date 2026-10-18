@@ -1,0 +1,24 @@
+{
+  "skill_name": "architecture-discovery",
+  "generated_from": "evals/scenarios.json (run them with `npm run evals`)",
+  "evals": [
+    {
+      "id": 0,
+      "name": "discover-containers",
+      "prompt": "Work out this project's architecture from its code and configuration before drawing anything, then draw a C4 container diagram at docs/diagrams/containers.excalidraw. Link every container and external system to the file that shows it exists.",
+      "expected_output": "Before drawing, a short model of the system: the four deployable services from the workspaces and docker-compose.yml, the Postgres, Redis and RabbitMQ containers, and the Paylode and Pigeonpost APIs found from their clients and env vars, with packages/db and packages/queue treated as libraries rather than containers. The drawing is a container diagram with a shopapp system boundary frame, each element named as in the code with its technology, arrows that follow the real calls (gateway to auth and orders, auth to Postgres and Redis, orders to Postgres, Paylode and the queue, the queue to the worker, the worker to Pigeonpost), and a code link on every container and external system to a file that exists.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "discover-component-scope",
+      "prompt": "Draw a C4 component diagram of ledger-orders at docs/diagrams/ledger-orders-components.excalidraw. Find the components from the code first.",
+      "expected_output": "A component diagram scoped to ledger-orders only: the Fastify server routes, placeOrder, OrderRepository, PaylodeClient and OrderEventsPublisher inside a ledger-orders boundary, with arrows from placeOrder to the repository, the Paylode client and the publisher, and those reaching shopapp-pg, the Paylode API and RabbitMQ outside the boundary. No internals of other services (UserRepository, RedisTokenCache, PigeonpostMailer, authMiddleware).",
+      "files": [
+        "evals/fixtures/shopapp"
+      ]
+    }
+  ]
+}

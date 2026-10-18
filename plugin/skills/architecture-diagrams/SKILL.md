@@ -5,7 +5,7 @@ description: Choose and draw the right software architecture or design diagram (
 
 # Architecture diagrams
 
-A diagram answers one question for one audience. Decide both before you draw. This skill picks the diagram type and maps it onto the drawing tools; the excalidraw skill covers the tools themselves, and the diagram-review skill covers readability.
+A diagram answers one question for one audience. Decide both before you draw. This skill picks the diagram type and maps it onto the drawing tools; the excalidraw skill covers the tools themselves, and the diagram-review skill covers readability. The architecture-discovery skill builds the model of a codebase that a diagram is drawn from, and the architecture-review skill critiques the system a finished diagram shows.
 
 Reference files in `references/` go deeper. Read the one for your diagram type before drawing:
 
@@ -45,8 +45,8 @@ Reference files in `references/` go deeper. Read the one for your diagram type b
    | What depends on what? | Dependency graph | `create_diagram` TB |
 
 4. **Level.** For structure, pick one C4 level and stay on it: context (systems and people), container (deployable apps and data stores), component (modules inside one container), or code (classes, rarely worth drawing by hand). Most teams need only context and container diagrams.
-5. **Investigate.** Read the code, config, infrastructure files and existing docs so every box and arrow is real. Use the names from the code. Note the file each node comes from (see `living-diagrams.md`).
-6. **Draw, then review.** Draw with the recipe below, then `render_drawing` and follow the diagram-review skill.
+5. **Investigate.** Read the code, config, infrastructure files and existing docs so every box and arrow is real. Use the names from the code. Note the file each node comes from (see `living-diagrams.md`). For a diagram of a codebase, follow the architecture-discovery skill: it finds the deployables, entrypoints, outbound calls and trust boundaries and hands back a model table to draw from.
+6. **Draw, then review.** Draw with the recipe below, then `render_drawing` and follow the diagram-review skill. If the user wants the design itself critiqued (risks, failure modes, coupling), use the architecture-review skill on the finished drawing.
 
 ## Recipes
 

@@ -82,10 +82,14 @@ They live in `evals/scenarios.json`. Each has the common skill-eval fields (`pro
 | `mermaid` | Converting a Mermaid flowchart: nodes, edge directions, bound arrows |
 | `code-links` | Architecture whose nodes link to the files that implement them |
 | `reference-code-mention` | `@services/ledger-orders/ Explain and diagram how an order's payment status changes`: a state diagram with the real statuses (pending, paid, payment_failed) and none the code doesn't have |
+| `discover-containers` | The architecture-discovery skill: a container diagram built from a model of the code, with shared packages kept as libraries and every element linked to the file that proves it |
+| `discover-component-scope` | A component diagram of ledger-orders that stays inside that one container |
+| `review-architecture` | The architecture-review skill on the reference diagram: red severity notes for single points of failure and the queue consumer's endless requeue, with every original element left exactly where it was |
+| `review-trust-boundaries` | A security-focused review: a note on the trusted `x-user-id` header, again without moving the user's elements |
 
 The fixture, `evals/fixtures/shopapp/`, is a small TypeScript shop: `turnstile-gateway`, `keymaster-auth`, `ledger-orders` (with the `PaylodeClient` for an external card processor and an `OrderRepository` over Postgres `shopapp-pg`), `courier-worker` consuming the `order-events` queue on `postbox-mq` and mailing through Pigeonpost, Redis `token-cache`, all wired in `docker-compose.yml`. The names are unusual on purpose, so a check for them shows that the agent read the code and didn't guess.
 
-`plugin/skills/excalidraw/evals/evals.json` and `plugin/skills/diagram-review/evals/evals.json` hold the same scenarios in the plain skill-eval shape. After editing `scenarios.json`, regenerate them with `npm run evals:skills`. A unit test fails if they drift.
+The `evals/evals.json` file in each skill folder under `plugin/skills/` holds the same scenarios in the plain skill-eval shape. After editing `scenarios.json`, regenerate them with `npm run evals:skills`. A unit test fails if they drift.
 
 ## Checks
 

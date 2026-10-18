@@ -382,6 +382,128 @@
         "maxOverflow": 0,
         "minFontSize": 14
       }
+    },
+    {
+      "id": "discover-containers",
+      "title": "Discover the architecture, then draw containers",
+      "skill": "architecture-discovery",
+      "prompt": "Work out this project's architecture from its code and configuration before drawing anything, then draw a C4 container diagram at docs/diagrams/containers.excalidraw. Link every container and external system to the file that shows it exists.",
+      "expected_output": "Before drawing, a short model of the system: the four deployable services from the workspaces and docker-compose.yml, the Postgres, Redis and RabbitMQ containers, and the Paylode and Pigeonpost APIs found from their clients and env vars, with packages/db and packages/queue treated as libraries rather than containers. The drawing is a container diagram with a shopapp system boundary frame, each element named as in the code with its technology, arrows that follow the real calls (gateway to auth and orders, auth to Postgres and Redis, orders to Postgres, Paylode and the queue, the queue to the worker, the worker to Pigeonpost), and a code link on every container and external system to a file that exists.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/containers.excalidraw",
+      "checks": {
+        "requiredLabels": [
+          ["turnstile-gateway"],
+          ["keymaster-auth"],
+          ["ledger-orders"],
+          ["courier-worker"],
+          ["postgres", "postgresql", "shopapp-pg"],
+          ["redis", "token-cache"],
+          ["rabbitmq", "postbox-mq"],
+          ["node", "nodejs", "typescript", "fastify"],
+          ["paylode"],
+          ["pigeonpost"]
+        ],
+        "requiredFrames": [["shopapp", "shop", "system", "software system"]],
+        "forbiddenLabels": ["@shopapp/db", "@shopapp/queue", "packages/db", "packages/queue"],
+        "requiredEdges": [
+          { "from": ["turnstile"], "to": ["keymaster"] },
+          { "from": ["turnstile"], "to": ["ledger"] },
+          { "from": ["keymaster"], "to": ["token-cache", "redis"], "undirected": true },
+          { "from": ["keymaster"], "to": ["shopapp-pg", "postgres"], "undirected": true },
+          { "from": ["ledger"], "to": ["shopapp-pg", "postgres"], "undirected": true },
+          { "from": ["ledger"], "to": ["paylode"] },
+          { "from": ["ledger"], "to": ["postbox", "rabbitmq", "order-events"] },
+          { "from": ["postbox", "rabbitmq", "order-events"], "to": ["courier"], "undirected": true },
+          { "from": ["courier"], "to": ["pigeonpost"] }
+        ],
+        "links": { "minLinked": 9, "allExist": true },
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14
+      }
+    },
+    {
+      "id": "discover-component-scope",
+      "title": "Component diagram scoped to one container",
+      "skill": "architecture-discovery",
+      "prompt": "Draw a C4 component diagram of ledger-orders at docs/diagrams/ledger-orders-components.excalidraw. Find the components from the code first.",
+      "expected_output": "A component diagram scoped to ledger-orders only: the Fastify server routes, placeOrder, OrderRepository, PaylodeClient and OrderEventsPublisher inside a ledger-orders boundary, with arrows from placeOrder to the repository, the Paylode client and the publisher, and those reaching shopapp-pg, the Paylode API and RabbitMQ outside the boundary. No internals of other services (UserRepository, RedisTokenCache, PigeonpostMailer, authMiddleware).",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/ledger-orders-components.excalidraw",
+      "checks": {
+        "requiredLabels": [
+          ["server", "fastify", "/v1/orders", "routes"],
+          ["placeOrder", "place order"],
+          ["OrderRepository"],
+          ["PaylodeClient", "paylode client"],
+          ["OrderEventsPublisher", "events publisher"],
+          ["postgres", "shopapp-pg"],
+          ["rabbitmq", "postbox-mq", "order-events"]
+        ],
+        "requiredFrames": [["ledger-orders", "ledger"]],
+        "forbiddenLabels": ["UserRepository", "RedisTokenCache", "PigeonpostMailer", "authMiddleware", "requireSession"],
+        "requiredEdges": [
+          { "from": ["placeOrder", "place order"], "to": ["OrderRepository"] },
+          { "from": ["placeOrder", "place order"], "to": ["PaylodeClient", "paylode client"] },
+          { "from": ["placeOrder", "place order"], "to": ["OrderEventsPublisher", "events publisher"] }
+        ],
+        "minBoundRatio": 0.9,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 14
+      }
+    },
+    {
+      "id": "review-architecture",
+      "title": "Architecture review annotated on the drawing",
+      "skill": "architecture-review",
+      "prompt": "Review the architecture shown in docs/diagrams/architecture.excalidraw. What are the biggest risks? Mark them on the diagram.",
+      "expected_output": "Findings checked against the code and added as red notes with a severity, each pointing at its element: shopapp-pg (and the single RabbitMQ and Redis) as single points of failure, shopapp-pg shared by keymaster-auth and ledger-orders with a cross-service foreign key, courier-worker requeueing failed messages forever with no dead-letter queue or idempotency (duplicate emails, a poison message blocks the queue), markPaid then publish as a dual write with no outbox, the synchronous gateway, keymaster-auth and Paylode chain with no timeouts, and ledger-orders trusting x-user-id. Every original element keeps its id, position, size and colours; nothing is moved or redrawn.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [{ "op": "diagram", "graph": "shopapp-arch" }],
+      "commitSetup": true,
+      "checks": {
+        "requiredLabels": [
+          ["spof", "single point of failure", "single point"],
+          ["dead letter", "dlq", "requeue", "poison", "idempotent", "idempotency", "duplicate", "retry", "retries"],
+          ["high", "medium", "severity"]
+        ],
+        "preserve": {
+          "ids": ["shopper", "turnstile-gateway", "keymaster-auth", "ledger-orders", "courier-worker", "shopapp-pg", "token-cache", "postbox-mq", "paylode", "pigeonpost"],
+          "props": ["x", "y", "width", "height", "backgroundColor", "strokeColor"]
+        },
+        "minIdPreservation": 1,
+        "maxOverlaps": 0,
+        "minFontSize": 14
+      }
+    },
+    {
+      "id": "review-trust-boundaries",
+      "title": "Security review of data crossing trust boundaries",
+      "skill": "architecture-review",
+      "prompt": "Do a security-focused review of the architecture in docs/diagrams/architecture.excalidraw: where does sensitive data or identity cross a trust boundary without enough protection? Annotate the diagram, but don't rearrange it.",
+      "expected_output": "Red severity notes added beside the affected elements: ledger-orders trusts the x-user-id header set by turnstile-gateway without verifying it, so anything that reaches it directly can act as any user; session tokens are checked by a call to keymaster-auth on every request; card payment details and the Paylode API key go to a third party; plain HTTP between services. The findings cite the files. Every original element keeps its id, position, size and colours.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "drawing": "docs/diagrams/architecture.excalidraw",
+      "setup": [{ "op": "diagram", "graph": "shopapp-arch" }],
+      "commitSetup": true,
+      "checks": {
+        "requiredLabels": [["x-user-id", "identity header", "user id header", "user-id header"], ["high", "medium", "severity"]],
+        "preserve": {
+          "ids": ["shopper", "turnstile-gateway", "keymaster-auth", "ledger-orders", "courier-worker", "shopapp-pg", "token-cache", "postbox-mq", "paylode", "pigeonpost"],
+          "props": ["x", "y", "width", "height", "backgroundColor", "strokeColor"]
+        },
+        "minIdPreservation": 1,
+        "maxOverlaps": 0,
+        "minFontSize": 14
+      }
     }
   ]
 }

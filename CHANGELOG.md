@@ -2,7 +2,7 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/).
 
-## [1.0.0] - unreleased
+## [1.0.0] - 2026-10-17
 
 ### Added
 
@@ -36,6 +36,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - The daemon stops with the macOS app (`LFX_PARENT_PID`), and a daemon started on demand stops after 30 idle minutes (`LFX_IDLE_EXIT_MIN`).
 - An eval harness (`npm run evals`) that drives Claude Code against a fixture project and grades the drawings, either over MCP or through the in-app assistant (`--via assistant`). See [Evals](docs/evals.md).
 - GitHub Actions run typecheck, build and tests on Ubuntu and macOS with Node 20 and 22.
+- Plugin: the architecture-discovery skill (building an accurate model of a system from its code, manifests and deployment files before drawing) and the architecture-review skill (finding single points of failure, shared databases, long synchronous chains and similar risks, and annotating them on the drawing), with eval scenarios.
 
 ### Changed
 
@@ -48,6 +49,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - Revert reports when it kept elements you edited since: **Reverted 3, kept 1 you edited since**.
 - `lfx stop` says when the daemon is still running instead of always printing "Stopped."
 - A 403 for a path outside the allowed roots names the allowed roots.
+- Every bundled library shape has a meaningful name and a "use for" note, and `list_shapes` searches those notes, so queries such as `postgres`, `s3`, `kafka`, `mongo` or `kubernetes` find the right shape. Some System Design keys changed (for example `message-q` is now `message-queue`, `mobile` is now `mobile-app`).
 
 ### Fixed
 
@@ -62,6 +64,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - A malformed `%` escape in a static path returns 400 instead of 500.
 - File writes are flushed to disk, keep the file's permissions, and don't leave temporary files behind on failure. The PNG export's temporary file name is unique.
 - Token creation no longer races with a concurrent reader.
+- Placing a library shape with a label replaces the shape's built-in caption or placeholder text instead of adding a second label beside it.
 
 ### Security
 

@@ -73,7 +73,7 @@ const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const LOGIN_CODE_TTL_MS = 120 * 1000;
 const RPC_TIMEOUT_MS = 30_000;
 // How long a new headless browser gets to load the renderer page and connect (overridable for tests).
-const HEADLESS_START_MS = Number(process.env.LFX_HEADLESS_START_MS) || 15_000;
+const HEADLESS_START_MS = Number(process.env.LFX_HEADLESS_START_MS) || 30_000;
 const HEADLESS_RETRY_MS = 5 * 60_000;
 const CLAUDE_CODE_MODELS = ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 

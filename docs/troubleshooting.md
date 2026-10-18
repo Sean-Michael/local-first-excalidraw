@@ -59,7 +59,7 @@ Rendering, exporting, Mermaid conversion and shape previews need a real browser.
 |---|---|
 | `No editor is open. … Headless rendering needs a Chromium-family browser: install Chrome/Chromium or set LFX_BROWSER.` | No Chrome, Chromium, Edge or Brave was found. Install one, or set `LFX_BROWSER` to its binary (for example `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`, or `chromium` on `PATH`). With `LFX_HEADLESS=off`, open the drawing in a tab first. |
 | `No Chrome or Chromium found for headless rendering. Install Chrome/Chromium or set LFX_BROWSER.` | The same, with `LFX_HEADLESS=always`. |
-| `The headless browser did not connect in time; see the daemon log` | The browser started but its page didn't connect within 15 seconds. The usual cause is an editor bundle older than the daemon: in a source checkout, run `npm run build`. |
+| `The headless browser did not connect in time; see the daemon log` | The browser started but its page didn't connect within 30 seconds. The usual cause is an editor bundle older than the daemon: in a source checkout, run `npm run build`. |
 | `The headless browser exited before it connected; see the daemon log` | The browser crashed or refused to start. `daemon.log` has its output (`Headless browser failed to start: …`). In containers and as root on Linux it runs with `--no-sandbox`; elsewhere, check that the binary in `LFX_BROWSER` runs. |
 | `Headless rendering is unavailable: …` | A launch failed with `LFX_HEADLESS=always`. |
 

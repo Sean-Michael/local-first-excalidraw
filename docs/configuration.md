@@ -37,7 +37,7 @@ Rendering a drawing, exporting it and converting Mermaid need a real browser for
 
 The daemon looks for `LFX_BROWSER` (a path, or a command on `PATH`), then Google Chrome, Chromium, Microsoft Edge and Brave in `/Applications` or `~/Applications` on macOS, Chrome, Edge or Chromium under Program Files or Local AppData on Windows, or `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge` or `brave-browser` on `PATH` on Linux. It starts the browser on the first request that needs it, keeps it for later requests, and stops it after `LFX_HEADLESS_IDLE_MIN` idle minutes and when the daemon exits. `lfx status` shows whether it is running.
 
-If the browser starts but its page doesn't connect within 15 seconds (for example, an editor bundle older than the daemon), the daemon stops it and doesn't try again for five minutes. In that time `auto` behaves like `off` and the error says why; `always` fails straight away. `lfx status` shows the reason under `headless.failed`.
+If the browser starts but its page doesn't connect within 30 seconds (for example, an editor bundle older than the daemon), the daemon stops it and doesn't try again for five minutes. In that time `auto` behaves like `off` and the error says why; `always` fails straight away. `lfx status` shows the reason under `headless.failed`.
 
 These variables are read by the daemon. If a daemon is already running (for example the macOS app's), restart it to change them. When rendering fails, [Troubleshooting](troubleshooting.md#render-export-or-mermaid-fails) lists the messages and what to do. For Docker, see [Egress-isolated Docker](security.md#egress-isolated-docker); what the headless browser can reach is in [Security](security.md#headless-renderer).
 

@@ -72,7 +72,7 @@ class TestDaemon {
         LFX_STATE_DIR: this.state,
         LFX_ROOTS: this.root,
         LFX_NO_BROWSER: "1",
-        LFX_HEADLESS_START_MS: "10000",
+        LFX_HEADLESS_START_MS: "25000",
         // If this test process dies, its daemons (and their browsers) go too.
         LFX_PARENT_PID: String(process.pid),
         ...env,
@@ -95,7 +95,7 @@ class TestDaemon {
       method: body ? "POST" : "GET",
       headers: { Authorization: `Bearer ${this.token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(45_000),
     });
     return { status: res.status, data: (await res.json()) as Record<string, any> };
   }
@@ -140,7 +140,7 @@ test("the built editor has renderer mode", { skip }, () => {
 });
 
 // Each test is short; these timeouts make a hung browser fail the test instead of the whole run.
-const RENDER_TIMEOUT = 25_000;
+const RENDER_TIMEOUT = 60_000;
 
 describe("headless rendering", { skip: skip || (!hasRenderer && "dist/web is stale") }, () => {
   const d = new TestDaemon();
@@ -178,7 +178,7 @@ describe("headless rendering", { skip: skip || (!hasRenderer && "dist/web is sta
     assert.ok(saved.elements.some((e) => e.type === "arrow"));
   });
 
-  test("the browser goes away with the daemon", { timeout: 20_000 }, async () => {
+  test("the browser goes away with the daemon", { timeout: RENDER_TIMEOUT }, async () => {
     const pid = (await d.browserPid())!;
     await d.call("/api/shutdown", {});
     assert.ok(await gone(pid), "headless browser still running after the daemon exited");

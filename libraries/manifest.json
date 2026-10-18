@@ -1,5 +1,5 @@
 {
-  "note": "Bundled starter libraries from github.com/excalidraw/excalidraw-libraries (MIT; authors listed per library). Download counts as of 2026-10-13. Where a published library has no item names, names were added here.",
+  "note": "Bundled starter libraries from github.com/excalidraw/excalidraw-libraries (MIT; authors listed per library). Download counts as of 2026-10-13. Where a published library has no item names, names were added here. itemUse lists, per item, what a shape stands for (used in shape descriptions and search).",
   "libraries": [
     {
       "file": "software-architecture.excalidrawlib",
@@ -22,7 +22,16 @@
         "Browser",
         "Mobile device"
       ],
-      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none).",
+      "itemUse": [
+        "service, microservice, API, backend, container, Lambda, serverless function, Cloud Run",
+        "database, SQL, Postgres, MySQL, RDS, data store",
+        "cache, Redis, Memcached, in-memory store",
+        "event bus, event stream, Kafka, Kinesis, pub/sub, SNS, EventBridge, data pipeline, queue",
+        "documents, files, source code, repository, config, reports",
+        "web browser, web app, frontend, SPA, website",
+        "mobile app, phone, iOS, Android, tablet"
+      ]
     },
     {
       "file": "system-design.excalidrawlib",
@@ -36,7 +45,59 @@
       "license": "MIT",
       "downloads": 86756,
       "items": 24,
-      "itemNames": []
+      "itemNames": [
+        "Box",
+        "Application server",
+        "Multi-instance server",
+        "Server (wide)",
+        "Multi-instance server (wide)",
+        "Database (blank)",
+        "Relational DB",
+        "Object Storage",
+        "Cold Storage",
+        "Document DB",
+        "Columnar DB",
+        "Graph DB",
+        "Stack Storage",
+        "Key-value cache",
+        "Auth & IAM",
+        "DNS",
+        "Load Balancer",
+        "Message queue",
+        "Pipeline",
+        "Cloud",
+        "CDN",
+        "Archive",
+        "Mobile app",
+        "Web application"
+      ],
+      "itemUse": [
+        "generic box, component, container, boundary, placeholder",
+        "application server, app server, backend, API server, web server, EC2, VM",
+        "server cluster, replicas, autoscaling group, Kubernetes, k8s, pods, horizontally scaled service, ECS",
+        "server, service, backend, host",
+        "replicated service, cluster, instances, workers, Kubernetes deployment, k8s",
+        "database, data store, storage, disk, volume",
+        "relational database, SQL, Postgres, PostgreSQL, MySQL, MariaDB, RDS, Aurora, SQL Server, Oracle",
+        "object storage, blob storage, S3, GCS, Azure Blob, bucket, file uploads, media storage",
+        "cold storage, Glacier, backups, long-term retention, tape",
+        "document database, NoSQL, MongoDB, Mongo, DynamoDB, Firestore, CosmosDB, Couchbase",
+        "columnar database, data warehouse, analytics, OLAP, Cassandra, BigQuery, Redshift, Snowflake, ClickHouse",
+        "graph database, Neo4j, Neptune, relationships, social graph",
+        "stack, LIFO, layers, block storage, EBS, disk volumes",
+        "cache, key-value store, Redis, Memcached, ElastiCache, in-memory store, session store",
+        "authentication, authorization, IAM, identity provider, SSO, OAuth, OIDC, Okta, Cognito, Auth0, login",
+        "DNS, domain name, Route 53, name resolution",
+        "load balancer, ALB, ELB, NLB, nginx, HAProxy, Envoy, reverse proxy, API gateway, ingress",
+        "message queue, queue, SQS, RabbitMQ, Kafka, broker, job queue, task queue, pub/sub",
+        "pipeline, ETL, data pipeline, stream processing, CI/CD, workflow",
+        "cloud, internet, external network, third-party service, AWS, GCP, Azure",
+        "CDN, content delivery network, CloudFront, Cloudflare, Akamai, Fastly, edge cache, static assets",
+        "archive, backups, snapshots, log archive, retention",
+        "mobile app, phone, iOS, Android, client",
+        "web app, browser, frontend, website, SPA, client"
+      ],
+      "namesNote": "Item names added by local-first-excalidraw (the published file has none)."
     },
     {
       "file": "stick-figures.excalidrawlib",
@@ -60,6 +121,17 @@
         "Shrug",
         "Happy",
         "Sad"
+      ],
+      "itemUse": [
+        "user, person, actor, customer, end user",
+        "user, person, admin, operator",
+        "user, person, woman, customer",
+        "user, person, man, developer",
+        "user, person, elderly user, persona",
+        "child, kid, young user, persona",
+        "confused user, unsure, question, persona",
+        "happy user, satisfied customer, success",
+        "unhappy user, frustrated customer, error, failure"
       ]
     },
     {
@@ -193,6 +265,18 @@
         "Hub",
         "Router",
         "Client"
+      ],
+      "itemUse": [
+        "desktop computer, workstation, PC, client",
+        "desktop computer, workstation, PC, office computer",
+        "computer, monitor, terminal, PC, client",
+        "VPN, tunnel, secure connection, site-to-site, WireGuard, IPsec",
+        "firewall, security boundary, WAF, network ACL, security group",
+        "server, rack server, physical host, data center, on-prem",
+        "network switch, LAN, layer 2",
+        "network hub, LAN, shared segment",
+        "router, NAT, internet uplink, layer 3",
+        "client, laptop, end-user device, workstation"
       ]
     },
     {

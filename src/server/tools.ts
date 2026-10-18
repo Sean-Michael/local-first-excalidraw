@@ -234,7 +234,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
               shape: z
                 .string()
                 .optional()
-                .describe("rectangle (default), ellipse, diamond, or a library shape key from list_shapes (drawn as that icon with the label below)"),
+                .describe("rectangle (default), ellipse, diamond, or a library shape key from list_shapes (drawn as that icon; the label replaces its caption or goes below)"),
               color,
               group: z.string().optional().describe("Group id; members are drawn inside a labelled frame"),
               code: z.string().optional().describe('Project file the node stands for, optionally with a line ("src/orders/repo.ts:42"); stored as a code link'),
@@ -318,7 +318,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "insert_shape",
       title: "Insert library shape",
       description:
-        "Places a library shape (from list_shapes) into the drawing as a grouped copy, with an optional label below it. Returns the id to bind arrows to (pass `id` to choose it).",
+        "Places a library shape (from list_shapes) into the drawing as a grouped copy, with an optional label (it replaces the shape's own caption, or goes below). Returns the id to bind arrows to (pass `id` to choose it).",
       input: {
         path: pathArg,
         shape: z.string().describe("Shape key or name from list_shapes"),

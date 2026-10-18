@@ -171,3 +171,67 @@ test("an icon's own caption is relabelled instead of getting a second one", () =
   const box = placed.elements.find((e) => e.id === "c")!;
   assert.deepEqual([box.y, box.height], [0, 60]);
 });
+
+const bundled = () => new Libraries(fs.mkdtempSync(path.join(os.tmpdir(), "lfx-st-")), path.join(os.tmpdir(), "lfx-no-personal.json"), path.resolve("libraries")).shapes();
+
+test("every bundled shape has a meaningful name, and common terms find it", () => {
+  const shapes = bundled();
+  const manifest = JSON.parse(fs.readFileSync("libraries/manifest.json", "utf8"));
+  assert.equal(shapes.length, manifest.libraries.reduce((n: number, l: { items: number }) => n + l.items, 0));
+  for (const s of shapes) {
+    // No fallback names: "<library> N", the "shape" slug of a name with no letters, filler text.
+    assert.doesNotMatch(s.key, /-\d+$/, s.key);
+    assert.notEqual(s.key.split("/")[1], "shape", s.key);
+    assert.doesNotMatch(`${s.name} ${s.description}`, /lorem ipsum/i, s.key);
+  }
+  for (const l of manifest.libraries) {
+    assert.equal(l.itemNames.length, l.items, l.name);
+    if (l.itemUse) assert.equal(l.itemUse.length, l.items, l.name);
+  }
+  const top = (q: string) => searchShapes(shapes, q)[0]?.key;
+  const expect: Record<string, string[]> = {
+    postgres: ["system-design-components/relational-db", "software-architecture/database"],
+    s3: ["system-design-components/object-storage"],
+    "object storage": ["system-design-components/object-storage"],
+    "api gateway": ["system-design-components/load-balancer"],
+    mongo: ["system-design-components/document-db"],
+    nosql: ["system-design-components/document-db"],
+    kafka: ["system-design-components/message-queue", "software-architecture/event-bus-or-pipeline"],
+    queue: ["system-design-components/message-queue"],
+    kubernetes: ["system-design-components/multi-instance-server", "system-design-components/multi-instance-server-wide"],
+    lambda: ["software-architecture/microservice"],
+    redis: ["system-design-components/key-value-cache", "software-architecture/cache"],
+    dns: ["system-design-components/dns"],
+    user: ["stick-figures/stick-man", "stick-figures/girl", "stick-figures/guy", "stick-figures/moustache-man"],
+  };
+  for (const [q, keys] of Object.entries(expect)) assert.ok(keys.includes(top(q)!), `${q} -> ${top(q)}`);
+  const pg = shapes.find((s) => s.key === "system-design-components/relational-db")!;
+  assert.match(pg.description, /^use for: relational database, SQL, Postgres/);
+});
+
+test("a label replaces a component's own caption, inside or below the art, and drops filler text", () => {
+  const shapes = bundled();
+  const words = (p: ReturnType<typeof placeShape>) => p.elements.filter((e) => e.type === "text" && /[a-z]{2}/i.test(e.text)).map((e) => e.text);
+  for (const key of ["system-design-components/load-balancer", "system-design-components/message-queue", "system-design-components/mobile-app", "system-design-components/relational-db"]) {
+    const shape = findShape(shapes, key);
+    const placed = placeShape(shape, { x: 0, y: 0, label: "Orders" });
+    assert.deepEqual(words(placed), ["Orders"], key);
+    // Replaced in place: the shape doesn't grow a caption underneath.
+    assert.equal(Math.round(placed.bounds.height), shape.height, key);
+  }
+  // Scaled down for a diagram, an inner caption would be unreadable: it goes, and the label sits below.
+  const lb = findShape(shapes, "system-design-components/load-balancer");
+  const small = placeShape(lb, { x: 0, y: 0, scale: shapeScale(lb, { normalize: true }), label: "alb-public\n[ALB, HTTPS :443]" });
+  assert.deepEqual(words(small), ["alb-public\n[ALB, HTTPS :443]"]);
+  assert.equal(small.elements.find((e) => e.type === "text")!.fontSize, 16);
+  assert.ok(small.bounds.height > 96);
+  // Small text that is part of the drawing stays: the cache's Key/Value cells, the DNS record.
+  const cache = placeShape(findShape(shapes, "system-design-components/key-value-cache"), { x: 0, y: 0, label: "Sessions" });
+  assert.deepEqual(words(cache).sort(), ["Key", "Key", "Sessions", "Value", "Value"]);
+  // A face isn't a caption, so a figure gets its label below.
+  const happy = findShape(shapes, "stick-figures/happy");
+  const fig = placeShape(happy, { x: 0, y: 0, label: "Customer" });
+  assert.deepEqual(words(fig), ["Customer"]);
+  assert.equal(fig.elements.filter((e) => e.type === "text").length, 2);
+  assert.ok(fig.bounds.height > happy.height);
+});

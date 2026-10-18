@@ -1179,13 +1179,14 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
             entries: entries.map((e) => ({
               ...e,
               itemNames: undefined,
+              itemUse: undefined,
               installed: installed.has(e.url) || builtIn.has(e.url) || ids.has(`installed:${slug(path.basename(e.source, ".excalidrawlib"))}`),
             })),
           });
         }
         if (pathname === "/api/libraries/install" && method === "POST") {
           const { entry, content } = await fetchCatalogLibrary(String((await readBody(req)).source ?? ""));
-          const info = libraries.install(content, { name: entry.name, description: entry.description, authors: entry.authors, url: entry.url, itemNames: entry.itemNames });
+          const info = libraries.install(content, { name: entry.name, description: entry.description, authors: entry.authors, url: entry.url, itemNames: entry.itemNames, itemUse: entry.itemUse });
           return json(res, 200, { library: info });
         }
       } catch (e) {

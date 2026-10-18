@@ -16,6 +16,8 @@ export interface CatalogEntry {
   downloads: number;
   updated?: string;
   itemNames?: string[];
+  /** Per item: what it stands for (the bundled manifest's field; catalog entries may carry it too). */
+  itemUse?: string[];
   url: string;
 }
 
@@ -46,6 +48,7 @@ export async function fetchCatalog(): Promise<CatalogEntry[]> {
       downloads: counts[l.source.replace("/", "-").replace(/\.excalidrawlib$/, "")]?.total ?? 0,
       updated: typeof l.updated === "string" ? l.updated : undefined,
       itemNames: Array.isArray(l.itemNames) ? l.itemNames.map(String) : undefined,
+      itemUse: Array.isArray(l.itemUse) ? l.itemUse.map(String) : undefined,
       url: `https://github.com/excalidraw/excalidraw-libraries/blob/main/libraries/${l.source}`,
     }))
     .sort((a, b) => b.downloads - a.downloads);

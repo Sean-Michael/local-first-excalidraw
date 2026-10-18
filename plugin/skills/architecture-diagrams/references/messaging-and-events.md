@@ -83,7 +83,7 @@ Gregor Hohpe and Bobby Woolf's *Enterprise Integration Patterns* (2003, [enterpr
 }
 ```
 
-If the library shape isn't available, use `system-design-components/message-q`, or a rectangle with `color: "teal"`.
+If the library shape isn't available, use `system-design-components/message-queue`, or a rectangle with `color: "teal"`.
 
 Don't put the topics in a "Kafka cluster" group here. The main topic and the DLQ sit in different layers with the consumers between them, and a group's frame is the bounding box of its members, so the consumers would appear inside the cluster. Name the broker in each topic's label instead (`[Kafka topic]`). If you need the cluster boundary, draw it in a separate infrastructure diagram.
 

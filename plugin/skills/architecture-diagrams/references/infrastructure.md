@@ -25,15 +25,17 @@ There is no standard. These conventions are widely shared:
 
 ## Excalidraw recipe
 
-1. `list_shapes` with queries like `"load balancer"`, `"server"`, `"firewall"`, `"database"`, `"cdn"` or `"cloud"`. Built-in keys that usually exist:
+1. `list_shapes` with queries like `"load balancer"`, `"server"`, `"firewall"`, `"database"`, `"cdn"` or `"cloud"`. Product names work too (`"postgres"`, `"s3"`, `"kafka"`, `"redis"`, `"mongo"`, `"api gateway"`, `"kubernetes"`): each built-in shape's description starts with what it stands for. Built-in keys that usually exist:
    - `system-design-components/load-balancer`
    - `system-design-components/cdn`
-   - `system-design-components/dns-www-127-0-0-1` (DNS)
+   - `system-design-components/dns`
    - `system-design-components/application-server`
    - `system-design-components/multi-instance-server`
    - `system-design-components/relational-db`
-   - `system-design-components/object-storage`
-   - `system-design-components/message-q`
+   - `system-design-components/object-storage` (S3, blob storage)
+   - `system-design-components/document-db` (MongoDB, DynamoDB)
+   - `system-design-components/key-value-cache` (Redis, Memcached)
+   - `system-design-components/message-queue`
    - `system-design-components/auth-iam`
    - `network-topology-icons/firewall`
    - `network-topology-icons/router`
@@ -42,7 +44,7 @@ There is no standard. These conventions are widely shared:
    - `network-topology-icons/client`
 
    If the user has a cloud-vendor `.excalidrawlib` in the project, `list_shapes` finds it. Prefer it.
-2. Use `create_diagram` with `direction: "LR"` (internet on the left, data on the right). Give the innermost boundary (subnet, cluster, namespace) a group. Use library shapes as node `shape`s. The label goes under the icon, so make it the resource name from the IaC (`"aws_lb.public"` or `"alb-public"`) plus a role.
+2. Use `create_diagram` with `direction: "LR"` (internet on the left, data on the right). Give the innermost boundary (subnet, cluster, namespace) a group. Use library shapes as node `shape`s. The label replaces the icon's own caption (or goes under the icon), so make it the resource name from the IaC (`"aws_lb.public"` or `"alb-public"`) plus a role.
 
 ```json create_diagram
 {

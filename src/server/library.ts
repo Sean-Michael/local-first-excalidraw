@@ -10,6 +10,8 @@
  *
  * Many published libraries carry no item names, so names fall back through: the user's rename,
  * the item's own name, the catalog's item names, text drawn inside the item, then "<library> N".
+ * The bundled manifest can also say what each item stands for (itemUse: "relational database,
+ * Postgres, MySQL"); that leads the shape's description and counts in search.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -22,6 +24,8 @@ const MAX_LIB_BYTES = 20 * 1024 * 1024;
 const MAX_LIB_FILES = 50;
 const LABEL_FONT = 16;
 const LABEL_GAP = 8;
+/** A label that would be smaller than this inside a shape (as placed) goes below it instead. */
+const MIN_INSIDE_FONT = 12;
 /** Library items are drawn at all sizes; diagrams scale them so the longest side is this. */
 export const DEFAULT_SHAPE_SIZE = 96;
 
@@ -55,8 +59,10 @@ export interface LibraryShape {
   elements: El[];
   width: number;
   height: number;
-  /** What's inside, for items without a meaningful name. */
+  /** What it stands for (when the library says), then what's drawn inside. */
   description: string;
+  /** What it stands for, e.g. "relational database, Postgres, MySQL". */
+  use?: string;
 }
 
 export class LibraryError extends Error {}
@@ -126,9 +132,12 @@ export const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "shape";
 
+/** Filler drawn to look like content ("Lorem ipsum…"), not a caption. */
+const isPlaceholder = (text: string) => /\blorem ipsum\b/i.test(text);
+
 function itemText(els: El[]): string[] {
   return live(els)
-    .filter((e) => e.type === "text" && typeof e.text === "string" && e.text.trim())
+    .filter((e) => e.type === "text" && typeof e.text === "string" && e.text.trim() && !isPlaceholder(e.text))
     .sort((a, b) => b.fontSize - a.fontSize || a.y - b.y)
     .map((e) => String(e.text).replace(/\s+/g, " ").trim());
 }
@@ -137,7 +146,7 @@ function describeItem(els: El[]): string {
   const counts = new Map<string, number>();
   for (const e of live(els)) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
   const parts = [...counts].map(([t, n]) => (n > 1 ? `${n} ${t}s` : t));
-  const text = itemText(els).slice(0, 3).map((t) => JSON.stringify(t.slice(0, 40)));
+  const text = itemText(els).filter((t) => t.length > 1).slice(0, 3).map((t) => JSON.stringify(t.slice(0, 40)));
   return parts.join(", ") + (text.length ? `; text ${text.join(", ")}` : "");
 }
 
@@ -159,6 +168,8 @@ interface InstalledMeta {
   url?: string;
   /** Catalog item names, applied to items that have none. */
   itemNames?: string[];
+  /** Per item: what it stands for. */
+  itemUse?: string[];
   installedAt: number;
 }
 
@@ -173,6 +184,7 @@ interface Source {
   info: Omit<LibraryInfo, "items" | "enabled">;
   file: string;
   itemNames?: string[];
+  itemUse?: string[];
 }
 
 const cache = new Map<string, { mtimeMs: number; size: number; items: RawItem[] }>();
@@ -212,7 +224,7 @@ export class Libraries {
   private sources(projectRoot?: string): Source[] {
     const out: Source[] = [];
     if (this.bundledDir) {
-      const manifest = readJson<{ libraries?: { file: string; name: string; description?: string; authors?: string[]; url?: string; itemNames?: string[] }[] }>(
+      const manifest = readJson<{ libraries?: { file: string; name: string; description?: string; authors?: string[]; url?: string; itemNames?: string[]; itemUse?: string[] }[] }>(
         path.join(this.bundledDir, "manifest.json"),
         {},
       );
@@ -223,13 +235,14 @@ export class Libraries {
           info: { id: `built-in:${path.basename(m.file, ".excalidrawlib")}`, name: m.name, origin: "built-in", description: m.description, authors: m.authors, url: m.url },
           file,
           itemNames: m.itemNames,
+          itemUse: m.itemUse,
         });
       }
     }
     for (const [id, m] of Object.entries(this.state().installed)) {
       const file = path.join(this.installedDir, m.file);
       if (!fs.existsSync(file)) continue;
-      out.push({ info: { id, name: m.name, origin: "installed", description: m.description, authors: m.authors, url: m.url }, file, itemNames: m.itemNames });
+      out.push({ info: { id, name: m.name, origin: "installed", description: m.description, authors: m.authors, url: m.url }, file, itemNames: m.itemNames, itemUse: m.itemUse });
     }
     if (projectRoot) {
       for (const file of findLibraryFiles(projectRoot)) {
@@ -288,6 +301,7 @@ export class Libraries {
         let key = `${libSlug}/${slug(name)}`;
         for (let n = 2; keys.has(key); n++) key = `${libSlug}/${slug(name)}-${n}`;
         keys.add(key);
+        const use = src.itemUse?.[i]?.trim() || undefined;
         shapes.push({
           key,
           name,
@@ -297,7 +311,8 @@ export class Libraries {
           elements: els,
           width: Math.round(b.maxX - b.minX),
           height: Math.round(b.maxY - b.minY),
-          description: describeItem(els),
+          description: (use ? `use for: ${use}; draws ` : "") + describeItem(els),
+          ...(use ? { use } : {}),
         });
       });
     }
@@ -319,7 +334,7 @@ export class Libraries {
   }
 
   /** Saves a library file (imported or downloaded) and registers it. */
-  install(content: string, meta: { name?: string; fileName?: string; description?: string; authors?: string[]; url?: string; itemNames?: string[] }): LibraryInfo {
+  install(content: string, meta: { name?: string; fileName?: string; description?: string; authors?: string[]; url?: string; itemNames?: string[]; itemUse?: string[] }): LibraryInfo {
     const items = parseLibrary(content);
     if (!items.length) throw new LibraryError("That library has no items");
     // Same file as a built-in library: installing it again would only duplicate every shape.
@@ -344,7 +359,7 @@ export class Libraries {
     const prev = s.installed[id];
     if (prev && prev.file !== file) fs.rmSync(path.join(this.installedDir, prev.file), { force: true });
     writeFileAtomic(path.join(this.installedDir, file), content, 0o600);
-    s.installed[id] = { name, file, description: meta.description, authors: meta.authors, url: meta.url, itemNames: meta.itemNames, installedAt: Date.now() };
+    s.installed[id] = { name, file, description: meta.description, authors: meta.authors, url: meta.url, itemNames: meta.itemNames, itemUse: meta.itemUse, installedAt: Date.now() };
     this.save(s);
     return { id, name, origin: "installed", description: meta.description, authors: meta.authors, url: meta.url, items: items.length, enabled: !s.disabled.includes(id) };
   }
@@ -365,7 +380,6 @@ export class Libraries {
   }
 }
 
-/** Ranks shapes for a query: name words first, then library name, then what's drawn inside. */
 /** Words diagrams use for the same thing, so "user" also finds stick figures and "db" databases. */
 const SYNONYMS: string[][] = [
   ["user", "person", "people", "human", "customer", "client", "actor", "man", "woman", "guy", "girl", "figure", "stick", "users"],
@@ -386,21 +400,27 @@ const SYNONYMS: string[][] = [
 const SYN = new Map<string, Set<string>>();
 for (const group of SYNONYMS) for (const w of group) SYN.set(w, new Set([...(SYN.get(w) ?? []), ...group.filter((x) => x !== w)]));
 
+const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+/** Ranks shapes for a query: name words first, then what the shape stands for, then library name, then what's drawn inside. */
 export function searchShapes(shapes: LibraryShape[], query: string): LibraryShape[] {
-  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  if (!words.length) return shapes;
+  const terms = words(query);
+  if (!terms.length) return shapes;
   const scored: { s: LibraryShape; score: number }[] = [];
   for (const s of shapes) {
     const name = s.name.toLowerCase();
     const nameWords = name.split(/[^a-z0-9]+/);
+    const useWords = words(s.use ?? "");
     const lib = s.libraryName.toLowerCase();
     const desc = s.description.toLowerCase();
     let score = 0;
-    for (const w of words) {
+    for (const w of terms) {
       const alt = [...(SYN.get(w) ?? [])];
       if (name === w || nameWords.includes(w)) score += 5;
+      else if (useWords.includes(w)) score += 4;
       else if (name.includes(w)) score += 3;
       else if (alt.some((a) => nameWords.includes(a))) score += 2;
+      else if (alt.some((a) => useWords.includes(a))) score += 1;
       else if (lib.includes(w) || alt.some((a) => lib.split(/[^a-z0-9]+/).includes(a))) score += 1;
       else if (desc.includes(w)) score += 1;
       else {
@@ -519,13 +539,31 @@ export function placeShape(
     elements.unshift(box);
   }
   if (opts.label) {
-    // Icons often carry their own caption underneath ("User", "Amazon S3"): relabel it rather than adding a second one.
-    const captions = elements.filter((e) => e.type === "text" && !e.containerId && e.y >= artBox.y + artBox.h - 2);
-    if (captions.length === 1) {
-      const c = captions[0];
-      const m = textElement(opts.label, { fontSize: c.fontSize, fontFamily: c.fontFamily });
-      Object.assign(c, { text: opts.label, originalText: opts.label, width: m.width, height: m.height, x: artBox.x + artBox.w / 2 - m.width / 2, textAlign: "center" });
+    // Filler text ("Lorem ipsum…" on a phone screen) would read as a second label.
+    for (let i = elements.length - 1; i >= 0; i--) if (elements[i].type === "text" && isPlaceholder(String(elements[i].text))) elements.splice(i, 1);
+    // Components often carry their own caption, under the art ("User", "Amazon S3") or inside it ("Load Balancer"):
+    // relabel it rather than adding a second one. Captions are words; small or single-letter text is part of the art
+    // ("Key"/"Value" in a cache, "{ }" on a document store, a face on a stick figure).
+    const words = elements.filter((e) => e.type === "text" && !e.containerId && /[a-z]{2}/i.test(String(e.text)));
+    const biggest = Math.max(0, ...words.map((e) => e.fontSize));
+    const captions = words.filter((e) => e.fontSize >= biggest * 0.6);
+    const c = captions.length === 1 ? captions[0] : undefined;
+    const below = !!c && c.y >= artBox.y + artBox.h - 2;
+    let fontSize = c?.fontSize ?? LABEL_FONT;
+    if (c && !below) {
+      // Inside the art, shrink a long label to fit the drawing, but not past legible: 12px, or 60% of the
+      // item's own caption when it was drawn smaller than that (wireframe buttons).
+      const room = Math.max(artBox.w * 0.9, c.width);
+      fontSize = c.fontSize * Math.min(1, room / textElement(opts.label, { fontSize: c.fontSize, fontFamily: c.fontFamily }).width);
+    }
+    if (c && (below || fontSize >= Math.min(MIN_INSIDE_FONT, (0.6 * c.fontSize) / s))) {
+      const m = textElement(opts.label, { fontSize, fontFamily: c.fontFamily });
+      const cx = below ? artBox.x + artBox.w / 2 : c.x + c.width / 2;
+      const y = below ? c.y : c.y + c.height / 2 - m.height / 2;
+      Object.assign(c, { text: opts.label, originalText: opts.label, fontSize, lineHeight: m.lineHeight, width: m.width, height: m.height, x: cx - m.width / 2, y, textAlign: "center" });
     } else {
+      // Too small to read inside (a long label, or an icon scaled down for a diagram): label it below instead.
+      if (c && !below) elements.splice(elements.indexOf(c), 1);
       const t = textElement(opts.label, { fontSize: LABEL_FONT, textAlign: "center", groupIds: [outer] });
       t.x = opts.x + width / 2 - t.width / 2;
       t.y = opts.y + height + LABEL_GAP;

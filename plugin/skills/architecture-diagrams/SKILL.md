@@ -64,7 +64,7 @@ Reference files in `references/` go deeper. Read the one for your diagram type b
 
 **ER.** Use `create_diagram`, with each entity's label as `"NAME\n─────\nid PK\nfk_id FK\n…"` (keys and the 3-6 columns that matter). Label each edge with a verb plus cardinality, then set `crowfoot_one` / `crowfoot_many` / `crowfoot_one_or_many` arrowheads with `update_elements`.
 
-**Messaging.** Use `create_diagram` LR. Draw the topics and queues as their own nodes (`software-architecture/event-bus-or-pipeline` or `system-design-components/message-q`), so producers point at the channel and the channel points at consumers. Make async edges dashed and label them with the event or command name. Draw dead-letter queues in red. See `messaging-and-events.md`.
+**Messaging.** Use `create_diagram` LR. Draw the topics and queues as their own nodes (`software-architecture/event-bus-or-pipeline` or `system-design-components/message-queue`), so producers point at the channel and the channel points at consumers. Make async edges dashed and label them with the event or command name. Draw dead-letter queues in red. See `messaging-and-events.md`.
 
 **Class.** Use `create_diagram`, with compartments separated by a rule line in the label. Then set `triangle_outline` (inherits or implements) or `diamond` (composition) arrowheads with `update_elements`. Include only the classes and members that answer the question.
 

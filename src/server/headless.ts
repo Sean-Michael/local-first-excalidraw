@@ -124,6 +124,7 @@ export class HeadlessBrowser {
   private child?: ChildProcess;
   private profileDir?: string;
   private idleTimer?: NodeJS.Timeout;
+  private busy = 0;
   private exitHook?: () => void;
 
   constructor(private opts: HeadlessOptions) {
@@ -174,11 +175,28 @@ export class HeadlessBrowser {
     }
   }
 
-  /** Records use, postponing the idle shutdown. */
+  /** Records use, postponing the idle shutdown. The countdown only runs while nothing is in flight. */
   touch(): void {
     clearTimeout(this.idleTimer);
+    if (this.busy) return;
     this.idleTimer = setTimeout(() => this.stop(), this.opts.idleMs);
     this.idleTimer.unref();
+  }
+
+  /**
+   * Marks a request in flight (a launch, a render), so the idle shutdown can't kill the browser
+   * under it on a slow first start. Call the returned function when it is done.
+   */
+  hold(): () => void {
+    this.busy++;
+    clearTimeout(this.idleTimer);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.busy--;
+      this.touch();
+    };
   }
 
   /** Stops the browser; its profile directory is removed once it has exited. */

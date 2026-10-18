@@ -366,9 +366,14 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   /** Ask a browser to do something only a real browser can (render, mermaid). */
   const rpc = (msg: Record<string, unknown>, waitMs: number, onPath?: string): Promise<unknown> =>
     withSpan(`lfx.editor ${String(msg.t)}`, { "lfx.editor.request": String(msg.t), "lfx.editor.wait_ms": waitMs }, async (span) => {
-      const c = await editorFor(onPath, waitMs);
-      span.setAttribute("lfx.editor.headless", !!c.renderer);
-      return editorRpc(c, msg);
+      const release = headless.hold();
+      try {
+        const c = await editorFor(onPath, waitMs);
+        span.setAttribute("lfx.editor.headless", !!c.renderer);
+        return await editorRpc(c, msg);
+      } finally {
+        release();
+      }
     });
 
   const editorRpc = (c: Client, msg: Record<string, unknown>): Promise<unknown> => {

@@ -203,6 +203,20 @@ describe("headless browser lifetime", { skip: skip || (!hasRenderer && "dist/web
     }
   });
 
+  test("a launch or render that outlasts the idle timeout still completes", { timeout: RENDER_TIMEOUT }, async () => {
+    // ~60 ms idle: shorter than any browser start, as on a cold CI runner.
+    const d = new TestDaemon();
+    await d.start({ LFX_HEADLESS: "always", LFX_HEADLESS_IDLE_MIN: "0.001" });
+    try {
+      await d.op({ op: "render", path: d.drawing });
+      const pid = (await d.browserPid())!;
+      assert.ok(pid);
+      assert.ok(await gone(pid, 15_000), "the idle shutdown still runs once the request is done");
+    } finally {
+      d.stop();
+    }
+  });
+
   test("does not outlive a daemon that was killed", { timeout: RENDER_TIMEOUT }, async () => {
     const d = new TestDaemon();
     await d.start({ LFX_HEADLESS: "always" });

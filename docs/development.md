@@ -62,7 +62,7 @@ One-time setup:
    xcrun notarytool store-credentials lfx-notary --apple-id <you> --team-id <TEAMID>
    ```
 
-For each release, move the `unreleased` entries in [CHANGELOG.md](../CHANGELOG.md) under the new version and date, bump the version (`npm version patch --no-git-tag-version`) and the plugin's version in `plugin/.claude-plugin/plugin.json`, commit it to `main`, and run:
+For each release, move the `unreleased` entries in [CHANGELOG.md](../CHANGELOG.md) under the new version and date, bump the version (`npm version patch --no-git-tag-version`) and the plugin's version in `plugin/.claude-plugin/plugin.json`, commit it to `main`, and push. The Release workflow (below) takes it from there. To release from your Mac instead, run:
 
 ```bash
 SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" NOTARY_PROFILE=lfx-notary macos/build-app.sh --release --publish
@@ -74,19 +74,36 @@ Without `--publish`, it stops after writing the zip and updating the cask. Witho
 
 ### Releasing from GitHub Actions
 
-The **Release** workflow runs the same script on a macOS runner. It runs the typecheck and tests, imports the certificate into a throwaway keychain, and saves the notary profile. Then it runs `macos/build-app.sh --release --publish`. Start it from **Actions → Release → Run workflow** on `main`, after the changelog and version commit is pushed. With **publish** unchecked, it builds, signs and notarizes but publishes nothing, and keeps the zip as a workflow artifact. That run is a safe way to check the secrets.
+The **Release** workflow does the whole release by itself. When a push to `main` changes `package.json` to a version that has no GitHub release yet, it runs the typecheck and tests on a macOS runner, signs and notarizes the app, and runs `macos/build-app.sh --release --publish`. So a release is: update the changelog, bump the version in `package.json` and `plugin/.claude-plugin/plugin.json`, and push. Pushes that leave the version alone, or that change it to one that's already released, don't start a build.
 
-It needs one repository variable and four secrets (**Settings → Secrets and variables → Actions**):
+You can also start it from **Actions → Release → Run workflow** on `main`. With **publish** unchecked, it builds, signs and notarizes but publishes nothing, and keeps the zip as a workflow artifact. That run is a safe way to check the secrets.
 
-| Name | Kind | Value |
+The secrets live in the `release` environment (**Settings → Environments → release**), which only `main` can use. The IDs are repository variables (**Settings → Secrets and variables → Actions → Variables**):
+
+| Name | Where | Value |
 |---|---|---|
-| `APPLE_TEAM_ID` | variable | Your 10-character Apple team ID |
-| `MACOS_CERT_P12` | secret | The Developer ID Application certificate and its private key, exported from Keychain Access as `.p12` and base64-encoded: `base64 -i cert.p12 \| pbcopy` |
-| `MACOS_CERT_PASSWORD` | secret | The password you set when exporting the `.p12` |
-| `APPLE_ID` | secret | The Apple ID email used for notarization |
-| `APPLE_APP_PASSWORD` | secret | An app-specific password for that Apple ID, from [account.apple.com](https://account.apple.com) → Sign-In and Security → App-Specific Passwords |
+| `APPLE_TEAM_ID` | repository variable | The 10-character Apple team ID in the certificate name |
+| `APPSTORE_KEY_ID` | repository variable | The App Store Connect API key's ID (the `XXXXXXXXXX` in `AuthKey_XXXXXXXXXX.p8`) |
+| `APPSTORE_ISSUER_ID` | repository variable | The issuer ID shown above the key list in App Store Connect → Users and Access → Integrations |
+| `MACOS_CERT_P12` | `release` environment secret | The Developer ID Application certificate and its private key, exported from Keychain Access as `.p12`, base64-encoded |
+| `MACOS_CERT_PASSWORD` | `release` environment secret | The password you set when exporting the `.p12` |
+| `APPSTORE_API_KEY` | `release` environment secret | The contents of `AuthKey_<APPSTORE_KEY_ID>.p8`. The key needs the Developer role or higher |
 
-The workflow picks the `Developer ID Application: … (<APPLE_TEAM_ID>)` identity from the certificate. It commits the cask update as the user who started the run and pushes it with the workflow's token. If `main` is protected, allow GitHub Actions to push to it.
+To export the certificate, open Keychain Access, find **Developer ID Application: …** in the login keychain, expand it so its private key is selected too, and choose **Export** as `.p12`. Then set the secrets from a terminal:
+
+```bash
+base64 -i Certificates.p12 | gh secret set MACOS_CERT_P12 --env release
+```
+
+```bash
+gh secret set MACOS_CERT_PASSWORD --env release
+```
+
+```bash
+gh secret set APPSTORE_API_KEY --env release < ~/.appstoreconnect/private_keys/AuthKey_<APPSTORE_KEY_ID>.p8
+```
+
+The workflow picks the `Developer ID Application: … (<APPLE_TEAM_ID>)` identity from the certificate. It commits the cask update as the user who pushed the version bump, and pushes it with the workflow's token, which doesn't start another run. If `main` is protected, allow GitHub Actions to push to it.
 
 ## Regenerating the screenshots and diagrams
 

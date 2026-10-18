@@ -2,9 +2,13 @@ name: Release
 
 # Builds, signs and notarizes Local Excalidraw.app, creates the GitHub release v<package.json version>
 # and pushes the updated cask, by running macos/build-app.sh --release --publish.
-# Run it from the Actions tab on main. See docs/development.md#releases for the secrets it needs.
+# Runs by itself when a push to main changes package.json to a version that has no release yet,
+# or by hand from the Actions tab. See docs/development.md#releasing-from-github-actions.
 
 on:
+  push:
+    branches: [main]
+    paths: [package.json]
   workflow_dispatch:
     inputs:
       publish:
@@ -20,12 +24,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  check:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      build: ${{ steps.check.outputs.build }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          plugin=$(node -p 'require("./plugin/.claude-plugin/plugin.json").version')
+          [ "$version" = "$plugin" ] || { echo "::error::package.json is $version but plugin.json is $plugin"; exit 1; }
+          publish=true
+          [ "$EVENT" = push ] || publish=$PUBLISH_INPUT
+          build=true
+          if [ "$publish" = true ] && gh release view "v$version" >/dev/null 2>&1; then
+            if [ "$EVENT" = push ]; then
+              echo "v$version is already released; nothing to do."
+              build=false
+            else
+              echo "::error::Release v$version already exists. Bump the version first (npm version patch --no-git-tag-version)."
+              exit 1
+            fi
+          fi
+          { echo "version=$version"; echo "build=$build"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+          echo "v$version: build=$build publish=$publish"
+
+  release:
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 60
+    environment: release
     env:
       TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      KEY_ID: ${{ vars.APPSTORE_KEY_ID }}
+      ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
       NOTARY_PROFILE: lfx-notary
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -39,25 +80,19 @@ jobs:
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          PUBLISH: ${{ inputs.publish }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY }}
         run: |
           missing=()
           [ -n "$TEAM_ID" ] || missing+=("variable APPLE_TEAM_ID")
-          for s in CERT_P12 CERT_PASSWORD APPLE_ID APPLE_APP_PASSWORD; do [ -n "${!s}" ] || missing+=("secret $s"); done
+          [ -n "$KEY_ID" ] || missing+=("variable APPSTORE_KEY_ID")
+          [ -n "$ISSUER_ID" ] || missing+=("variable APPSTORE_ISSUER_ID")
+          [ -n "$CERT_P12" ] || missing+=("secret MACOS_CERT_P12")
+          [ -n "$CERT_PASSWORD" ] || missing+=("secret MACOS_CERT_PASSWORD")
+          [ -n "$API_KEY" ] || missing+=("secret APPSTORE_API_KEY")
           if [ ${#missing[@]} -gt 0 ]; then
-            printf '::error::Missing %s\n' "${missing[@]}"
+            printf '::error::Missing %s (in the release environment)\n' "${missing[@]}"
             exit 1
           fi
-          version=$(node -p 'require("./package.json").version')
-          plugin=$(node -p 'require("./plugin/.claude-plugin/plugin.json").version')
-          [ "$version" = "$plugin" ] || { echo "::error::package.json is $version but plugin.json is $plugin"; exit 1; }
-          if [ "$PUBLISH" = true ] && gh release view "v$version" >/dev/null 2>&1; then
-            echo "::error::Release v$version already exists. Bump the version first (npm version patch --no-git-tag-version)."
-            exit 1
-          fi
-          echo "Releasing v$version"
 
       - run: npm ci
       - run: npm run typecheck
@@ -67,8 +102,7 @@ jobs:
         env:
           CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY }}
         run: |
           kc="$RUNNER_TEMP/release.keychain-db"
           kc_password=$(openssl rand -base64 24)
@@ -92,27 +126,29 @@ jobs:
           echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
           echo "Signing as $identity"
 
-          xcrun notarytool store-credentials "$NOTARY_PROFILE" \
-            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$kc"
+          key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
+          printf '%s\n' "$API_KEY" > "$key"
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER_ID" --keychain "$kc"
+          rm -f "$key"
 
       - name: Build, sign and notarize
-        if: ${{ !inputs.publish }}
+        if: needs.check.outputs.publish != 'true'
         run: macos/build-app.sh --release
 
       - name: Build, sign, notarize and publish
-        if: ${{ inputs.publish }}
+        if: needs.check.outputs.publish == 'true'
         env:
           ACTOR: ${{ github.actor }}
           ACTOR_ID: ${{ github.actor_id }}
         run: |
-          # The cask commit is attributed to whoever started the run.
+          # The cask commit is attributed to whoever pushed the version bump or started the run.
           git config user.name "$ACTOR"
           git config user.email "$ACTOR_ID+$ACTOR@users.noreply.github.com"
           macos/build-app.sh --release --publish
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LocalExcalidraw-app
+          name: LocalExcalidraw-${{ needs.check.outputs.version }}
           path: build/LocalExcalidraw-*.zip
           if-no-files-found: error
 

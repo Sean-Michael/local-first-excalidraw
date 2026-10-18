@@ -1,0 +1,26 @@
+{
+  "skill_name": "architecture-review",
+  "generated_from": "evals/scenarios.json (run them with `npm run evals`)",
+  "evals": [
+    {
+      "id": 0,
+      "name": "review-architecture",
+      "prompt": "Review the architecture shown in docs/diagrams/architecture.excalidraw. What are the biggest risks? Mark them on the diagram.",
+      "expected_output": "Findings checked against the code and added as red notes with a severity, each pointing at its element: shopapp-pg (and the single RabbitMQ and Redis) as single points of failure, shopapp-pg shared by keymaster-auth and ledger-orders with a cross-service foreign key, courier-worker requeueing failed messages forever with no dead-letter queue or idempotency (duplicate emails, a poison message blocks the queue), markPaid then publish as a dual write with no outbox, the synchronous gateway, keymaster-auth and Paylode chain with no timeouts, and ledger-orders trusting x-user-id. Every original element keeps its id, position, size and colours; nothing is moved or redrawn.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ],
+      "setup": "Needs a prepared project: npm run evals -- --scenario review-architecture"
+    },
+    {
+      "id": 1,
+      "name": "review-trust-boundaries",
+      "prompt": "Do a security-focused review of the architecture in docs/diagrams/architecture.excalidraw: where does sensitive data or identity cross a trust boundary without enough protection? Annotate the diagram, but don't rearrange it.",
+      "expected_output": "Red severity notes added beside the affected elements: ledger-orders trusts the x-user-id header set by turnstile-gateway without verifying it, so anything that reaches it directly can act as any user; session tokens are checked by a call to keymaster-auth on every request; card payment details and the Paylode API key go to a third party; plain HTTP between services. The findings cite the files. Every original element keeps its id, position, size and colours.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ],
+      "setup": "Needs a prepared project: npm run evals -- --scenario review-trust-boundaries"
+    }
+  ]
+}

@@ -73,7 +73,7 @@ export interface Scenario {
   id: string;
   title: string;
   /** The plugin skill this scenario exercises (for the skill evals.json files). */
-  skill: "excalidraw" | "diagram-review";
+  skill: "excalidraw" | "diagram-review" | "architecture-discovery" | "architecture-review";
   prompt: string;
   expected_output: string;
   files: string[];

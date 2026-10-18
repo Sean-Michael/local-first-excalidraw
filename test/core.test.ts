@@ -245,7 +245,8 @@ test("create_diagram replace is one write, and reused ids replace the old elemen
   assert.ok(!els.some((e) => e.id === "extra"), "old content is gone");
   assert.equal(byId(els, "a").x, 0, "laid out from the origin, not appended");
   assert.ok(els.some((e) => e.type === "text" && e.text === "Alpha"));
-  assert.ok(!els.some((e) => e.id.includes("-a")), "ids are not namespaced");
+  // Appending namespaces ids as `<4 hex>-<id>`; generated ids are random base64url and may contain "-a" by chance.
+  assert.ok(!els.some((e) => /^[0-9a-f]{4}-/.test(e.id) && ["a", "b"].includes(e.id.slice(5))), "ids are not namespaced");
   // A failed layout leaves the drawing untouched.
   const bad = await op({ op: "diagram", path: file, replace: true, graph: { nodes: [{ id: "x", label: "X" }], edges: [{ from: "x", to: "nope" }] } });
   assert.equal(bad.status, 400);

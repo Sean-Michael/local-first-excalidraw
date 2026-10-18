@@ -1,0 +1,121 @@
+name: Release
+
+# Builds, signs and notarizes Local Excalidraw.app, creates the GitHub release v<package.json version>
+# and pushes the updated cask, by running macos/build-app.sh --release --publish.
+# Run it from the Actions tab on main. See docs/development.md#releases for the secrets it needs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the release and push the cask (off: build, sign and notarize only, and keep the zip as a workflow artifact)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      NOTARY_PROFILE: lfx-notary
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the configuration
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          missing=()
+          [ -n "$TEAM_ID" ] || missing+=("variable APPLE_TEAM_ID")
+          for s in CERT_P12 CERT_PASSWORD APPLE_ID APPLE_APP_PASSWORD; do [ -n "${!s}" ] || missing+=("secret $s"); done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing %s\n' "${missing[@]}"
+            exit 1
+          fi
+          version=$(node -p 'require("./package.json").version')
+          plugin=$(node -p 'require("./plugin/.claude-plugin/plugin.json").version')
+          [ "$version" = "$plugin" ] || { echo "::error::package.json is $version but plugin.json is $plugin"; exit 1; }
+          if [ "$PUBLISH" = true ] && gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists. Bump the version first (npm version patch --no-git-tag-version)."
+            exit 1
+          fi
+          echo "Releasing v$version"
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Set up signing and notarization
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/release.keychain-db"
+          kc_password=$(openssl rand -base64 24)
+          echo "::add-mask::$kc_password"
+          security create-keychain -p "$kc_password" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_password" "$kc"
+          # The default keychain, so codesign and notarytool's --keychain-profile find it without extra flags.
+          existing=()
+          while IFS= read -r k; do existing+=("$k"); done < <(security list-keychains -d user | sed -e 's/^ *"//' -e 's/"$//')
+          security list-keychains -d user -s "$kc" "${existing[@]}"
+          security default-keychain -d user -s "$kc"
+
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_password" "$kc" >/dev/null
+
+          identity=$(security find-identity -v -p codesigning "$kc" | grep -o "\"Developer ID Application: .* ($TEAM_ID)\"" | head -1 | tr -d '"' || true)
+          [ -n "$identity" ] || { echo "::error::No Developer ID Application certificate for team $TEAM_ID in MACOS_CERT_P12"; security find-identity -v -p codesigning "$kc"; exit 1; }
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "Signing as $identity"
+
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$kc"
+
+      - name: Build, sign and notarize
+        if: ${{ !inputs.publish }}
+        run: macos/build-app.sh --release
+
+      - name: Build, sign, notarize and publish
+        if: ${{ inputs.publish }}
+        env:
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          # The cask commit is attributed to whoever started the run.
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR_ID+$ACTOR@users.noreply.github.com"
+          macos/build-app.sh --release --publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalExcalidraw-app
+          path: build/LocalExcalidraw-*.zip
+          if-no-files-found: error
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true

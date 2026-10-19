@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-19
+
 ### Added
 
 - macOS app: workspaces, like VS Code's. The sidebar shows the folders in the open workspace; **Save Workspace As…** writes a `.lfx-workspace` file (folder paths relative to it, plus the view options) that **Open Workspace…** or a Finder double-click restores. The current workspace reopens at launch. Without one, a Welcome view offers New Drawing (a blank untitled drawing, open at once), Open Folder, Open Workspace and recents. See [Drawings, projects and code](docs/projects.md#macos-app).
@@ -13,6 +15,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Changed
 
 - macOS app: the sidebar makes clear what's inside a folder: collapsible sections per workspace folder, tinted folder icons with drawing counts, and drawing rows without timestamps (the date is in the tooltip, or shown when sorting by date). Rows show their folder when the tree alone doesn't. "Add Folder" is now **Add Folder to Workspace…**, so it no longer looks like New Folder.
+
+### Fixed
+
+- macOS app: the Claude Code assistant no longer asks for `/login` when Claude Code is set up through environment variables (Bedrock, Vertex, `ANTHROPIC_BASE_URL`). Apps opened from Finder don't get your shell's variables, so the app now reads them from your login shell when it starts the daemon. See [Troubleshooting](docs/troubleshooting.md#the-claude-code-assistant-asks-for-login-bedrock-vertex-proxies).
 
 ## [1.0.0] - 2026-10-17
 
@@ -117,6 +123,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - A native macOS app and a Homebrew cask that also puts `lfx` on your PATH.
 - A Docker Compose setup with an egress-isolated app container and a loopback-only gateway.
 
-[1.0.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Sean-Michael/local-first-excalidraw/releases/tag/v0.1.0

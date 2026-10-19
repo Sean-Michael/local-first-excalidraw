@@ -1,6 +1,6 @@
 cask "local-first-excalidraw" do
-  version "1.0.0"
-  sha256 "c6381b29de3811bba0c463691fffec9cc5eb686cf8f272a1b5934d6c287c4815"
+  version "1.1.0"
+  sha256 "ea293426a45b1ffa4e13364dcdae6075e0058acccf1876c005fd3328693c8bc9"
 
   url "https://github.com/Sean-Michael/local-first-excalidraw/releases/download/v#{version}/LocalExcalidraw-#{version}.zip"
   name "Local Excalidraw"

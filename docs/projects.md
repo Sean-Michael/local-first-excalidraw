@@ -41,7 +41,41 @@ The daemon tells open tabs (over their WebSocket) and the macOS app (over `GET /
 
 ### macOS app
 
-The app's sidebar is a native folder tree with the same grouping: roots as sections, folders as disclosure groups, the filter in the search field. A drawing's context menu has **Rename…**, **Duplicate**, **Move To**, **Move to Trash** and **Show in Finder**; a folder's has **New Drawing Here…**, **New Folder…**, **Rename Folder…** and **Show in Finder**. The editor inside the app hides the web sidebar.
+The app works like VS Code: you open a **workspace**, an ordered list of folders, and the sidebar shows those folders and nothing else. Roots the daemon knows for other reasons (an agent's project, folders added with `lfx open`) stay allowed but don't show unless you add them.
+
+**Starting out.** The app reopens the workspace you had last. With none (the first launch, or after **File ▸ Close Workspace**) it shows a Welcome view:
+
+- **New Drawing** opens a blank `Untitled N.excalidraw` in the default drawings folder right away. Rename or move it later.
+- **Open Folder…** (⇧⌘O) starts an untitled workspace with that folder.
+- **Open Workspace…** opens a saved `.lfx-workspace` file.
+- **Recent** lists the folders and workspaces you opened before.
+
+**Workspaces.** **Add Folder to Workspace…** (File menu, the sidebar's **+** menu, or drop a folder from Finder onto the sidebar) adds a folder. **Remove Folder from Workspace** on a folder section's context menu removes it from the workspace only; the daemon keeps the root. **Save Workspace As…** writes a `.lfx-workspace` file, which works like a `.code-workspace` file:
+
+```json
+{
+  "folders": [{ "path": "docs/diagrams" }, { "path": "../shared-architecture" }],
+  "view": { "sortBy": "name", "folders": "top", "layout": "tree", "compactFolders": true, "showAllFolders": false }
+}
+```
+
+Paths are relative to the file when they can be. Double-clicking the file in Finder opens it. The workspace's name shows in the title bar and above the sidebar ("Untitled (Workspace)" until it's saved), and the app saves the current workspace by itself, so a relaunch brings it back.
+
+**The sidebar.** Each workspace folder is a collapsible section. Folders have a tinted icon and a count of the drawings inside; drawings have a plain icon. Hovering a section header shows a **+** for New Drawing and New Folder. **New Drawing…** (⌘N) and **New Folder…** (⇧⌘N), in the sidebar's bottom **+** menu and the File menu, act on the selected folder, else the open drawing's folder, else the first workspace folder. The New Drawing sheet can pick any folder, not just a top level. Drag drawings onto a folder to move them.
+
+The **sort and view options** button (≡, next to the workspace name) works like Finder's view options and VS Code's `explorer.sortOrder`:
+
+| Option | Choices |
+|---|---|
+| Sort By | Name (natural order: `v2` before `v10`), Date Modified (newest first; rows then show when each changed) |
+| Folders | On Top, Mixed with Drawings, Below Drawings |
+| Show As | Folder Tree, Flat List with Paths |
+| Compact Folders | Folds a chain of single-folder folders into one `a/b/c` row |
+| Show All Folders | Also lists folders with no drawings, such as `src/` |
+
+The options are saved with the workspace. When the tree alone doesn't say where a drawing lives (a flat list, folders mixed in, or while filtering), its row shows its folder dimmed after the name.
+
+A drawing's context menu has **Rename…**, **Duplicate**, **Move To**, **Move to Trash**, **Show in Finder**, **Open in Browser** and **Copy Path**; a folder's has **New Drawing…**, **New Folder…**, **Rename Folder…**, **Show in Finder** and **Copy Path**. The editor inside the app hides the web sidebar.
 
 ### Git badges
 

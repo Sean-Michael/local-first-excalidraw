@@ -96,14 +96,21 @@ final class AppModel {
 
     /// Every folder a drawing can go in, grouped by root (top level first), for the New Drawing sheet.
     var folderChoices: [(root: String, folders: [String])] {
-        DrawingTree.build(roots: roots, drawings: drawings, folders: folders, filter: "").map { root in
+        DrawingTree.build(roots: roots, drawings: drawings, folders: folders, filter: "", options: Self.everyFolder).map { root in
             (root.path, DrawingTree.folderPaths(in: root))
         }
     }
 
-    /// The sidebar tree: one per root, by folder, filtered by the search field.
+    /// Folders one by one (not compacted) and in name order, whatever the sidebar shows.
+    private static let everyFolder: ViewOptions = {
+        var o = ViewOptions()
+        o.compactFolders = false
+        return o
+    }()
+
+    /// The sidebar tree: one per root, by folder, filtered by the search field and ordered by the view options.
     var tree: [TreeNode] {
-        DrawingTree.build(roots: roots, drawings: drawings, folders: folders, filter: search)
+        DrawingTree.build(roots: roots, drawings: drawings, folders: folders, filter: search, options: workspace.view)
     }
 
     func isExpanded(_ node: TreeNode) -> Bool {

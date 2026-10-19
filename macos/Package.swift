@@ -9,5 +9,10 @@ let package = Package(
             name: "LocalExcalidraw",
             path: "Sources/LocalExcalidraw"
         ),
+        .testTarget(
+            name: "LocalExcalidrawTests",
+            dependencies: ["LocalExcalidraw"],
+            path: "Tests/LocalExcalidrawTests"
+        ),
     ]
 )

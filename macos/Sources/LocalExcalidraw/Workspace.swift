@@ -24,17 +24,21 @@ final class Workspace {
         var open: Bool
         var folders: [String]
         var file: String?
+        var view: ViewOptions?
     }
 
-    /// The `.lfx-workspace` file: `{"folders":[{"path":"relative/or/absolute"}]}`, like `.code-workspace`.
+    /// The `.lfx-workspace` file: `{"folders":[{"path":"relative/or/absolute"}],"view":{...}}`, like `.code-workspace`.
     private struct FileFormat: Codable {
         struct Entry: Codable { let path: String }
         var folders: [Entry]
+        var view: ViewOptions?
     }
 
     static let fileType = UTType(filenameExtension: "lfx-workspace", conformingTo: .json) ?? .json
     private static let stateKey = "workspace"
     private static let recentsKey = "workspaceRecents"
+    /// The view options last used anywhere: a new workspace starts with them.
+    private static let viewKey = "workspaceView"
 
     /// false: no workspace, show the Welcome view.
     private(set) var isOpen = false
@@ -42,17 +46,27 @@ final class Workspace {
     /// Where it's saved; nil while untitled.
     private(set) var file: URL?
     private(set) var recents: [Recent] = []
+    /// How the sidebar sorts and shows the tree. Saved with the workspace, and in its file.
+    var view = ViewOptions() {
+        didSet {
+            guard view != oldValue else { return }
+            if let data = try? JSONEncoder().encode(view) { UserDefaults.standard.set(data, forKey: Self.viewKey) }
+            persist(writeFile: true)
+        }
+    }
 
     var name: String { file.map { $0.deletingPathExtension().lastPathComponent } ?? "Untitled" }
     var title: String { "\(name) (Workspace)" }
 
     init() {
         let d = UserDefaults.standard
-        if let data = d.data(forKey: Self.stateKey), let s = try? JSONDecoder().decode(State.self, from: data) {
+        let saved = d.data(forKey: Self.stateKey).flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        if let s = saved {
             isOpen = s.open
             folders = s.folders
             file = s.file.map { URL(fileURLWithPath: $0) }
         }
+        view = saved?.view ?? d.data(forKey: Self.viewKey).flatMap { try? JSONDecoder().decode(ViewOptions.self, from: $0) } ?? ViewOptions()
         if let data = d.data(forKey: Self.recentsKey), let r = try? JSONDecoder().decode([Recent].self, from: data) {
             recents = r
         }
@@ -100,6 +114,7 @@ final class Workspace {
         let parsed = try JSONDecoder().decode(FileFormat.self, from: Data(contentsOf: url))
         let dir = url.deletingLastPathComponent()
         folders = parsed.folders.map { Self.resolve($0.path, from: dir) }
+        if let v = parsed.view { view = v }
         file = url
         isOpen = true
         remember(.workspace, url.path)
@@ -142,21 +157,21 @@ final class Workspace {
 
     /// Autosaves to UserDefaults, and to the workspace file when the folder list changed.
     private func persist(writeFile: Bool = false) {
-        let s = State(open: isOpen, folders: folders, file: file?.path)
+        let s = State(open: isOpen, folders: folders, file: file?.path, view: view)
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: Self.stateKey) }
         if writeFile, let file { try? write(to: file) }
     }
 
     private func write(to url: URL) throws {
         let dir = url.deletingLastPathComponent().standardizedFileURL.path
-        let body = FileFormat(folders: folders.map { .init(path: Self.relative($0, from: dir)) })
+        let body = FileFormat(folders: folders.map { .init(path: Self.relative($0, from: dir)) }, view: view)
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         try enc.encode(body).write(to: url, options: .atomic)
     }
 
     /// `path` relative to `dir` when they share more than the filesystem root, else absolute.
-    static func relative(_ path: String, from dir: String) -> String {
+    nonisolated static func relative(_ path: String, from dir: String) -> String {
         let a = path.split(separator: "/"), b = dir.split(separator: "/")
         var i = 0
         while i < a.count, i < b.count, a[i] == b[i] { i += 1 }

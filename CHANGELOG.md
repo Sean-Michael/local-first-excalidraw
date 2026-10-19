@@ -2,6 +2,18 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- macOS app: workspaces, like VS Code's. The sidebar shows the folders in the open workspace; **Save Workspace As…** writes a `.lfx-workspace` file (folder paths relative to it, plus the view options) that **Open Workspace…** or a Finder double-click restores. The current workspace reopens at launch. Without one, a Welcome view offers New Drawing (a blank untitled drawing, open at once), Open Folder, Open Workspace and recents. See [Drawings, projects and code](docs/projects.md#macos-app).
+- macOS app: sort and view options in the sidebar: sort by name or date modified, folders on top, mixed in or below, folder tree or flat list with paths, compact folders and show all folders.
+- macOS app: New Drawing (⌘N) and New Folder (⇧⌘N) act on the selected folder, from a **+** menu at the bottom of the sidebar, a **+** on each folder section's header, and the File menu. The New Drawing sheet can pick any folder. Drag drawings onto folders to move them, and drop Finder folders onto the sidebar to add them.
+
+### Changed
+
+- macOS app: the sidebar makes clear what's inside a folder: collapsible sections per workspace folder, tinted folder icons with drawing counts, and drawing rows without timestamps (the date is in the tooltip, or shown when sorting by date). Rows show their folder when the tree alone doesn't. "Add Folder" is now **Add Folder to Workspace…**, so it no longer looks like New Folder.
+
 ## [1.0.0] - 2026-10-17
 
 ### Added

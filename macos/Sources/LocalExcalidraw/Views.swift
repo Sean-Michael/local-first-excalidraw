@@ -228,6 +228,15 @@ struct WorkspaceHeader: View {
                 .help(model.workspace.file.map { abbreviate($0.path) } ?? "Not saved yet. Save Workspace As… to keep it as a file.")
             Spacer(minLength: 4)
             Menu {
+                ViewOptionsMenu(view: Bindable(model.workspace).view)
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort and view options: \(model.workspace.view.summary)")
+            Menu {
                 Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
                 Button("Save Workspace As…") { model.showSaveWorkspacePanel() }
                 if let f = model.workspace.file {
@@ -245,6 +254,37 @@ struct WorkspaceHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+}
+
+/// Sort By, Folders, Show As and the toggles, like Finder's view options and VS Code's
+/// explorer.sortOrder / explorer.compactFolders.
+struct ViewOptionsMenu: View {
+    @Binding var view: ViewOptions
+
+    var body: some View {
+        Picker("Sort By", selection: $view.sortBy) {
+            Text("Name").tag(ViewOptions.SortBy.name)
+            Text("Date Modified").tag(ViewOptions.SortBy.modified)
+        }
+        .pickerStyle(.inline)
+        Picker("Folders", selection: $view.folders) {
+            Text("On Top").tag(ViewOptions.FolderPlacement.top)
+            Text("Mixed with Drawings").tag(ViewOptions.FolderPlacement.mixed)
+            Text("Below Drawings").tag(ViewOptions.FolderPlacement.bottom)
+        }
+        .pickerStyle(.inline)
+        .disabled(view.layout == .list)
+        Picker("Show As", selection: $view.layout) {
+            Text("Folder Tree").tag(ViewOptions.Layout.tree)
+            Text("Flat List with Paths").tag(ViewOptions.Layout.list)
+        }
+        .pickerStyle(.inline)
+        Divider()
+        Toggle("Compact Folders", isOn: $view.compactFolders)
+            .disabled(view.layout == .list)
+        Toggle("Show All Folders", isOn: $view.showAllFolders)
+            .disabled(view.layout == .list)
     }
 }
 
@@ -404,7 +444,7 @@ struct TreeRow: View {
 
     var body: some View {
         if let d = node.drawing {
-            DrawingRow(drawing: d)
+            DrawingRow(drawing: d, location: showsLocation ? node.location : "", showsDate: model.workspace.view.sortBy == .modified)
                 .tag(d.path)
                 .draggable(URL(fileURLWithPath: d.path))
                 .contextMenu { DrawingMenu(model: model, drawing: d) }
@@ -442,6 +482,13 @@ struct TreeRow: View {
             }
             .tag(node.path)
         }
+    }
+
+    /// The tree says where a drawing lives, except in a flat list, while filtering (folders
+    /// expand around the matches), and with folders mixed in among drawings.
+    private var showsLocation: Bool {
+        let v = model.workspace.view
+        return !model.search.trimmingCharacters(in: .whitespaces).isEmpty || v.layout == .list || v.folders == .mixed
     }
 }
 
@@ -488,10 +535,30 @@ struct FolderMenu: View {
 
 struct DrawingRow: View {
     let drawing: Drawing
+    /// The folder it's in below its root, shown dimmed when the tree alone doesn't say ("" hides it).
+    var location = ""
+    /// Sorted by date: show when it changed, since that's what orders the rows.
+    var showsDate = false
 
     var body: some View {
         Label {
-            Text(drawing.name).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(drawing.name).lineLimit(1)
+                if !location.isEmpty {
+                    Text(location)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                if showsDate {
+                    Spacer(minLength: 4)
+                    Text(drawing.modified, format: .relative(presentation: .named))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         } icon: {
             Image(systemName: "scribble.variable").foregroundStyle(.secondary)
         }

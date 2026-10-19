@@ -31,6 +31,8 @@ enum DrawingTree {
             tops[r] = TreeNode(path: r, name: r, root: r)
             order.append(r)
         }
+        /// The shown root a path belongs to.
+        func top(_ p: String) -> String? { order.first { inside(p, $0) } }
 
         /// Walks (creating as needed) to the folder at `parts` and lets `body` change it.
         func update(_ node: inout TreeNode, _ parts: ArraySlice<String>, counting: Bool, _ body: (inout TreeNode) -> Void) {
@@ -48,8 +50,8 @@ enum DrawingTree {
 
         var seen = Set<String>()
         for d in drawings {
-            let top = outer(d.root)
-            guard tops[top] != nil, seen.insert(d.path).inserted else { continue }
+            // By path, not d.root: a workspace folder may sit inside (or around) the daemon root the drawing came from.
+            guard let top = top(d.path), seen.insert(d.path).inserted else { continue }
             let r = rel(top, d.path)
             if !needle.isEmpty && !r.lowercased().contains(needle) { continue }
             let parts = r.split(separator: "/").map(String.init).dropLast()
@@ -58,8 +60,7 @@ enum DrawingTree {
             }
         }
         for f in folders where f.empty == true {
-            let top = outer(f.root)
-            guard tops[top] != nil else { continue }
+            guard let top = top(f.path) else { continue }
             let r = rel(top, f.path)
             if r.isEmpty || (!needle.isEmpty && !r.lowercased().contains(needle)) { continue }
             update(&tops[top]!, r.split(separator: "/").map(String.init)[...], counting: false) { _ in }

@@ -10,8 +10,8 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        .navigationTitle(model.selectedDrawing?.name ?? "Local Excalidraw")
-        .navigationSubtitle(model.selectedDrawing.map { abbreviate(($0.path as NSString).deletingLastPathComponent) } ?? "")
+        .navigationTitle(model.selectedDrawing?.name ?? (model.workspace.isOpen ? model.workspace.title : "Local Excalidraw"))
+        .navigationSubtitle(model.selectedDrawing != nil && model.workspace.isOpen ? model.workspace.title : "")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let d = model.selectedDrawing {
@@ -65,7 +65,9 @@ struct ContentView: View {
             ZStack {
                 EditorView(controller: model.editor)
                     .opacity(model.selection == nil ? 0 : 1)
-                if model.selection == nil {
+                if model.selection == nil && !model.workspace.isOpen {
+                    WelcomeView(model: model)
+                } else if model.selection == nil {
                     ContentUnavailableView {
                         Label("No Drawing Selected", systemImage: "scribble.variable")
                     } description: {
@@ -88,6 +90,15 @@ struct Sidebar: View {
 
     var body: some View {
         List(selection: Binding(get: { model.listSelection }, set: { model.select($0) })) {
+            if let d = model.looseDrawing {
+                // Like VS Code's Open Editors: the open drawing, when no workspace folder holds it.
+                Section("Open Drawing") {
+                    DrawingRow(drawing: d)
+                        .tag(d.path)
+                        .draggable(URL(fileURLWithPath: d.path))
+                        .contextMenu { DrawingMenu(model: model, drawing: d) }
+                }
+            }
             ForEach(model.tree) { root in
                 Section(isExpanded: Binding(get: { model.isExpanded(root) }, set: { model.setExpanded(root, $0) })) {
                     if root.children.isEmpty {
@@ -126,13 +137,19 @@ struct Sidebar: View {
             if model.phase == .ready && model.roots.isEmpty {
                 if model.loaded {
                     ContentUnavailableView {
-                        Label("No Project Folders", systemImage: "folder.badge.plus")
+                        Label(model.workspace.isOpen ? "No Folders in Workspace" : "No Folder Open", systemImage: "folder.badge.plus")
                     } description: {
                         Text("Add a folder of drawings, such as a project's docs/diagrams, or drop one here from Finder.")
                     } actions: {
-                        Button("Add Project Folder…") { model.showAddFolderPanel() }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
+                        if model.workspace.isOpen {
+                            Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                        } else {
+                            Button("Open Folder…") { model.showOpenFolderPanel() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                        }
                     }
                 } else {
                     ProgressView()
@@ -148,6 +165,9 @@ struct Sidebar: View {
                 .disabled(model.phase != .ready || model.targetFolder == nil)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.workspace.isOpen { WorkspaceHeader(model: model) }
+        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Menu {
@@ -159,7 +179,7 @@ struct Sidebar: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel("Add")
-                .help("New drawing, new folder, or add a project folder")
+                .help("New drawing, new folder, or add a folder to the workspace")
                 Spacer()
             }
             .padding(10)
@@ -168,26 +188,143 @@ struct Sidebar: View {
     }
 }
 
-/// New Drawing, New Folder, then Add Project Folder: the sidebar's "+" menu and the File menu.
+/// New Drawing, New Folder, then Add Folder to Workspace: the sidebar's "+" menu (the File menu starts the same).
 struct NewItemMenu: View {
     let model: AppModel
-    var withOpen = false
+
+    var body: some View {
+        NewDrawingButtons(model: model)
+        Divider()
+        Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
+            .disabled(model.phase != .ready)
+    }
+}
+
+struct NewDrawingButtons: View {
+    let model: AppModel
 
     var body: some View {
         Button("New Drawing…") { model.newDrawing() }
             .keyboardShortcut("n")
-            .disabled(model.phase != .ready || model.targetFolder == nil)
+            .disabled(model.phase != .ready)
         Button("New Folder…") { model.newFolder() }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(model.phase != .ready || model.targetFolder == nil)
-        if withOpen {
-            Button("Open…") { model.showOpenPanel() }
-                .keyboardShortcut("o")
-                .disabled(model.phase != .ready)
+    }
+}
+
+/// The workspace's name above the tree, with its menu.
+struct WorkspaceHeader: View {
+    let model: AppModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.stack")
+                .foregroundStyle(.secondary)
+            Text(model.workspace.title)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(model.workspace.file.map { abbreviate($0.path) } ?? "Not saved yet. Save Workspace As… to keep it as a file.")
+            Spacer(minLength: 4)
+            Menu {
+                Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
+                Button("Save Workspace As…") { model.showSaveWorkspacePanel() }
+                if let f = model.workspace.file {
+                    Button("Show Workspace File in Finder") { model.reveal(f.path) }
+                }
+                Divider()
+                Button("Close Workspace") { model.closeWorkspace() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Workspace")
         }
-        Divider()
-        Button("Add Project Folder…") { model.showAddFolderPanel() }
-            .disabled(model.phase != .ready)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+}
+
+/// No workspace open: start drawing right away, or open a folder or a saved workspace.
+struct WelcomeView: View {
+    let model: AppModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: "scribble.variable")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tint)
+                    Text("Local Excalidraw").font(.largeTitle.weight(.semibold))
+                    Text("Drawings stay on this Mac, where you and your coding agents can both reach them.")
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Start").font(.title3.weight(.semibold))
+                    WelcomeAction(title: "New Drawing", detail: "A blank untitled drawing, saved in \(abbreviate(model.defaultRoot ?? "~/Excalidraw"))", icon: "square.and.pencil") {
+                        Task { await model.newUntitledDrawing() }
+                    }
+                    WelcomeAction(title: "Open Folder…", detail: "Show a folder's drawings, such as a project's docs/diagrams", icon: "folder") {
+                        model.showOpenFolderPanel()
+                    }
+                    WelcomeAction(title: "Open Workspace…", detail: "Several folders, saved as a .lfx-workspace file", icon: "square.stack") {
+                        model.showOpenWorkspacePanel()
+                    }
+                }
+                if !model.workspace.recents.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Recent").font(.title3.weight(.semibold))
+                        ForEach(model.workspace.recents) { r in
+                            WelcomeAction(title: r.name, detail: abbreviate(r.path), icon: r.kind == .workspace ? "square.stack" : "folder") {
+                                model.openRecent(r)
+                            }
+                            .contextMenu {
+                                Button("Show in Finder") { model.reveal(r.path) }
+                                Button("Remove from Recents") { model.workspace.forget(r) }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 460, alignment: .leading)
+            .padding(40)
+            .frame(maxWidth: .infinity)
+        }
+        .disabled(model.phase != .ready)
+    }
+}
+
+struct WelcomeAction: View {
+    let title: String
+    let detail: String
+    let icon: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
+            .background(hovering ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -342,6 +479,10 @@ struct FolderMenu: View {
         Divider()
         Button("Show in Finder") { model.reveal(folder.path) }
         Button("Copy Path") { model.copyPath(folder.path) }
+        if folder.isRoot {
+            Divider()
+            Button("Remove Folder from Workspace") { model.removeFromWorkspace(folder.path) }
+        }
     }
 }
 
@@ -414,11 +555,11 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Project Folders") {
+            Section("Workspace Folders") {
                 ForEach(model.roots, id: \.self) { r in
                     Text(abbreviate(r)).help(r)
                 }
-                Button("Add Project Folder…") { model.showAddFolderPanel() }
+                Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
             }
             Section("Coding agents") {
                 LabeledContent("Claude Code") {

@@ -226,6 +226,12 @@ final class Daemon: @unchecked Sendable {
         let _: Empty = try await request("POST", "/api/roots", body: ["path": dir.path])
     }
 
+    /// The always-allowed roots (~/Excalidraw unless LFX_ROOTS says otherwise).
+    func defaultRoots() async throws -> [String] {
+        let r: RootInfo = try await request("GET", "/api/roots")
+        return r.defaults
+    }
+
     func create(_ file: URL) async throws -> String {
         let r: PathResult = try await request("POST", "/api/new", body: ["path": file.path])
         return r.path
@@ -326,6 +332,7 @@ struct FileList: Decodable {
 
 private struct Empty: Decodable {}
 private struct PathResult: Decodable { let path: String }
+private struct RootInfo: Decodable { let defaults: [String] }
 private struct LoginCode: Decodable { let code: String }
 private struct Rendered: Decodable { let data: String; let mime: String }
 

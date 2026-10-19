@@ -17,7 +17,23 @@ struct LocalExcalidrawApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                NewItemMenu(model: model, withOpen: true)
+                NewDrawingButtons(model: model)
+                Divider()
+                Button("Open…") { model.showOpenPanel() }
+                    .keyboardShortcut("o")
+                    .disabled(model.phase != .ready)
+                Button("Open Folder…") { model.showOpenFolderPanel() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .disabled(model.phase != .ready)
+                Button("Add Folder to Workspace…") { model.showAddFolderPanel() }
+                    .disabled(model.phase != .ready)
+                Divider()
+                Button("Open Workspace…") { model.showOpenWorkspacePanel() }
+                    .disabled(model.phase != .ready)
+                Button("Save Workspace As…") { model.showSaveWorkspacePanel() }
+                    .disabled(!model.workspace.isOpen)
+                Button("Close Workspace") { model.closeWorkspace() }
+                    .disabled(!model.workspace.isOpen)
             }
             CommandGroup(after: .saveItem) {
                 Button("Export as SVG…") { model.export(format: "svg") }
@@ -47,10 +63,13 @@ struct LocalExcalidrawApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Finder double-click, drag onto the Dock icon, `open -a "Local Excalidraw" file.excalidraw`.
+    /// Finder double-click, drag onto the Dock icon, `open -a "Local Excalidraw" file.excalidraw` (or a .lfx-workspace).
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in
-            for url in urls where url.pathExtension == "excalidraw" { await AppModel.shared.open(url) }
+            for url in urls {
+                if url.pathExtension == "excalidraw" { await AppModel.shared.open(url) }
+                if url.pathExtension == "lfx-workspace" { await AppModel.shared.openWorkspace(url) }
+            }
         }
     }
 

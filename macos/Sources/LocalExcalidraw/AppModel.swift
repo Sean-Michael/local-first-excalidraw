@@ -15,9 +15,13 @@ final class AppModel {
 
     let daemon = Daemon()
     let editor: EditorController
+    let workspace = Workspace()
 
     var phase: Phase = .starting
-    var roots: [String] = []
+    /// Every root the daemon allows; the sidebar shows only the workspace's folders.
+    var daemonRoots: [String] = []
+    /// Where untitled drawings go (~/Excalidraw by default).
+    var defaultRoot: String?
     var drawings: [Drawing] = []
     var folders: [Folder] = []
     /// An older daemon someone started on purpose is running; offer to restart it.
@@ -61,6 +65,15 @@ final class AppModel {
 
     var selectedDrawing: Drawing? { drawings.first { $0.path == selection } }
 
+    /// The sidebar's roots: the workspace's folders, in its order.
+    var roots: [String] { workspace.folders }
+
+    /// The open drawing when it's outside every workspace folder (an untitled drawing, a file opened from Finder).
+    var looseDrawing: Drawing? {
+        guard let d = selectedDrawing, !roots.contains(where: { d.path.hasPrefix($0 + "/") }) else { return nil }
+        return d
+    }
+
     /// What the sidebar highlights: the picked folder, else the open drawing.
     var listSelection: String? { focusedFolder ?? selection }
 
@@ -73,10 +86,11 @@ final class AppModel {
         }
     }
 
-    /// Where New Drawing and New Folder act: the picked folder, else the open drawing's folder, else the first root.
+    /// Where New Drawing and New Folder act: the picked folder, else the open drawing's folder (when it's in the
+    /// workspace), else the first workspace folder. nil with no folders: New Drawing then makes an untitled one.
     var targetFolder: String? {
         if let f = focusedFolder { return f }
-        if let d = selectedDrawing { return (d.path as NSString).deletingLastPathComponent }
+        if let d = selectedDrawing, looseDrawing == nil { return (d.path as NSString).deletingLastPathComponent }
         return tree.first?.path ?? roots.first
     }
 
@@ -135,7 +149,11 @@ final class AppModel {
         do {
             outdatedDaemon = try await daemon.ensure()
             phase = .ready
+            // Workspace folders must be daemon roots to be readable; re-register in case the daemon forgot.
+            for f in workspace.folders { try? await daemon.registerRoot(URL(fileURLWithPath: f)) }
+            defaultRoot = try? await daemon.defaultRoots().first
             await refresh()
+            workspace.seedRecents(daemonRoots.filter { $0 != defaultRoot })
             let queued = pendingOpens
             pendingOpens = []
             for url in queued { await open(url) }
@@ -187,7 +205,7 @@ final class AppModel {
         guard phase == .ready else { return }
         do {
             let list = try await daemon.files()
-            if list.roots != roots { roots = list.roots }
+            if list.roots != daemonRoots { daemonRoots = list.roots }
             if list.drawings != drawings { drawings = list.drawings }
             let f = list.folders ?? []
             if f != folders { folders = f }
@@ -209,6 +227,7 @@ final class AppModel {
         do {
             try await daemon.registerRoot(url.deletingLastPathComponent())
             await refresh()
+            workspace.begin()
             selection = realPath(url.path)
         } catch {
             alert = error.localizedDescription
@@ -237,25 +256,115 @@ final class AppModel {
         Task { await open(url) }
     }
 
-    func showAddFolderPanel() {
+    private func chooseFolder(prompt: String) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.prompt = "Add Project Folder"
+        panel.prompt = prompt
         panel.message = "Drawings in this folder (and its subfolders) will appear in the sidebar, such as a project's docs/diagrams."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    func showAddFolderPanel() {
+        guard let url = chooseFolder(prompt: "Add to Workspace") else { return }
         Task { await addRoot(url) }
     }
 
-    func addRoot(_ url: URL) async {
+    /// Open Folder: a fresh untitled workspace with just this folder.
+    func showOpenFolderPanel() {
+        guard let url = chooseFolder(prompt: "Open") else { return }
+        Task { await addRoot(url, replacing: true) }
+    }
+
+    /// Registers the folder with the daemon (so it's allowed), then adds it to the workspace.
+    func addRoot(_ url: URL, replacing: Bool = false) async {
         do {
             try await daemon.registerRoot(url)
+            let path = realPath(url.path)
+            if replacing {
+                selection = nil
+                focusedFolder = nil
+                workspace.openFolder(path)
+            } else {
+                workspace.add(path)
+            }
+            collapsedRoots.remove(path)
             await refresh()
-            collapsedRoots.remove(realPath(url.path))
         } catch {
             alert = error.localizedDescription
         }
+    }
+
+    func removeFromWorkspace(_ path: String) {
+        workspace.remove(path)
+        if let f = focusedFolder, f == path || f.hasPrefix(path + "/") { focusedFolder = nil }
+    }
+
+    func showOpenWorkspacePanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [Workspace.fileType]
+        panel.message = "Open a saved workspace."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await openWorkspace(url) }
+    }
+
+    func openWorkspace(_ url: URL) async {
+        do {
+            try workspace.open(file: url)
+            selection = nil
+            focusedFolder = nil
+            for f in workspace.folders { try? await daemon.registerRoot(URL(fileURLWithPath: f)) }
+            await refresh()
+        } catch {
+            alert = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func showSaveWorkspacePanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [Workspace.fileType]
+        panel.nameFieldStringValue = workspace.file?.lastPathComponent ?? "\((roots.first as NSString?)?.lastPathComponent ?? "Untitled").lfx-workspace"
+        panel.directoryURL = workspace.file?.deletingLastPathComponent() ?? roots.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+        panel.message = "Folder paths are saved relative to this file where possible."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try workspace.save(to: url)
+        } catch {
+            alert = error.localizedDescription
+        }
+    }
+
+    /// Back to the Welcome view.
+    func closeWorkspace() {
+        selection = nil
+        focusedFolder = nil
+        workspace.close()
+    }
+
+    func openRecent(_ r: Workspace.Recent) {
+        let url = URL(fileURLWithPath: r.path)
+        guard FileManager.default.fileExists(atPath: r.path) else {
+            workspace.forget(r)
+            alert = "\(abbreviate(r.path)) no longer exists."
+            return
+        }
+        Task {
+            switch r.kind {
+            case .folder: await addRoot(url, replacing: true)
+            case .workspace: await openWorkspace(url)
+            }
+        }
+    }
+
+    /// A blank "Untitled N" drawing in the default root, open right away.
+    func newUntitledDrawing() async {
+        guard let dir = defaultRoot ?? daemonRoots.first else { return }
+        var n = 1
+        while FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent("Untitled \(n).excalidraw")) { n += 1 }
+        workspace.begin()
+        focusedFolder = nil
+        await createDrawing(name: "Untitled \(n)", in: dir)
     }
 
     /// Something dropped on the sidebar: drawings move into `dir` (a folder or a drawing's folder),
@@ -343,12 +452,18 @@ final class AppModel {
     /// Folders a drawing can move to: every root and listed folder except its own.
     func moveTargets(for d: Drawing) -> [String] {
         let here = (d.path as NSString).deletingLastPathComponent
-        return (roots + folders.map(\.path)).filter { $0 != here }
+        let inWorkspace = folders.map(\.path).filter { p in roots.contains { p.hasPrefix($0 + "/") } }
+        return (roots + inWorkspace).filter { $0 != here }
     }
 
     /// Opens the New Drawing sheet, starting in `dir` or else the selection's folder.
+    /// With no folder to put it in (Welcome view, empty workspace), makes an untitled drawing instead.
     func newDrawing(in dir: String? = nil) {
-        newDrawingFolder = dir ?? targetFolder
+        guard let start = dir ?? targetFolder else {
+            Task { await newUntitledDrawing() }
+            return
+        }
+        newDrawingFolder = start
         showingNewDrawing = true
     }
 

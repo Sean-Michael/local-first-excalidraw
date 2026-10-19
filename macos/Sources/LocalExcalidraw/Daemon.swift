@@ -167,8 +167,7 @@ final class Daemon: @unchecked Sendable {
         let p = Process()
         p.executableURL = runtime.node
         p.arguments = [runtime.cli.path, "serve"]
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = Runtime.searchPath
+        var env = Runtime.daemonEnvironment
         env["LFX_NO_BROWSER"] = "1"
         env.removeValue(forKey: "LFX_IDLE_EXIT_MIN")
         // Unless the user wants it kept, the daemon exits with this app, even after a crash or force quit.
@@ -343,6 +342,76 @@ enum Runtime {
         "/opt/homebrew/bin", "/usr/local/bin", NSHomeDirectory() + "/.volta/bin",
         "/usr/bin", "/bin", "/usr/sbin", "/sbin",
     ].joined(separator: ":")
+
+    /// The environment the daemon (and the `claude` it spawns) runs with: this app's, plus what the
+    /// user's login shell exports. Apps opened from Finder or the Dock get launchd's bare environment,
+    /// so without this, settings like CLAUDE_CODE_USE_BEDROCK and AWS_PROFILE from ~/.zshrc are lost
+    /// and Claude Code falls back to asking for /login.
+    static let daemonEnvironment: [String: String] = {
+        var env = ProcessInfo.processInfo.environment
+        let shell = loginShellEnvironment() ?? [:]
+        for (k, v) in shell where !shellOnlyKeys.contains(k) { env[k] = v }
+        env["PATH"] = mergePaths(shell["PATH"], searchPath)
+        return env
+    }()
+
+    /// Per-shell bookkeeping that shouldn't leak into the daemon.
+    private static let shellOnlyKeys: Set<String> = ["PWD", "OLDPWD", "SHLVL", "_", "TERM", "TERM_PROGRAM", "PS1"]
+
+    /// Joins PATH lists, keeping the first occurrence of each directory.
+    static func mergePaths(_ lists: String?...) -> String {
+        var seen = Set<String>()
+        return lists.compactMap { $0 }.flatMap { $0.split(separator: ":").map(String.init) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }.joined(separator: ":")
+    }
+
+    /// Runs the user's shell as an interactive login shell (so both ~/.zprofile and ~/.zshrc are read)
+    /// and captures its environment. Returns nil if the shell fails or takes longer than a few seconds.
+    static func loginShellEnvironment(timeout: TimeInterval = 5) -> [String: String]? {
+        let env = ProcessInfo.processInfo.environment
+        if env["LFX_NO_SHELL_ENV"] == "1" { return nil }
+        let shell = env["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
+        // A marker separates the environment from anything the rc files print.
+        let marker = "__LFX_ENV_\(UUID().uuidString)__"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: shell)
+        p.arguments = ["-i", "-l", "-c", "printf '%s' \(marker); /usr/bin/env -0"]
+        var childEnv = env
+        childEnv["LFX_RESOLVING_SHELL_ENV"] = "1"
+        p.environment = childEnv
+        let out = Pipe()
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch {
+            NSLog("lfx: could not run \(shell) to read the login environment: \(error)")
+            return nil
+        }
+        let done = DispatchSemaphore(value: 0)
+        var data = Data()
+        DispatchQueue.global().async {
+            data = out.fileHandleForReading.readDataToEndOfFile()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            p.terminate()
+            NSLog("lfx: \(shell) took longer than \(Int(timeout))s to start; using the app's environment.")
+            return nil
+        }
+        p.waitUntilExit()
+        return parseEnv(data, after: marker)
+    }
+
+    /// Parses `env -0` output that follows `marker`.
+    static func parseEnv(_ data: Data, after marker: String) -> [String: String]? {
+        guard let m = marker.data(using: .utf8), let r = data.range(of: m) else { return nil }
+        var result: [String: String] = [:]
+        for entry in data[r.upperBound...].split(separator: 0) {
+            guard let s = String(data: Data(entry), encoding: .utf8), let eq = s.firstIndex(of: "=") else { continue }
+            result[String(s[..<eq])] = String(s[s.index(after: eq)...])
+        }
+        return result.isEmpty ? nil : result
+    }
 
     static func locate() throws -> (node: URL, cli: URL) {
         guard let cli = cliScript() else {

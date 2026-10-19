@@ -96,11 +96,20 @@ If something you deleted reappears, delete it again and reload any other tab tha
 
 Clicking a code link runs the editor set by `LFX_EDITOR`, else the `editor` key in `~/.local-first-excalidraw/editor.json`, else VS Code. The full list of values is in [Opening code](projects.md#opening-code).
 
-- The daemon reads `LFX_EDITOR` from its own environment. The macOS app starts the daemon without your shell's variables, so use `editor.json` instead: `{"editor": "zed"}`. It's read on every click, so no restart is needed.
+- The daemon reads `LFX_EDITOR` from its own environment, so changing it needs a daemon restart. `editor.json` is read on every click, so no restart is needed there: `{"editor": "zed"}`.
 - A `code`, `cursor` or `zed` command that isn't on the daemon's `PATH` (or in `/usr/local/bin`, `/opt/homebrew/bin` or `/snap/bin`) falls back to the editor's URL scheme (`vscode://`, `cursor://`, `zed://`), which opens whichever app has registered it.
 - `$EDITOR` must be a GUI editor; the daemon has no terminal. If neither `VISUAL` nor `EDITOR` is set in the daemon's environment, the click fails with `LFX_EDITOR is $EDITOR, but neither VISUAL nor EDITOR is set`.
 - `Could not start …` means the configured command wasn't found or couldn't run.
 - Links with a scheme (`https://…`) or an absolute path are ordinary links and open in the browser.
+
+## The Claude Code assistant asks for `/login` (Bedrock, Vertex, proxies)
+
+The assistant runs `claude` with the daemon's environment. If you set up Claude Code through environment variables (`CLAUDE_CODE_USE_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_BASE_URL`, …) and they're missing, `claude` falls back to Anthropic sign-in and reports that `/login` is required.
+
+- Apps opened from Finder or the Dock don't get your shell's variables. To work around that, the macOS app runs your `$SHELL` once as an interactive login shell when it starts the daemon and copies the variables it exports. Anything in `~/.zprofile` or `~/.zshrc` should reach `claude`.
+- An already-running daemon keeps the environment it started with. Quit the app, run `lfx stop` if you keep the daemon running, and open the app again.
+- If your shell takes more than 5 seconds to start, the app gives up and uses its own environment; the system log shows `lfx: … took longer than 5s`. Put the variables in the `env` block of `~/.claude/settings.json` instead, where Claude Code reads them no matter how it was started.
+- While the app reads your environment, `LFX_RESOLVING_SHELL_ENV=1` is set, so rc files can skip slow or interactive steps. `LFX_NO_SHELL_ENV=1` turns the lookup off.
 
 ## The MCP server can't see the project
 

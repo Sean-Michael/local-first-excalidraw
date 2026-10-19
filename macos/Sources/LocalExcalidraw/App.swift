@@ -17,14 +17,7 @@ struct LocalExcalidrawApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Drawing…") { model.showingNewDrawing = true }
-                    .keyboardShortcut("n")
-                    .disabled(model.phase != .ready)
-                Button("Open…") { model.showOpenPanel() }
-                    .keyboardShortcut("o")
-                    .disabled(model.phase != .ready)
-                Button("Add Folder…") { model.showAddFolderPanel() }
-                    .disabled(model.phase != .ready)
+                NewItemMenu(model: model, withOpen: true)
             }
             CommandGroup(after: .saveItem) {
                 Button("Export as SVG…") { model.export(format: "svg") }

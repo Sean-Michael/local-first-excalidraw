@@ -41,8 +41,14 @@ final class AppModel {
     var selection: String? {
         didSet { if selection != oldValue { editor.show(selection) } }
     }
+    /// A folder picked in the sidebar. The editor keeps showing `selection`; New Drawing and New Folder go here.
+    var focusedFolder: String?
     var search = ""
     var showingNewDrawing = false
+    /// Where the New Drawing sheet starts.
+    var newDrawingFolder: String?
+    /// The first file list has arrived, so an empty `roots` really means none.
+    var loaded = false
     var alert: String?
 
     /// Files handed to the app (Finder, `open -a`) before the daemon was ready.
@@ -54,6 +60,32 @@ final class AppModel {
     }
 
     var selectedDrawing: Drawing? { drawings.first { $0.path == selection } }
+
+    /// What the sidebar highlights: the picked folder, else the open drawing.
+    var listSelection: String? { focusedFolder ?? selection }
+
+    func select(_ path: String?) {
+        if let path, !drawings.contains(where: { $0.path == path }) {
+            focusedFolder = path
+        } else {
+            focusedFolder = nil
+            selection = path
+        }
+    }
+
+    /// Where New Drawing and New Folder act: the picked folder, else the open drawing's folder, else the first root.
+    var targetFolder: String? {
+        if let f = focusedFolder { return f }
+        if let d = selectedDrawing { return (d.path as NSString).deletingLastPathComponent }
+        return tree.first?.path ?? roots.first
+    }
+
+    /// Every folder a drawing can go in, grouped by root (top level first), for the New Drawing sheet.
+    var folderChoices: [(root: String, folders: [String])] {
+        DrawingTree.build(roots: roots, drawings: drawings, folders: folders, filter: "").map { root in
+            (root.path, DrawingTree.folderPaths(in: root))
+        }
+    }
 
     /// The sidebar tree: one per root, by folder, filtered by the search field.
     var tree: [TreeNode] {
@@ -72,6 +104,17 @@ final class AppModel {
             expanded.insert(node.path)
         } else {
             expanded.remove(node.path)
+        }
+    }
+
+    /// Opens `dir` and every folder above it, so its contents show.
+    func expandDown(to dir: String) {
+        guard let root = tree.first(where: { dir == $0.path || dir.hasPrefix($0.path + "/") })?.path else { return }
+        collapsedRoots.remove(root)
+        var p = root
+        for part in dir.dropFirst(root.count).split(separator: "/") {
+            p += "/" + part
+            expanded.insert(p)
         }
     }
 
@@ -148,6 +191,8 @@ final class AppModel {
             if list.drawings != drawings { drawings = list.drawings }
             let f = list.folders ?? []
             if f != folders { folders = f }
+            loaded = true
+            if let ff = focusedFolder, !roots.contains(ff), !folders.contains(where: { $0.path == ff }) { focusedFolder = nil }
         } catch {
             // The daemon went away (`lfx stop`, crash). Bring it back.
             if (try? await daemon.healthy()) != true { await start() }
@@ -197,17 +242,42 @@ final class AppModel {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.prompt = "Add Folder"
-        panel.message = "Drawings in this folder (and its subfolders) will appear in the sidebar."
+        panel.prompt = "Add Project Folder"
+        panel.message = "Drawings in this folder (and its subfolders) will appear in the sidebar, such as a project's docs/diagrams."
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
-            do {
-                try await daemon.registerRoot(url)
-                await refresh()
-            } catch {
-                alert = error.localizedDescription
+        Task { await addRoot(url) }
+    }
+
+    func addRoot(_ url: URL) async {
+        do {
+            try await daemon.registerRoot(url)
+            await refresh()
+            collapsedRoots.remove(realPath(url.path))
+        } catch {
+            alert = error.localizedDescription
+        }
+    }
+
+    /// Something dropped on the sidebar: drawings move into `dir` (a folder or a drawing's folder),
+    /// Finder folders become project folders, other .excalidraw files open.
+    func drop(_ urls: [URL], into dir: String?) -> Bool {
+        var handled = false
+        for url in urls where url.isFileURL {
+            let path = realPath(url.path)
+            var isDir: ObjCBool = false
+            if let d = drawings.first(where: { $0.path == path }) {
+                guard let dir, (path as NSString).deletingLastPathComponent != dir else { continue }
+                Task { await move(d, to: dir); expandDown(to: dir) }
+                handled = true
+            } else if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                Task { await addRoot(url) }
+                handled = true
+            } else if url.pathExtension == "excalidraw" {
+                Task { await open(url) }
+                handled = true
             }
         }
+        return handled
     }
 
     func export(format: String) {
@@ -276,21 +346,28 @@ final class AppModel {
         return (roots + folders.map(\.path)).filter { $0 != here }
     }
 
-    func askNewDrawing(in folder: TreeNode) {
-        prompt = Prompt(title: "New Drawing in \(folder.name)", value: "", confirm: "Create") { [weak self] name in
-            await self?.createDrawing(name: name, in: folder.path)
-        }
+    /// Opens the New Drawing sheet, starting in `dir` or else the selection's folder.
+    func newDrawing(in dir: String? = nil) {
+        newDrawingFolder = dir ?? targetFolder
+        showingNewDrawing = true
     }
 
-    func askNewFolder(in folder: TreeNode) {
-        prompt = Prompt(title: "New Folder in \(folder.name)", value: "", confirm: "Create") { [weak self] name in
+    func newFolder() {
+        if let dir = targetFolder { askNewFolder(in: dir) }
+    }
+
+    func askNewFolder(in dir: String) {
+        let name = (dir as NSString).lastPathComponent
+        prompt = Prompt(title: "New Folder in \(name)", value: "", confirm: "Create") { [weak self] name in
             guard let self else { return }
             let clean = name.trimmingCharacters(in: .whitespaces)
             guard !clean.isEmpty else { return }
             do {
-                _ = try await self.daemon.newFolder((folder.path as NSString).appendingPathComponent(clean))
-                self.setExpanded(folder, true)
+                let made = try await self.daemon.newFolder((dir as NSString).appendingPathComponent(clean))
+                self.expandDown(to: dir)
                 await self.refresh()
+                // Pick it, so the next New Drawing lands inside.
+                self.focusedFolder = made
             } catch {
                 self.alert = error.localizedDescription
             }
@@ -311,6 +388,7 @@ final class AppModel {
             do {
                 let to = try await self.daemon.renameFolder(folder.path, to: clean)
                 if let s = self.selection, s.hasPrefix(folder.path + "/") { self.selection = to + s.dropFirst(folder.path.count) }
+                if let f = self.focusedFolder, f == folder.path || f.hasPrefix(folder.path + "/") { self.focusedFolder = to + f.dropFirst(folder.path.count) }
                 self.expanded = Set(self.expanded.map { $0 == folder.path || $0.hasPrefix(folder.path + "/") ? to + $0.dropFirst(folder.path.count) : $0 })
                 await self.refresh()
             } catch {

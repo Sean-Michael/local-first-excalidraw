@@ -76,6 +76,11 @@ enum DrawingTree {
         return n
     }
 
+    /// The folders below `node`, depth first, in sidebar order.
+    static func folderPaths(in node: TreeNode) -> [String] {
+        node.children.filter(\.isFolder).flatMap { [$0.path] + folderPaths(in: $0) }
+    }
+
     /// The folders to expand so `file` shows: everything from its root down.
     static func ancestors(of file: String, in tree: [TreeNode]) -> [String] {
         guard let root = tree.first(where: { file.hasPrefix($0.path + "/") }) else { return [] }

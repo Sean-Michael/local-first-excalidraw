@@ -1,8 +1,10 @@
-// Renders the app icon (the favicon's mark on a macOS-style rounded square) into an .iconset.
+// Renders the app icon (icon-mark.svg on a macOS-style rounded square) into an .iconset.
 // Usage: swift make-icon.swift OUT.iconset
 import AppKit
 
 let out = URL(fileURLWithPath: CommandLine.arguments[1])
+let markURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appending(path: "icon-mark.svg")
+let mark = NSImage(contentsOf: markURL)!
 try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 
 func render(_ px: Int) -> Data {
@@ -20,18 +22,9 @@ func render(_ px: Int) -> Data {
     shadow.shadowOffset = NSSize(width: 0, height: -8 * s)
     shadow.set()
     let bg = NSBezierPath(roundedRect: body, xRadius: 185 * s, yRadius: 185 * s)
-    NSGradient(starting: NSColor(srgbRed: 0.49, green: 0.47, blue: 0.91, alpha: 1),
-               ending: NSColor(srgbRed: 0.37, green: 0.35, blue: 0.82, alpha: 1))!.draw(in: bg, angle: -90)
+    NSGradient(starting: .white, ending: NSColor(white: 0.93, alpha: 1))!.draw(in: bg, angle: -90)
     NSShadow().set()
-    let tri = NSBezierPath()
-    tri.move(to: NSPoint(x: 512 * s, y: 730 * s))
-    tri.line(to: NSPoint(x: 740 * s, y: 310 * s))
-    tri.line(to: NSPoint(x: 284 * s, y: 310 * s))
-    tri.close()
-    tri.lineWidth = 70 * s
-    tri.lineJoinStyle = .round
-    NSColor.white.setStroke()
-    tri.stroke()
+    mark.draw(in: NSRect(x: 252 * s, y: 252 * s, width: 520 * s, height: 520 * s))
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }

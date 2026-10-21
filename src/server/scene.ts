@@ -493,7 +493,7 @@ const TYPE_GUESSES: Record<string, string> = {
   label: "text", note: "text", connector: "arrow", edge: "arrow", link: "arrow", group: "frame", container: "frame",
 };
 
-function editDistance(a: string, b: string): number {
+export function editDistance(a: string, b: string): number {
   const d = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
     let prev = d[0];
@@ -505,6 +505,35 @@ function editDistance(a: string, b: string): number {
     }
   }
   return d[b.length];
+}
+
+/** The candidate nearest to `word` by edit distance, if it's within `max` edits. */
+export function closest(word: string, candidates: Iterable<string>, max = 3): string | undefined {
+  let best: string | undefined;
+  let bestD = max + 1;
+  for (const c of candidates) {
+    const d = editDistance(word.toLowerCase(), c.toLowerCase());
+    if (d < bestD) [best, bestD] = [c, d];
+  }
+  return best;
+}
+
+/** Members of a group, for ids that name a group rather than an element. */
+function groupMembers(all: Map<string, El>, groupId: string): El[] {
+  return [...all.values()].filter((e) => !e.isDeleted && e.groupIds?.includes(groupId));
+}
+
+/** "Element not found", saying when the id is a group's and suggesting a near id otherwise. */
+function notFound(all: Map<string, El>, id: string): SceneError {
+  const members = groupMembers(all, id);
+  if (members.length) {
+    const ids = members.filter((e) => !e.containerId).map((e) => e.id);
+    return new SceneError(
+      `"${id}" is a group id, not an element id. Its members are ${ids.join(", ")}: update them by id (delete_elements accepts the group id).`,
+    );
+  }
+  const near = closest(id, [...all.values()].filter((e) => !e.isDeleted).map((e) => e.id), 2);
+  return new SceneError(`Element "${id}" not found${near ? `; did you mean "${near}"?` : ""}`);
 }
 
 /** Throws a SceneError naming the closest known type when `type` isn't one. */
@@ -698,6 +727,80 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
   return { elements: order.map((id) => all.get(id)!), created };
 }
 
+/**
+ * Labels of a new diagram's nodes that the drawing already shows, when most of them do: the sign
+ * that a model drew the same diagram again instead of editing the one it made. Compares first
+ * lines (skipping a «stereotype») without case, spaces or punctuation, so "Order Service" matches
+ * "OrderService" and class compartments don't hide a match.
+ */
+export function repeatedLabels(existing: El[], labels: string[]): string[] {
+  const first = (t: string) => t.split("\n").find((l) => l.trim() && !/^«.*»$/.test(l.trim()))?.trim().toLowerCase() ?? "";
+  const key = (t: string) => t.replace(/[^\p{L}\p{N}]/gu, "");
+  const wanted = new Map<string, string>();
+  for (const l of labels) {
+    const f = first(l);
+    if (key(f) && !wanted.has(key(f))) wanted.set(key(f), f);
+  }
+  if (wanted.size < 2) return [];
+  const have = new Set(live(existing).filter((e) => e.type === "text").flatMap((e) => String(e.text ?? "").split("\n").map((l) => key(l.trim().toLowerCase()))));
+  const hits = [...wanted].filter(([k]) => have.has(k)).map(([, f]) => f);
+  return hits.length / wanted.size >= 0.8 ? hits : [];
+}
+
+/** The note create_diagram and mermaid_to_drawing add when they drew a diagram that was already there. */
+export function repeatedNote(labels: string[], prefix = "", replaceable = true): string {
+  return (
+    `The drawing already had nodes labelled ${labels.slice(0, 6).map((l) => `"${l}"`).join(", ")}${labels.length > 6 ? ", …" : ""}, so this added a second copy beside them${prefix ? ` (its ids start with "${prefix}")` : ""}. ` +
+    "To change a diagram you drew, edit it in place (update_elements, apply_changes); delete_elements removes this copy." +
+    (replaceable ? " Use replace: true only when the user asks to start over." : "")
+  );
+}
+
+/**
+ * Cuts gaps in sequence-diagram lifelines (long, ungrouped vertical lines) where a message label
+ * or fragment guard crosses them, so the line doesn't run through the text. The first piece keeps
+ * the line's id; the others get "<id>-2", "<id>-3", ….
+ */
+export function gapLifelines(elements: El[]): El[] {
+  const PAD = 4;
+  const texts = elements.filter((e) => e.type === "text" && !e.isDeleted);
+  const ids = new Set(elements.map((e) => e.id));
+  const out: El[] = [];
+  for (const e of elements) {
+    const pts = e.points as number[][] | undefined;
+    const lifeline =
+      e.type === "line" && !e.isDeleted && !e.groupIds?.length && pts?.length === 2 && pts[0][0] === 0 && pts[1][0] === 0 && pts[1][1] > 200;
+    if (!lifeline) {
+      out.push(e);
+      continue;
+    }
+    const top = e.y as number;
+    const bottom = top + pts![1][1];
+    const cuts = texts
+      .filter((t) => t.x - PAD <= e.x && e.x <= t.x + t.width + PAD && t.y + t.height > top && t.y < bottom)
+      .map((t) => [Math.max(top, t.y - PAD), Math.min(bottom, t.y + t.height + PAD)] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    if (!cuts.length) {
+      out.push(e);
+      continue;
+    }
+    const pieces: [number, number][] = [];
+    let y = top;
+    for (const [a, b] of cuts) {
+      if (a > y + 2) pieces.push([y, a]);
+      y = Math.max(y, b);
+    }
+    if (bottom > y + 2) pieces.push([y, bottom]);
+    pieces.forEach(([a, b], n) => {
+      let id = e.id;
+      if (n) for (let k = n + 1; ids.has((id = `${e.id}-${k}`)); k++);
+      ids.add(id);
+      out.push({ ...e, id, y: a, height: b - a, points: [[0, 0], [0, b - a]], seed: n ? randInt() : e.seed, versionNonce: randInt() });
+    });
+  }
+  return out;
+}
+
 export function bounds(els: El[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
   const ls = live(els);
   if (!ls.length) return null;
@@ -832,7 +935,7 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
 
   for (const u of updates) {
     const cur = all.get(u.id);
-    if (!cur || cur.isDeleted) throw new SceneError(`Element "${u.id}" not found`);
+    if (!cur || cur.isDeleted) throw notFound(all, u.id);
     const patch: Partial<El> = {};
     for (const [k, v] of Object.entries(u)) {
       if (IMMUTABLE.has(k) || k === "label" || k === "color" || k === "code" || v === undefined) continue;
@@ -945,9 +1048,12 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
 export function deleteElements(existing: El[], ids: string[]): { elements: El[]; deleted: string[] } {
   const all = new Map(existing.map((e) => [e.id, e]));
   const doomed = new Set<string>();
-  for (const id of ids) {
+  // A group id deletes the whole group.
+  const expanded = ids.flatMap((id) => (all.get(id) ? [id] : groupMembers(all, id).map((e) => e.id)));
+  for (const id of ids) if (!all.get(id) && !groupMembers(all, id).length) throw notFound(all, id);
+  for (const id of expanded) {
     const e = all.get(id);
-    if (!e || e.isDeleted) throw new SceneError(`Element "${id}" not found`);
+    if (!e || e.isDeleted) throw notFound(all, id);
     doomed.add(id);
     for (const b of e.boundElements ?? []) if (b.type === "text") doomed.add(b.id);
     if (e.type === "frame") {
@@ -976,11 +1082,11 @@ export function deleteElements(existing: El[], ids: string[]): { elements: El[];
 export function connectArrow(existing: El[], arrowId: string, fromId: string, toId: string): El[] {
   const all = new Map(existing.map((e) => [e.id, e]));
   const arrow = all.get(arrowId);
-  if (!arrow || arrow.isDeleted) throw new SceneError(`Element "${arrowId}" not found`);
+  if (!arrow || arrow.isDeleted) throw notFound(all, arrowId);
   if (arrow.type !== "arrow") throw new SceneError(`Element "${arrowId}" is a ${arrow.type}, not an arrow`);
   const end = (id: string) => {
     const e = all.get(id);
-    if (!e || e.isDeleted) throw new SceneError(`Element "${id}" not found`);
+    if (!e || e.isDeleted) throw notFound(all, id);
     if (LINEAR.has(e.type) || (e.type === "text" && e.containerId)) throw new SceneError(`Can't bind an arrow to ${e.type} "${id}"`);
     return e;
   };
@@ -1145,8 +1251,9 @@ export function arrangeElements(existing: El[], ids: string[], how: { align?: Al
   const byId = new Map(ls.map((e) => [e.id, e]));
   const units = new Map<string, { anchor: El; box: { minX: number; minY: number; maxX: number; maxY: number } }>();
   for (const raw of ids) {
-    let e = byId.get(raw);
-    if (!e) throw new SceneError(`Element "${raw}" not found`);
+    // A group id stands for the whole group, which moves as one unit anyway.
+    let e = byId.get(raw) ?? groupMembers(byId, raw)[0];
+    if (!e) throw notFound(byId, raw);
     if (e.type === "text" && e.containerId && byId.has(e.containerId)) e = byId.get(e.containerId)!;
     if (LINEAR.has(e.type)) throw new SceneError(`"${raw}" is ${e.type === "arrow" ? "an arrow" : "a line"}; arrange the shapes it connects instead`);
     const group = e.groupIds?.at(-1);

@@ -123,6 +123,7 @@ Check the x/y against `read_drawing` first: Mermaid output is placed to the righ
 - **Replies drawn as calls,** or replies missing where the response carries meaning.
 - **Message labels that are prose.** Use the operation name, endpoint or event name from the code.
 - **Hiding async hops.** If a queue sits between two services, make the queue a participant.
+- **Messages outside the fragment they belong to.** A message that happens only in one branch goes inside that `alt` branch. For example, "GET bottle" belongs in `[bottle available]`, not before the `alt`.
 
 ## Activity diagram (and flowcharts)
 

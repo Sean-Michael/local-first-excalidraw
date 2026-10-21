@@ -6,7 +6,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { z } from "zod";
 import {
   applyChatEvent,
   type AssistantItem,
@@ -20,6 +19,7 @@ import {
   type ToolCatalog,
   type UserItem,
 } from "../../shared/chat.js";
+import { checkArgs } from "../args.js";
 import { readJson, writeFileAtomic } from "../config.js";
 import { CodeError, readFile } from "../code.js";
 import { codeRefOf } from "../codelinks.js";
@@ -43,12 +43,41 @@ import { listTopics } from "../references.js";
 import { codeTools, drawingTools, jsonSchema, relPath, type ToolContext, type ToolDef } from "../tools.js";
 import { AnthropicProvider, DEFAULT_ANTHROPIC_MODEL } from "./anthropic.js";
 import { runClaudeCode } from "./claude-code.js";
-import { OllamaProvider } from "./ollama.js";
+import { DEFAULT_CONTEXT, OllamaProvider } from "./ollama.js";
 import { OpenAIProvider } from "./openai.js";
 import { apiKeyFor, type Endpoint, findClaude, type SettingsStore } from "./settings.js";
 import { type Msg, type Part, type Provider, ProviderError, type ToolCall, type ToolResult, type Usage } from "./types.js";
 
 const MAX_STEPS = 40;
+/** Refused repeats (of a failed call, or of a read-only call already run twice) before the turn stops. */
+const MAX_REPEATS = 2;
+/** Times the same read-only call (same tool and arguments) runs before repeats are refused. */
+const MAX_SAME_READS = 2;
+
+/** A request that refers to the user's code, so its diagram should use the code's names. */
+const CODE_REQUEST = /\b(code|codebase|source|repo|repository|project|files?|implementation|modules?|functions?|class(es)?)\b|\bsrc\/|\w\.(ts|tsx|js|jsx|py|go|rs|java|rb|swift|kt|cs)\b/i;
+/** Tools whose success means the model looked at the code itself, not just its file names. */
+const CODE_READS = new Set(["read_file", "outline_file", "find_symbol", "search_files"]);
+const UNREAD_CODE =
+  "Note: the request refers to the project's code, but you drew this without reading any of it, so its names are guesses. Now find the real names (find_symbol, search_files, outline_file, read_file), then update these nodes in place with update_elements: the code's names as labels and `code` links to where each is defined. Don't draw the diagram again.";
+
+/** Why a reply stopped early. Ollama stops at the context window, as it sets no output cap. */
+function cutOff(window: number | undefined): string {
+  return window
+    ? `The reply was cut off: the conversation filled the model's ${window.toLocaleString("en-US")}-token context window. Start a new chat, or raise the endpoint's context length in the assistant settings.`
+    : "The reply was cut off (output limit reached).";
+}
+
+/** Tool arguments with keys sorted, so the same call compares equal however it was written. */
+function canonicalArgs(args: string): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sort) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])])) : v;
+  try {
+    return JSON.stringify(sort(JSON.parse(args || "{}")));
+  } catch {
+    return args;
+  }
+}
 const MAX_DRAWING_CHARS = 6_000;
 const MAX_MENTION_CHARS = 40_000;
 const MAX_TOOL_TEXT = 30_000;
@@ -142,8 +171,11 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
       ? "- Drawing tools need `path`: pass the open drawing's path from the context unless the user asks for a different drawing."
       : "- Drawing tools act on the open drawing when you omit `path`; pass a path only to read or create a different drawing.",
     o.mermaidOnly ? "" : "- Call excalidraw_guide once before your first edit in a conversation: it has the sizing rules, layout anti-patterns and error recovery.",
+    o.mermaidOnly
+      ? ""
+      : "- Order of work for a new diagram: (1) if the request mentions the code or the project, explore it first (see below) and use its names; (2) if it mentions shapes, icons or the library, call list_shapes before drawing; (3) for a diagram type you haven't drawn in this conversation, call diagram_reference; (4) draw; (5) check the result. When a tool returns an error, read it and change what it names: resending the same call fails the same way.",
     "- \"This\", \"these\" and \"the selection\" mean the selected elements listed in the context. Change them by id with update_elements, arrange_elements or delete_elements. Keep ids stable: edit in place rather than deleting and re-adding, and never redraw the whole drawing (create_diagram replace: true) unless the user asks to start over, because it throws away their layout and styling.",
-    "- For new diagrams prefer create_diagram (automatic layout); mermaid_to_drawing keeps only flowcharts and sequence diagrams editable. Use add_elements for notes and precise placement, and apply_changes for a planned set of adds, updates and deletes in one step. New content goes to the right of existing content unless you position it.",
+    "- For new diagrams prefer create_diagram (automatic layout); draw sequence diagrams (lifelines, ordered messages, alt and loop) with mermaid_to_drawing and a sequenceDiagram, which also keeps flowcharts editable but turns other Mermaid types into an image. Use add_elements for notes and precise placement, and apply_changes for a planned set of adds, updates and deletes in one step. New content goes to the right of existing content unless you position it.",
     o.mermaidOnly
       ? ""
       : "- Pick the kind of diagram from the question it answers, then use that notation's real symbols, not generic boxes and arrows. Architecture: C4 (context, container, component, deployment). Software design: UML, structural (class, object, package, component, composite structure, deployment) or behavioural (use case, activity, state machine, and the interaction diagrams: sequence, communication, interaction overview, timing). Data: ER. Security: data flow with trust boundaries. Also infrastructure and messaging. diagram_reference has the notation and a ready create_diagram recipe for each: call it with the diagram described in your own words (\"uml class diagram\", \"use case\"), or with no topic for the list, before drawing a type you haven't drawn in this conversation.",
@@ -834,6 +866,17 @@ export class Assistant {
     // Each model span records only what's new since the previous call: the user message, then tool results.
     let seen = c.messages.length - 1;
     let retries = 0;
+    const failed = new Map<string, { error: string; repeats: number }>();
+    const reads = new Map<string, { count: number; refused: number; result: string }>();
+    // Weaker models draw a codebase from memory. When the request is about the code and the turn
+    // hasn't read any (mentioned files come with their contents), the first diagram says so, once.
+    const aboutCode = code && CODE_REQUEST.test(req.text);
+    let readCode = req.mentions.some((m) => m.kind !== "drawing");
+    let nudged = false;
+    // Small context windows fill after a few big results (a read_drawing with include_json): keep
+    // each tool result to about a tenth of the window.
+    const window = ep.kind === "ollama" ? (ep.contextLength ?? DEFAULT_CONTEXT) : undefined;
+    const toolLimit = window ? Math.min(MAX_TOOL_TEXT, Math.round(window * 0.4)) : MAX_TOOL_TEXT;
     for (let step = 0; step < MAX_STEPS; step++) {
       let partial = "";
       let res;
@@ -925,22 +968,74 @@ export class Assistant {
         return undefined;
       }
       if (!res.toolCalls.length) {
-        if (res.stop === "length") return "The reply was cut off (output limit reached).";
+        if (res.stop === "length") return cutOff(window);
         if (res.stop === "refusal") return "The model declined this request.";
         return undefined;
       }
       if (res.stop === "length" || res.stop === "refusal") {
         // Never run tool calls from a truncated or refused reply, but keep the conversation well-formed.
         c.messages.push({ role: "tool", results: res.toolCalls.map((t) => ({ id: t.id, name: t.name, content: [{ type: "text", text: "Not run: the reply was cut off." }], isError: true })) });
-        return res.stop === "length" ? "The reply was cut off before its tool calls finished." : "The model declined this request.";
+        return res.stop === "length" ? cutOff(window) : "The model declined this request.";
       }
       const results: ToolResult[] = [];
+      let stuck = false;
       for (const call of res.toolCalls) {
-        if (signal.aborted) results.push({ id: call.id, name: call.name, content: [{ type: "text", text: "Cancelled by the user." }], isError: true });
-        else results.push(await this.runTool(c, turnId, byName, ctx, call));
+        if (signal.aborted) {
+          results.push({ id: call.id, name: call.name, content: [{ type: "text", text: "Cancelled by the user." }], isError: true });
+          continue;
+        }
+        // Tools are deterministic: a call that failed fails again. Don't run it twice; say so,
+        // and stop the turn if the model keeps sending it.
+        const key = `${call.name}\0${canonicalArgs(call.args)}`;
+        const prior = failed.get(key);
+        if (prior) {
+          prior.repeats++;
+          stuck ||= prior.repeats >= MAX_REPEATS;
+          turnSpan?.addEvent("lfx.repeated_failed_call", { "tool.name": call.name, "lfx.repeats": prior.repeats });
+          const msg = `Not run: this exact ${call.name} call already failed with:\n${prior.error}\nChange the arguments to fix that error, or take a different approach.`;
+          this.push(c, { type: "tool-start", id: turnId, callId: call.id, name: call.name, args: call.args });
+          this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: false, result: msg });
+          stats.toolCalls++;
+          stats.toolErrors++;
+          results.push({ id: call.id, name: call.name, content: [{ type: "text", text: msg }], isError: true });
+          continue;
+        }
+        // A read-only call that already ran twice with these arguments returns what it returned
+        // then (nothing has been written since), so refuse it; a model searching in circles stops.
+        const readOnly = byName.get(call.name)?.readOnly === true;
+        const ran = readOnly ? reads.get(key) : undefined;
+        if (ran && ran.count >= MAX_SAME_READS) {
+          ran.refused++;
+          stuck ||= ran.refused >= MAX_REPEATS;
+          turnSpan?.addEvent("lfx.repeated_read", { "tool.name": call.name, "lfx.repeats": ran.count + ran.refused });
+          const msg = `Not run: you already made this exact ${call.name} call ${ran.count} times, and nothing has changed since. It returned:\n${ran.result}\nUse that result, change the arguments, or move on to drawing.`;
+          this.push(c, { type: "tool-start", id: turnId, callId: call.id, name: call.name, args: call.args });
+          this.push(c, { type: "tool-end", id: turnId, callId: call.id, ok: false, result: msg });
+          stats.toolCalls++;
+          stats.toolErrors++;
+          results.push({ id: call.id, name: call.name, content: [{ type: "text", text: msg }], isError: true });
+          continue;
+        }
+        const r = await this.runTool(c, turnId, byName, ctx, call, toolLimit);
+        if (!r.isError && readOnly) {
+          const text = r.content.map((p) => (p.type === "text" ? p.text : "")).join("");
+          reads.set(key, { count: (ran?.count ?? 0) + 1, refused: 0, result: text.length > 600 ? `${text.slice(0, 600)}…` : text });
+        } else if (!r.isError) reads.clear(); // A write may change what the reads return.
+        if (!r.isError && CODE_READS.has(call.name)) readCode = true;
+        if (!r.isError && call.name === "create_diagram" && aboutCode && !readCode && !nudged) {
+          nudged = true;
+          turnSpan?.addEvent("lfx.unread_code_nudge");
+          r.content.push({ type: "text", text: `\n\n${UNREAD_CODE}` });
+        }
+        if (r.isError) failed.set(key, { error: r.content.map((p) => (p.type === "text" ? p.text : "")).join("").slice(0, 1500), repeats: 0 });
+        results.push(r);
       }
       c.messages.push({ role: "tool", results });
       if (signal.aborted) return undefined;
+      if (stuck) {
+        turnSpan?.addEvent("lfx.stuck");
+        return "Stopped: the model kept repeating the same tool call without making progress. Try rephrasing the request, or a more capable model.";
+      }
     }
     turnSpan?.addEvent("lfx.max_steps");
     return `Stopped after ${MAX_STEPS} steps.`;
@@ -952,6 +1047,7 @@ export class Assistant {
     byName: Map<string, ToolDef>,
     ctx: ToolContext,
     call: { id: string; name: string; args: string },
+    limit = MAX_TOOL_TEXT,
   ): Promise<ToolResult> {
     const attrs = {
       "gen_ai.operation.name": "execute_tool",
@@ -982,14 +1078,15 @@ export class Assistant {
       } catch {
         return fail("invalid_json", `Invalid JSON arguments: ${call.args.slice(0, 500)}`);
       }
-      const parsed = z.object(def.input).safeParse(raw);
-      if (!parsed.success) return fail("invalid_arguments", `Invalid arguments: ${z.prettifyError(parsed.error)}`);
+      const parsed = checkArgs(def.input, raw, def.normalize);
+      if (!parsed.ok) return fail("invalid_arguments", parsed.error);
       try {
         const out = await def.run(parsed.data, ctx);
-        const text = clip(out.text, MAX_TOOL_TEXT, "narrow the request");
+        const notes = parsed.notes.length ? `\n\nNote: ${parsed.notes.join("\nNote: ")}` : "";
+        const text = clip(out.text, limit, "narrow the request") + notes;
         span.setAttributes({
           "lfx.tool.result_chars": out.text.length,
-          "lfx.tool.truncated": out.text.length > MAX_TOOL_TEXT,
+          "lfx.tool.truncated": out.text.length > limit,
           "lfx.tool.image": !!out.image,
           ...contentAttrs({ "gen_ai.tool.call.result": text, "output.value": text }),
         });

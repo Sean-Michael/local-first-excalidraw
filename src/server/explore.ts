@@ -280,10 +280,14 @@ export function findDefinitions(
 }
 
 /** Lines that mention the symbol as a whole word, outside its definitions. */
+const DRAWING = /\.excalidraw(lib)?(\.(svg|png))?$/i;
+
 function findReferences(root: string, start: string, name: string, skip: Set<string>, max: number): { lines: string[]; more: boolean } {
   const word = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, "\\$")}(?![\\w$])`);
   const lines: string[] = [];
   for (const f of walk(root, start) as Generator<WalkEntry>) {
+    // A drawing names its nodes after the code; a match there is the diagram, not a use.
+    if (DRAWING.test(f.rel)) continue;
     const text = readText(f.abs);
     if (!text || !text.includes(name)) continue;
     const all = text.split("\n");

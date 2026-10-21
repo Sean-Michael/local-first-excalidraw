@@ -43,9 +43,12 @@ import {
   findElements,
   type El,
   type ElementUpdate,
+  gapLifelines,
   live,
   type Region,
   type Scene,
+  repeatedLabels,
+  repeatedNote,
   restoreElements,
   SceneError,
   selectForRender,
@@ -119,13 +122,15 @@ const WRITE_OPS = new Set(["add", "update", "delete", "apply", "arrange", "conne
  * (codelinks.ts): `link` holds the project-relative path with an optional `#L<line>`, and
  * `customData.lfxCode` the same plus the file's hash now. A `link` that is already a project
  * path gets the same treatment; a web link drops any stale code reference. `code: null`
- * removes the link. Missing files are linked anyway and noted.
+ * removes the link. Missing files are linked anyway and noted, unless `strict` (the in-app
+ * assistant, whose weaker models invent plausible paths): then the element is drawn without the link.
  */
 function codeLinks<T extends { id?: string; code?: unknown; link?: unknown; customData?: unknown; type?: string }>(
   items: T[],
   root: string,
   notes: string[],
   existing: El[] = [],
+  strict = false,
 ): T[] {
   const byId = new Map(existing.map((e) => [e.id, e]));
   return items.map((item) => {
@@ -148,6 +153,12 @@ function codeLinks<T extends { id?: string; code?: unknown; link?: unknown; cust
       return ("lfxCode" in prev ? { ...rest, customData: custom } : rest) as unknown as T;
     }
     const sha = hashFile(path.resolve(root, ref.path));
+    if (!sha && strict) {
+      notes.push(
+        `${item.id ?? "element"}: not linked, because ${ref.path} doesn't exist. Find the real file with find_symbol or list_files, then set code with update_elements.`,
+      );
+      return rest as unknown as T;
+    }
     if (!sha) notes.push(`${item.id ?? "element"}: ${ref.path} doesn't exist (linked anyway)`);
     return { ...rest, link: formatCodeLink(ref), customData: { ...custom, lfxCode: { ...ref, ...(sha ? { sha } : {}) } } } as unknown as T;
   });
@@ -462,6 +473,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     }
     const notes: string[] = [];
     const root = () => projectRootFor(p);
+    const links = <T extends Parameters<typeof codeLinks>[0][number]>(items: T[], existing?: El[]) => codeLinks(items, root(), notes, existing, origin === "agent");
     switch (body.op) {
       case "read": {
         const doc = store.getLive(p);
@@ -511,10 +523,10 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         let created: string[] = [];
         if (Array.isArray(body.add) && body.add.length) {
           const cur = { ...scene, elements };
-          const els = codeLinks(appendPlacement(cur, body.add as SkeletonEl[], (body.placement as string) ?? "absolute"), root(), notes);
+          const els = links(appendPlacement(cur, body.add as SkeletonEl[], (body.placement as string) ?? "absolute"));
           ({ elements, created } = addSkeletons(elements, els));
         }
-        if (Array.isArray(body.update) && body.update.length) elements = updateElements(elements, codeLinks(body.update as ElementUpdate[], root(), notes, elements));
+        if (Array.isArray(body.update) && body.update.length) elements = updateElements(elements, links(body.update as ElementUpdate[], elements));
         const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, deleted, notes };
       }
@@ -540,7 +552,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       case "create": {
         if (store.exists(p) && !body.overwrite) throw new HttpError(409, `${p} already exists (pass overwrite: true to replace it)`);
         // Built over tombstones of the old content, so reused ids outrank it.
-        const { elements, created } = addSkeletons(cleared(scene.elements), codeLinks((body.elements as SkeletonEl[]) ?? [], root(), notes));
+        const { elements, created } = addSkeletons(cleared(scene.elements), links((body.elements as SkeletonEl[]) ?? []));
         const r = apply(p, { elements, replace: true, appState: { viewBackgroundColor: "#ffffff", gridSize: 20 } }, origin);
         return { path: p, rev: r.rev, created, notes };
       }
@@ -566,7 +578,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return { path: p, rev: r.rev, id: existing.id, rebound: true };
       }
       case "add": {
-        const els = codeLinks(appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined), root(), notes);
+        const els = links(appendPlacement(scene, (body.elements as SkeletonEl[]) ?? [], body.placement as string | undefined));
         const { elements, created } = addSkeletons(scene.elements, els);
         const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, notes };
@@ -626,10 +638,14 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           const c = id ? code.get(id) : undefined;
           if (!c) return e;
           if (e.type !== "placed") return { ...e, code: c };
-          const [withLink] = codeLinks([{ type: "rectangle", id, code: c } as SkeletonEl], root(), notes);
+          const [withLink] = links([{ type: "rectangle", id, code: c } as SkeletonEl]);
           return { ...e, element: { ...(e.element as El), link: withLink.link, customData: { ...(e.element as El).customData, ...(withLink.customData as object) } } };
         });
-        const { elements, created } = addSkeletons(base, codeLinks(linked, root(), notes));
+        if (!replace) {
+          const again = repeatedLabels(scene.elements, spec.nodes.map((n) => n.label));
+          if (again.length) notes.push(repeatedNote(again, prefix));
+        }
+        const { elements, created } = addSkeletons(base, links(linked));
         const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, created, notes };
       }
@@ -687,7 +703,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return { path: p, rev: r.rev, shape: shape.key, anchor: placed.anchorId, created: placed.ids, bounds: placed.bounds };
       }
       case "update": {
-        const elements = updateElements(scene.elements, codeLinks((body.updates as ElementUpdate[]) ?? [], root(), notes, scene.elements));
+        const elements = updateElements(scene.elements, links((body.updates as ElementUpdate[]) ?? [], scene.elements));
         const r = apply(p, { elements }, origin);
         return { path: p, rev: r.rev, notes };
       }
@@ -733,12 +749,16 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
           elements: El[];
           files?: Record<string, unknown>;
         };
-        let incoming = conv.elements;
+        let incoming = gapLifelines(conv.elements);
+        // The diagram's nodes are the labels inside shapes (participants, flowchart boxes), not those on arrows.
+        const shapes = new Map(incoming.map((e) => [e.id, e.type]));
+        const nodeLabels = incoming.filter((e) => e.type === "text" && e.containerId && shapes.get(e.containerId) !== "arrow").map((e) => String(e.text));
+        const again = repeatedLabels(scene.elements, nodeLabels);
         const b = bounds(scene.elements);
         const nb = bounds(incoming);
         if (b && nb) incoming = incoming.map((e) => ({ ...e, x: e.x + b.maxX + 120 - nb.minX, y: e.y + b.minY - nb.minY }));
         const r = apply(p, { elements: [...scene.elements, ...incoming], files: conv.files }, origin);
-        return { path: p, rev: r.rev, created: incoming.filter((e) => !e.containerId).map((e) => e.id) };
+        return { path: p, rev: r.rev, created: incoming.filter((e) => !e.containerId).map((e) => e.id), notes: again.length ? [repeatedNote(again, "", false)] : [] };
       }
       default:
         throw new HttpError(400, `Unknown op ${String(body.op)}`);

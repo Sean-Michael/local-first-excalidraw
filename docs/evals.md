@@ -18,7 +18,7 @@ npm run evals                                  # everything (expensive)
 |---|---|
 | `--scenario ID[,ID]` | Only these scenarios. Repeatable. Default: all |
 | `--via claude\|assistant` | Who does the work: `claude -p` over MCP with the plugin (default), or the daemon's in-app assistant ([below](#via-the-in-app-assistant)) |
-| `--model NAME` | Passed to `claude --model` (or set as the assistant endpoint's model). Default: Claude Code's own choice |
+| `--model NAME` | Passed to `claude --model` (or set as the assistant endpoint's model). Default: Claude Code's own choice. With `--via assistant`, `ollama:NAME` runs a local Ollama model instead (at `$OLLAMA_HOST`, else `localhost:11434`); the judge then uses Claude Code's default |
 | `--runs N` | Runs per scenario (default 1). Models vary from run to run, so compare several |
 | `--judge` | Also render the result to PNG and have a second `claude -p` score it (see below) |
 | `--timeout SEC` | Per-run limit (default: the scenario's `timeoutSec`, else 900) |
@@ -59,6 +59,14 @@ npm run evals                                  # everything (expensive)
 ```bash
 npm run evals -- --via assistant --scenario arch-overview,code-change-update --runs 1
 ```
+
+To compare a small local model on the prompt that exposed the weak-model failures:
+
+```bash
+npm run evals -- --via assistant --model ollama:lfm2:24b-a2b --scenario sequence-code-shapes,request-flow
+```
+
+The summary's **Repeats** column counts failed calls that repeat an earlier failed call word for word, and **Files read** counts source reads before drawing.
 
 The plugin's skills and commands aren't loaded in this mode; the assistant's own system prompt and `excalidraw_guide` take their place. Tests for the assistant's tool loop with other endpoints (Ollama, OpenAI-compatible, Anthropic) use a scripted fake model instead of a real one; see `test/code-search.test.ts`.
 

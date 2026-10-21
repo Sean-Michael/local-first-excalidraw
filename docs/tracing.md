@@ -24,7 +24,9 @@ Open http://127.0.0.1:6006 and chat with the assistant. Each reply shows up as a
 
 Any OTLP receiver that takes http/protobuf also works: Langfuse, Jaeger, Grafana Tempo, or an OpenTelemetry Collector. gRPC isn't supported.
 
-The macOS app starts the daemon without your shell environment. To trace the app, quit it, run `lfx serve` from a terminal with the variables set, and reopen the app: it uses a daemon that's already running.
+The macOS app starts the daemon without your shell environment. To keep a trace file without a receiver, turn on **Record assistant traces** in the app's Settings (Diagnostics). The next daemon the app starts writes every turn, with content, to `~/.local-first-excalidraw/traces.jsonl`. To send traces to a receiver instead, quit the app, run `lfx serve` from a terminal with the variables set, and reopen the app: it uses a daemon that's already running.
+
+Without tracing, the assistant's saved chats still record every tool call's arguments and result. `npm run chats -- --since 24` summarises them, one row per reply: model, tool calls, failures, exact repeats of a failed call, and files read. Add a word to filter by drawing, prompt or model, or `--json` for the raw rows.
 
 ## Variables
 

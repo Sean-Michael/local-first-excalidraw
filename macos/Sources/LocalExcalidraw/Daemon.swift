@@ -171,6 +171,7 @@ final class Daemon: @unchecked Sendable {
     }
 
     private var logURL: URL { stateDir.appending(path: "daemon.log") }
+    var traceURL: URL { stateDir.appending(path: "traces.jsonl") }
 
     private func start() throws -> Process {
         let runtime = try Runtime.locate()
@@ -191,6 +192,11 @@ final class Daemon: @unchecked Sendable {
         // Unless the user wants it kept, the daemon exits with this app, even after a crash or force quit.
         if !UserDefaults.standard.bool(forKey: Prefs.keepDaemonRunning) {
             env["LFX_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        }
+        // Assistant traces as JSON lines in the state dir, unless the shell already set a destination.
+        if UserDefaults.standard.bool(forKey: Prefs.traceAssistant) && env["LFX_TRACE_FILE"] == nil {
+            env["LFX_TRACE_FILE"] = traceURL.path
+            env["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
         }
         p.environment = env
         p.standardInput = FileHandle.nullDevice

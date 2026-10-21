@@ -73,7 +73,7 @@ export async function judge(opts: {
     "",
     "Score two things from 1 (bad) to 5 (excellent):",
     "- readability (from the image): clear flow direction, no overlaps, legible labels, arrows easy to follow",
-    "- correctness: shows what the request and the expected answer describe, with the right names, the right connections and, where asked for, code links",
+    "- correctness: shows what the request and the expected answer describe, with the right names, the right connections and, where asked for, code links. In a sequence diagram, each message sits inside the fragment (alt or loop branch) it belongs to",
     'Reply with only JSON: {"readability": n, "correctness": n, "notes": "one or two sentences"}',
   ].join("\n");
   const transcript = path.join(opts.runDir, "judge.jsonl");

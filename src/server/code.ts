@@ -72,6 +72,22 @@ function within(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/** " Top-level folders: a, b, c." for a not-found error, so a model that guessed `src` sees where the code is. */
+function topFolders(root: string): string {
+  let dirs: string[];
+  try {
+    dirs = fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith(".") && !SKIP_DIRS.has(d.name))
+      .map((d) => d.name)
+      .sort();
+  } catch {
+    return "";
+  }
+  if (!dirs.length) return " The project has no folders; paths are relative to its root.";
+  return ` Paths are relative to the project root, whose folders are: ${dirs.slice(0, 30).join(", ")}${dirs.length > 30 ? ", …" : ""}.`;
+}
+
 /** Resolves a user/model-supplied path inside the root, following symlinks. */
 export function resolveInRoot(root: string, input: string): { abs: string; rel: string } {
   if (typeof input !== "string" || input.includes("\0")) throw new CodeError("Invalid path");
@@ -81,7 +97,7 @@ export function resolveInRoot(root: string, input: string): { abs: string; rel: 
   try {
     real = fs.realpathSync.native(candidate);
   } catch {
-    throw new CodeError(`No such file or directory: ${input}`);
+    throw new CodeError(`No such file or directory: ${input}.${topFolders(realRoot)}`);
   }
   if (!within(real, realRoot)) throw new CodeError(`Path is outside the project: ${input}`);
   const rel = path.relative(realRoot, real) || ".";

@@ -128,6 +128,26 @@
       }
     },
     {
+      "id": "sequence-code-shapes",
+      "title": "Sequence diagram from the code, with library shapes (the small-model prompt)",
+      "skill": "excalidraw",
+      "prompt": "Draw a sequence diagram of what happens when a customer places an order, from the gateway to the payment provider. Reference the files in the codebase and use the templates in the shape library.",
+      "expected_output": "A sequence diagram whose participants are the real services and clients from the code: turnstile-gateway (checking the session with keymaster-auth), ledger-orders (placeOrder), OrderRepository / Postgres and the Paylode client. Messages run in order (POST /orders, insertPending, createCharge, markPaid or markPaymentFailed), with replies. Library shapes are used where they fit, such as a person for the customer. The run reads the code first and doesn't loop on failing tool calls.",
+      "files": ["evals/fixtures/shopapp"],
+      "fixture": "shopapp",
+      "checks": {
+        "requiredLabels": [
+          ["turnstile-gateway", "turnstile", "gateway"],
+          ["ledger-orders", "ledger", "placeOrder"],
+          ["paylode", "createCharge"]
+        ],
+        "minArrows": 3,
+        "maxOverlaps": 0,
+        "maxOverflow": 0,
+        "minFontSize": 12
+      }
+    },
+    {
       "id": "code-change-update",
       "title": "Update the diagram after a service is added",
       "skill": "excalidraw",

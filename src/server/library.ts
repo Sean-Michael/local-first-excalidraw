@@ -433,6 +433,22 @@ export function searchShapes(shapes: LibraryShape[], query: string): LibraryShap
   return scored.sort((a, b) => b.score - a.score || a.s.name.length - b.s.name.length).map((x) => x.s);
 }
 
+const CONNECTOR = "draw connections as create_diagram edges, or with connect_elements or an add_elements arrow that has start and end ids.";
+const BOX = "draw plain shapes with add_elements or as create_diagram nodes (shape: rectangle, ellipse or diamond).";
+const PRIMITIVES: Record<string, string> = {
+  arrow: CONNECTOR,
+  arrows: CONNECTOR,
+  line: CONNECTOR,
+  connector: CONNECTOR,
+  edge: CONNECTOR,
+  rectangle: BOX,
+  box: BOX,
+  ellipse: BOX,
+  circle: BOX,
+  diamond: BOX,
+  text: "add free text with add_elements (type: text).",
+};
+
 /** Finds a shape by key or name (exact, then the best unambiguous search match). */
 export function findShape(shapes: LibraryShape[], query: string): LibraryShape {
   const q = query.trim().toLowerCase();
@@ -446,7 +462,9 @@ export function findShape(shapes: LibraryShape[], query: string): LibraryShape {
   }
   const hits = searchShapes(shapes, q);
   if (hits.length === 1) return hits[0];
-  if (hits.length > 1) throw new LibraryError(`"${query}" matches several shapes: ${hits.slice(0, 12).map((s) => s.key).join(", ")}`);
+  // Weaker models ask the library for plain arrows and boxes; point them at the drawing tools.
+  if (PRIMITIVES[q]) throw new LibraryError(`"${query}" isn't a library shape: ${PRIMITIVES[q]}`);
+  if (hits.length > 1) throw new LibraryError(`"${query}" matches several shapes: ${[...new Set(hits.map((s) => s.key))].slice(0, 12).join(", ")}. Pass one of these keys.`);
   throw new LibraryError(`No library shape "${query}". Call list_shapes to search.`);
 }
 

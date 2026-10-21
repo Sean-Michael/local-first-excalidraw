@@ -102,6 +102,12 @@ If anything fails, say what you see ("I see the orders arrow crossing the cache 
 | Error says | Do |
 |---|---|
 | \`Element "x" not found\` | read_drawing (with \`query\`) for current ids; the user may have deleted or renamed it |
+| \`"x" is a group id, not an element id\` | Update the members it lists by id; delete_elements and arrange_elements accept the group id |
+| \`Edge a -> b references "b", which isn't a node\` | Add the missing node to \`nodes\` (the message lists the node ids), or fix or drop the edge |
+| \`Not run: this exact … call already failed\` | Change what the earlier error named; the same call fails the same way |
+| \`Not run: you already made this exact … call 2 times\` | Use the result it quotes, change the arguments, or move on |
+| \`"arrow" isn't a library shape\` | Draw connectors and plain boxes with create_diagram, connect_elements or add_elements |
+| \`The drawing already had nodes labelled …, so this added a second copy\` | delete_elements the copy and edit the first diagram in place |
 | \`Element id "x" already exists\` | update_elements it, or choose another id |
 | \`Unknown element type "box"; did you mean "rectangle"?\` | Use the suggested type |
 | \`Arrow start/end "x" not found\`, \`Frame child "x" not found\` | Create the shape in the same batch or fix the id |
@@ -109,7 +115,7 @@ If anything fails, say what you see ("I see the orders arrow crossing the cache 
 | \`The drawing changed since you read it\` | read_drawing again, re-plan against what is there now, and retry with the new rev. Never retry the same edit blindly |
 | \`Can't turn a text into a rectangle\` | Only rectangle, ellipse and diamond swap in place; delete and add with the same id |
 | \`ignored unknown property\` / \`treated "fill" as "backgroundColor"\` notes | Use the property names from this guide |
-| \`… doesn't exist (linked anyway)\` | The code path is wrong: fix it with update_elements \`code\` |
+| \`… doesn't exist (linked anyway)\`, \`not linked, because … doesn't exist\` | The code path is wrong: find the file (find_symbol, list_files), then fix it with update_elements \`code\` |
 | \`No editor is open\` (render, export, Mermaid) | No headless browser here: give the user the link from the message, and say you couldn't check the drawing visually |
 | \`is not valid Excalidraw JSON (merge conflict?)\` | Tell the user. Overwrite (create_drawing overwrite: true) only if they agree |
 | \`is outside the allowed roots\` | Use a path inside the project |

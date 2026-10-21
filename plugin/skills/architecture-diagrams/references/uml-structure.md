@@ -38,7 +38,7 @@ Use `create_diagram` with `direction: "TB"`, one node per class. Give the class 
 - `association` (plain line) or `directed-association` (open arrow) for "knows about"
 - `dependency` (dashed, open arrow) for "uses for a moment" (a parameter, a local variable)
 
-Put multiplicities in the edge label, ordered from the `from` end to the `to` end: `"1 — 1..*"`, or a role name and multiplicity: `"items 1..*"`.
+Put multiplicities at the ends they belong to: `startLabel` beside the `from` end and `endLabel` beside the `to` end (`"1"`, `"0..*"`, or a role and multiplicity such as `"items 1..*"`). Keep `label` for the association's name, if any. Each end label is grouped with the class at that end, so it moves with the box.
 
 ```json create_diagram
 {
@@ -53,7 +53,7 @@ Put multiplicities in the edge label, ordered from the `from` end to the `to` en
     { "id": "status", "label": "OrderStatus", "stereotype": "enumeration", "attributes": ["PENDING", "PAID", "CANCELLED"], "color": "gray" }
   ],
   "edges": [
-    { "from": "order", "to": "lineitem", "relation": "composition", "label": "1 — 1..*" },
+    { "from": "order", "to": "lineitem", "relation": "composition", "startLabel": "1", "endLabel": "1..*" },
     { "from": "order", "to": "status", "relation": "association" },
     { "from": "order", "to": "gateway", "relation": "dependency", "label": "uses" },
     { "from": "stripe", "to": "gateway", "relation": "realization" }

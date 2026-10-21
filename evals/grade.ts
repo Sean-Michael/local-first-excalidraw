@@ -79,7 +79,8 @@ export function labelIndex(els: El[]): Map<string, string> {
   const out = new Map<string, string>();
   const byGroup = new Map<string, string[]>();
   for (const e of all) {
-    if (e.type === "text" && !e.containerId) {
+    // Arrow end labels (multiplicities) share their shape's group but don't name it.
+    if (e.type === "text" && !e.containerId && !e.customData?.arrowEnd) {
       for (const g of e.groupIds ?? []) byGroup.set(g, [...(byGroup.get(g) ?? []), e.text ?? ""]);
     }
   }

@@ -13,7 +13,7 @@ export const GUIDE = `# Local-first Excalidraw: drawing guide
 
 ## Pick the tool
 - **create_diagram**: nodes + edges with automatic layout (LR or TB). The default for architecture, request flows, pipelines, state machines, dependency graphs, and UML and ER diagrams. Groups become labelled frames. Nodes take \`code\` links.
-  - UML/ER notation: edges take a \`relation\` that sets the arrowheads and line style: \`inheritance\` and \`realization\` (hollow triangle at the parent, which is laid out first), \`composition\` and \`aggregation\` (diamond at \`from\`, the whole), \`association\` (plain line), \`dependency\` (dashed), \`include\`/\`extend\` (use cases), \`message\`/\`reply\`, and crow's foot \`one-to-one\`, \`one-to-many\`, \`many-to-many\`, \`one-to-one-or-many\`. \`startArrowhead\`/\`endArrowhead\` override them.
+  - UML/ER notation: edges take a \`relation\` that sets the arrowheads and line style: \`inheritance\` and \`realization\` (hollow triangle at the parent, which is laid out first), \`composition\` and \`aggregation\` (diamond at \`from\`, the whole), \`association\` (plain line), \`dependency\` (dashed), \`include\`/\`extend\` (use cases), \`message\`/\`reply\`, and crow's foot \`one-to-one\`, \`one-to-many\`, \`many-to-many\`, \`one-to-one-or-many\`. \`startArrowhead\`/\`endArrowhead\` override them. Multiplicities, role names and cardinalities go in \`startLabel\` (beside \`from\`) and \`endLabel\` (beside \`to\`), not the middle \`label\`: \`{ "from": "order", "to": "item", "relation": "composition", "startLabel": "1", "endLabel": "1..*" }\`. Each is grouped with the box at its end, so it moves with that box.
   - Class and entity nodes take \`attributes\` and \`operations\` (compartments under rule lines) and \`stereotype\` («interface», «device», …). Shapes \`initial\` (●), \`final\` (◉) and \`bar\` (fork/join) take an empty label.
 - **mermaid_to_drawing**: only \`flowchart\` and \`sequenceDiagram\` become editable shapes. Class, ER, state and other Mermaid types arrive as one uneditable image: use create_diagram for those.
 - **list_shapes** / **insert_shape**: icons and components from the user's libraries (people, databases, cloud services). A create_diagram node can use a shape key as its \`shape\`.
@@ -42,6 +42,7 @@ Shapes: \`rectangle\` | \`ellipse\` | \`diamond\`
 Text: { "type": "text", "id": "title", "x": 100, "y": 40, "text": "Checkout architecture", "fontSize": 28 }
 Arrows: bind both ends by id; the ends sit on the outlines and follow when shapes move.
   { "type": "arrow", "id": "api-db", "start": { "id": "orders-api" }, "end": { "id": "orders-db" }, "label": "SQL" }
+  End labels: "startLabel": "1", "endLabel": "0..*" put small text beside each end, grouped with the shape there.
   Style: "strokeStyle": "dashed" | "dotted"; "startArrowhead"/"endArrowhead": "arrow" | "triangle" | "dot" | "bar" | null. Waypoints: "points": [[0,0],[0,-60],[200,-60],[200,0]].
 Frames: { "type": "frame", "id": "backend", "name": "Backend", "children": ["orders-api", "orders-db"] }, sized around its children.
 Any raw Excalidraw property also works (strokeColor, backgroundColor, fillStyle, strokeWidth, roughness 0-2, opacity, fontFamily "hand"|"normal"|"code", frameId, groupIds).

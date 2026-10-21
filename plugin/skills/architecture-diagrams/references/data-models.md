@@ -32,7 +32,7 @@ There are three levels, and you should pick one:
 
 ## Excalidraw recipe
 
-Use `create_diagram`, one node per entity: the entity name as `label` and the keys and important columns as `attributes` (the rule line is added for you). Give each edge a crow's-foot `relation`, read from the `from` entity to the `to` entity: `one-to-one`, `one-to-many`, `one-to-one-or-many` or `many-to-many`. Point edges along the chain of references, so every edge joins neighbouring layers. Excalidraw has no "zero" marker, so spell the cardinality out in the label as well.
+Use `create_diagram`, one node per entity: the entity name as `label` and the keys and important columns as `attributes` (the rule line is added for you). Give each edge a crow's-foot `relation`, read from the `from` entity to the `to` entity: `one-to-one`, `one-to-many`, `one-to-one-or-many` or `many-to-many`. Point edges along the chain of references, so every edge joins neighbouring layers. Excalidraw has no "zero" marker, so spell the cardinality out at each end as well, with `startLabel` (the `from` end) and `endLabel` (the `to` end), and keep `label` for the verb phrase.
 
 ```json create_diagram
 {
@@ -46,9 +46,9 @@ Use `create_diagram`, one node per entity: the entity name as `label` and the ke
     { "id": "product", "label": "PRODUCT", "attributes": ["sku PK", "title", "price_cents"], "color": "green" }
   ],
   "edges": [
-    { "from": "customer", "to": "order", "relation": "one-to-many", "label": "places (1 to 0..*)" },
-    { "from": "order", "to": "line_item", "relation": "one-to-one-or-many", "label": "contains (1 to 1..*)" },
-    { "from": "product", "to": "line_item", "relation": "one-to-many", "label": "appears in (1 to 0..*)" }
+    { "from": "customer", "to": "order", "relation": "one-to-many", "label": "places", "startLabel": "1", "endLabel": "0..*" },
+    { "from": "order", "to": "line_item", "relation": "one-to-one-or-many", "label": "contains", "startLabel": "1", "endLabel": "1..*" },
+    { "from": "product", "to": "line_item", "relation": "one-to-many", "label": "appears in", "startLabel": "1", "endLabel": "0..*" }
   ]
 }
 ```

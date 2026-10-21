@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type GraphSpec, layoutGraph } from "../src/server/layout.js";
-import { addSkeletons, type El, live, SceneError } from "../src/server/scene.js";
+import { addSkeletons, type El, live, SceneError, updateElements } from "../src/server/scene.js";
+import { measure } from "../evals/grade.js";
 
 type Box = { id: string; x: number; y: number; w: number; h: number };
 
@@ -227,4 +228,58 @@ test("layout: initial, final and bar shapes are small unlabelled UML symbols", (
   assert.deepEqual(dot.groupIds, ring.groupIds);
   assert.equal(byId("a->end#3").endBinding.elementId, "end");
   assert.ok(!els.some((e) => e.type === "text" && ["start", "fork", "end"].includes(e.containerId)), "no labels");
+});
+
+test("layout: end labels sit beside each end, clear of boxes and lines, and move with their box", () => {
+  for (const direction of ["LR", "TB"] as const) {
+    const spec: GraphSpec = {
+      direction,
+      nodes: [
+        { id: "customer", label: "Customer", group: "sales" },
+        { id: "order", label: "Order", attributes: ["+id: UUID", "+placedAt: Date"], group: "sales" },
+        { id: "item", label: "OrderItem" },
+        { id: "product", label: "Product" },
+        { id: "cart", label: "Cart" },
+        { id: "address", label: "Address" },
+      ],
+      edges: [
+        { from: "customer", to: "order", relation: "association", startLabel: "1", endLabel: "0..*", label: "places" },
+        // Three labelled edges leave Customer on the same side: each gets its own port.
+        { from: "customer", to: "cart", relation: "composition", startLabel: "1", endLabel: "0..1" },
+        { from: "customer", to: "address", relation: "composition", startLabel: "1", endLabel: "1..*" },
+        { from: "order", to: "item", relation: "composition", startLabel: "1", endLabel: "1..*" },
+        { from: "item", to: "product", relation: "many-to-many", startLabel: "+lines", endLabel: "1" },
+      ],
+      groups: [{ id: "sales", label: "Sales" }],
+    };
+    const els = build(spec);
+    const byId = (id: string) => els.find((e) => e.id === id)!;
+    const arrows = els.filter((e) => e.type === "arrow");
+    const ends = els.filter((e) => e.type === "text" && e.customData?.arrowEnd);
+    assert.equal(ends.length, 10, `${direction}: two end labels per edge`);
+    for (const t of ends) {
+      const { arrowId, end } = t.customData.arrowEnd;
+      const a = byId(arrowId);
+      const shape = byId((end === "start" ? a.startBinding : a.endBinding).elementId);
+      assert.equal(t.fontSize, 16);
+      assert.ok(t.groupIds.length && t.groupIds.every((g: string) => shape.groupIds.includes(g)), `${t.id} is grouped with ${shape.id}`);
+      assert.equal(t.frameId, shape.frameId, `${t.id} is in its shape's frame`);
+      const pts = a.points as number[][];
+      const p = end === "start" ? pts[0] : pts[pts.length - 1];
+      const d = Math.hypot(t.x + t.width / 2 - (a.x + p[0]), t.y + t.height / 2 - (a.y + p[1]));
+      assert.ok(d < 70, `${direction}: ${t.id} is near its end (${Math.round(d)}px)`);
+      for (const b of arrows) {
+        const abs = (b.points as number[][]).map(([x, y]) => [b.x + x, b.y + y]);
+        for (let k = 0; k + 1 < abs.length; k++) assert.ok(!segmentHitsBox(abs[k], abs[k + 1], boxOf(t)), `${direction}: ${b.id} crosses ${t.id}`);
+      }
+    }
+    // The grader sees no collisions, and the labels don't rename the boxes they're grouped with.
+    const m = measure({ elements: els });
+    assert.deepEqual(m.overlaps, [], `${direction}: no overlaps`);
+    assert.ok(m.edges.some((e) => e.from === "Customer" && e.to.startsWith("Order")), `${direction}: edges still read Customer -> Order`);
+    // Moving a box carries its end labels.
+    const before = byId("customer->order:start");
+    const moved = live(updateElements(els, [{ id: "customer", x: byId("customer").x + 50 }]));
+    assert.equal(moved.find((e) => e.id === before.id)!.x, before.x + 50, `${direction}: end label follows its box`);
+  }
 });

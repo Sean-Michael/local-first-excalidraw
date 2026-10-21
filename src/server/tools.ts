@@ -225,7 +225,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       title: "Create diagram from a graph",
       description:
         "Draws nodes and edges with automatic layered layout: the fastest way to a clean architecture, flow, state, dependency, UML (class, object, use case, component, package, deployment, communication) or ER diagram. Creates the file if needed; otherwise appends to the right of existing content. " +
-        "For UML and ER notation give edges a `relation` (inheritance, composition, include, one-to-many, …) and class nodes `attributes`/`operations`/`stereotype` instead of restyling afterwards. " +
+        "For UML and ER notation give edges a `relation` (inheritance, composition, include, one-to-many, …) multiplicities as `startLabel`/`endLabel`, and class nodes `attributes`/`operations`/`stereotype` instead of restyling afterwards. " +
         "replace: true swaps the whole drawing for this one (only when the user asks to start over: it discards their edits). Node ids become element ids, so later edits can refer to them.",
       input: {
         path: pathArg,
@@ -255,6 +255,11 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
               from: z.string(),
               to: z.string(),
               label: z.string().optional().describe("Only when the meaning isn't obvious from the two ends; 12 characters or fewer"),
+              startLabel: z
+                .string()
+                .optional()
+                .describe('Small text beside the `from` end: UML multiplicity or role ("1", "0..*", "+owner"), ER cardinality. Put multiplicities here, not in `label`'),
+              endLabel: z.string().optional().describe('Small text beside the `to` end, e.g. "0..*"'),
               style: z.enum(["solid", "dashed", "dotted"]).optional().describe("dashed for async or optional flows"),
               bidirectional: z.boolean().optional(),
               relation: z

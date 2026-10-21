@@ -399,13 +399,58 @@ export function routeArrow(arrow: El, from: El | undefined, to: El | undefined):
   const center = (e: El): [number, number] => [e.x + e.width / 2, e.y + e.height / 2];
   const aim0 = inner[0] ?? (to ? center(to) : end);
   const aim1 = inner[inner.length - 1] ?? (from ? center(from) : start);
-  if (from) start = boundaryPoint(from, aim0[0] - center(from)[0], aim0[1] - center(from)[1], GAP);
-  if (to) end = boundaryPoint(to, aim1[0] - center(to)[0], aim1[1] - center(to)[1], GAP);
+  // A waypoint square across from a rectangle's side is a port: leave straight towards it.
+  const port = (e: El, aim: [number, number]): [number, number] | undefined => {
+    if (e.type !== "rectangle" || !inner.length) return;
+    const [x0, y0, x1, y1] = [e.x, e.y, e.x + e.width, e.y + e.height];
+    const inX = aim[0] > x0 + 8 && aim[0] < x1 - 8;
+    const inY = aim[1] > y0 + 8 && aim[1] < y1 - 8;
+    if (inX && !inY) return [aim[0], aim[1] < y0 ? y0 - GAP : y1 + GAP];
+    if (inY && !inX) return [aim[0] < x0 ? x0 - GAP : x1 + GAP, aim[1]];
+  };
+  if (from) start = port(from, aim0) ?? boundaryPoint(from, aim0[0] - center(from)[0], aim0[1] - center(from)[1], GAP);
+  if (to) end = port(to, aim1) ?? boundaryPoint(to, aim1[0] - center(to)[0], aim1[1] - center(to)[1], GAP);
   return {
     ...polyline(arrow, [start, ...inner, end]),
     startBinding: from ? { elementId: from.id, focus: 0, gap: GAP } : (arrow.startBinding ?? null),
     endBinding: to ? { elementId: to.id, focus: 0, gap: GAP } : (arrow.endBinding ?? null),
   };
+}
+
+const END_FONT = 16;
+
+/**
+ * Free text beside one end of a routed arrow (a UML multiplicity or role, an ER cardinality),
+ * clear of the line, its arrowhead and the shape. Excalidraw binds only one label to an arrow,
+ * so the text joins the shape's group instead: it moves with the shape, though it stays on
+ * the side it was drawn on if the arrow later meets the shape elsewhere.
+ */
+function arrowEndLabel(arrow: El, end: "start" | "end", text: string, shape: El): El {
+  const pts = arrow.points as [number, number][];
+  const [p, q, r] = end === "start" ? pts.slice(0, 3) : pts.slice(-3).reverse();
+  const len = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+  const u = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
+  const m = measureText(text, END_FONT);
+  const reach = (d: number[]) => Math.abs(d[0]) * (m.width / 2) + Math.abs(d[1]) * (m.height / 2);
+  const along = reach(u) + 4;
+  // Above a mostly horizontal arrow and right of a mostly vertical one, so labels at
+  // neighbouring ends line up; where the first stretch is too short for that, on the side
+  // the arrow doesn't bend towards.
+  let n = [-u[1], u[0]];
+  const bend = r && len < along + reach(u) + 4 ? (r[0] - q[0]) * n[0] + (r[1] - q[1]) * n[1] : 0;
+  if (Math.abs(bend) > 1 ? bend > 0 : Math.abs(u[0]) >= Math.abs(u[1]) ? n[1] > 0 : n[0] < 0) n = [-n[0], -n[1]];
+  const aside = reach(n) + 10; // past an arrowhead's barbs or a crow's foot
+  const cx = arrow.x + p[0] + u[0] * along + n[0] * aside;
+  const cy = arrow.y + p[1] + u[1] * along + n[1] * aside;
+  return textElement(text, {
+    id: `${arrow.id}:${end}`,
+    x: Math.round(cx - m.width / 2),
+    y: Math.round(cy - m.height / 2),
+    fontSize: END_FONT,
+    groupIds: [...(shape.groupIds ?? [])],
+    frameId: shape.frameId ?? null,
+    customData: { arrowEnd: { arrowId: arrow.id, end } },
+  });
 }
 
 /** Smallest comfortable size of a shape whose label measures `m`. */
@@ -425,7 +470,7 @@ function styleFrom(s: SkeletonEl): Partial<El> {
   return out;
 }
 
-const SKELETON_ONLY = new Set(["label", "color", "start", "end", "rounded", "children", "code"]);
+const SKELETON_ONLY = new Set(["label", "color", "start", "end", "rounded", "children", "code", "startLabel", "endLabel"]);
 
 function passthrough(s: SkeletonEl): Partial<El> {
   const out: Partial<El> = {};
@@ -512,6 +557,7 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
 
   const pendingArrows: { el: El; s: SkeletonEl }[] = [];
   const pendingFrames: { el: El; s: SkeletonEl }[] = [];
+  const endLabels = new Map<string, string[]>(); // shape id -> arrow end labels made beside it
 
   for (const s of skeletons) {
     if (!s || typeof s.type !== "string") throw new SceneError("Each element needs a type");
@@ -596,6 +642,23 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
       put(el, true);
       put(t, false);
     } else put(el, true);
+    for (const [end, text, ref] of [["start", s.startLabel, from], ["end", s.endLabel, to]] as const) {
+      if (typeof text !== "string" || !text || !ref || from?.id === to?.id) continue;
+      // Join the shape's group, or start one with it (and its label) if it has none.
+      let shape = all.get(ref.id)!;
+      if (!shape.groupIds?.length) {
+        const wasExisting = existing.some((e) => e.id === shape.id);
+        const grouped: Partial<El> = { groupIds: [`${shape.id}:ends`] };
+        shape = wasExisting ? bump(shape, grouped) : { ...shape, ...grouped };
+        all.set(shape.id, shape);
+        for (const b of shape.boundElements ?? []) {
+          const bt = all.get(b.id);
+          if (bt && b.type === "text") all.set(bt.id, wasExisting ? bump(bt, grouped) : { ...bt, ...grouped });
+        }
+      }
+      put(arrowEndLabel(el, end, text, shape), false);
+      endLabels.set(shape.id, [...(endLabels.get(shape.id) ?? []), `${el.id}:${end}`]);
+    }
   }
 
   for (const { el: raw, s } of pendingFrames) {
@@ -614,11 +677,12 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
       const wasExisting = existing.some((e) => e.id === k.id);
       const next = { ...k, frameId: el.id };
       all.set(k.id, wasExisting ? bump(next) : next);
-      // Labels follow their containers into the frame.
+      // Labels, and arrow end labels beside it, follow their shape into the frame.
       for (const b of k.boundElements ?? []) {
         const bt = all.get(b.id);
         if (bt && b.type === "text") all.set(bt.id, { ...bt, frameId: el.id });
       }
+      for (const tid of endLabels.get(k.id) ?? []) all.set(tid, { ...all.get(tid)!, frameId: el.id });
     }
     // Frames render beneath their children: put them first among new elements.
     const prev = all.get(el.id);

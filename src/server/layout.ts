@@ -83,6 +83,9 @@ export interface EdgeSpec {
   from: string;
   to: string;
   label?: string;
+  /** Text beside the `from` / `to` end: a UML multiplicity or role, an ER cardinality ("1", "0..*"). */
+  startLabel?: string;
+  endLabel?: string;
   style?: "solid" | "dashed" | "dotted";
   bidirectional?: boolean;
   /** What the edge means; sets its arrowheads, line style and (for include/extend) label. */
@@ -312,7 +315,27 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   reindex();
 
   // Coordinates: layers advance along the main axis; siblings spread on the cross axis.
-  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, dir)]));
+  // Edges that carry end labels each get their own port (see below): make a box wide enough
+  // (tall enough, in LR) to space them so the labels don't stack.
+  const endText = (e: EdgeSpec, node: string) => (node === e.from ? e.startLabel : e.endLabel);
+  const portStep = (texts: string[]) => Math.max(...texts.map((t) => measureText(t, 16)[dir === "LR" ? "height" : "width"])) + 24;
+  const sideEdges = new Map<string, number[]>(); // `${node}\u0000out|in` -> chain indexes
+  chains.forEach((ch, k) => {
+    for (const key of [`${ch.u}\u0000out`, `${ch.v}\u0000in`]) sideEdges.set(key, [...(sideEdges.get(key) ?? []), k]);
+  });
+  const portRoom = new Map<string, number>();
+  for (const [key, ks] of sideEdges) {
+    const node = key.split("\u0000")[0];
+    const texts = ks.map((k) => endText(chains[k].e, node)).filter((t): t is string => !!t);
+    if (texts.length && ks.length > 1) portRoom.set(node, Math.max(portRoom.get(node) ?? 0, (ks.length - 1) * portStep(texts)));
+  }
+  const size = new Map(
+    nodes.map((n) => {
+      const s = nodeSize(n, dir);
+      const room = n.size || PSEUDO_SHAPES.has(n.shape ?? "") ? 0 : (portRoom.get(n.id) ?? 0) / 0.8;
+      return [n.id, dir === "LR" ? { ...s, h: Math.max(s.h, Math.ceil(room)) } : { ...s, w: Math.max(s.w, Math.ceil(room)) }];
+    }),
+  );
   const main = (id: string) => (dummies.has(id) ? 0 : dir === "LR" ? size.get(id)!.w : size.get(id)!.h);
   const cross = (id: string) => (dummies.has(id) ? SLOT : dir === "LR" ? size.get(id)!.h : size.get(id)!.w);
   const gapAfter = (a: string, b: string) => (dummies.has(a) && dummies.has(b) ? SLOT : V_GAP);
@@ -333,7 +356,11 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   const titleOffset = spec.title ? 70 : 0;
   // Leave room for edge labels between layers (only matters for LR; TB labels sit beside the arrow).
   const longestLabel = Math.max(0, ...edges.map((e) => (e.label ? measureText(e.label, 16).width : 0)));
-  const H_GAP = Math.max(MIN_H_GAP, dir === "LR" ? longestLabel + 80 : 0);
+  // End labels sit beside the arrow near each end, before and after any middle label.
+  const longestEnd = Math.max(0, ...edges.flatMap((e) => [e.startLabel, e.endLabel].map((t) => (t ? measureText(t, 16) : { width: 0, height: 0 })[dir === "LR" ? "width" : "height"])));
+  // A longer stub at each end, so an end label sits beside a straight stretch of its arrow.
+  const port = longestEnd ? Math.max(PORT, longestEnd + 14) : PORT;
+  const H_GAP = Math.max(MIN_H_GAP, (dir === "LR" ? longestLabel : 0) + (longestEnd ? 2 * (longestEnd + 10) : 0) + (dir === "LR" ? 80 : 40));
   const colStart: number[] = [];
   let m = 0;
   layers.forEach((_, li) => {
@@ -407,6 +434,18 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   const offset = new Map<number, number>();
   for (const ks of pairs.values()) ks.forEach((k, j) => offset.set(k, (j - (ks.length - 1) / 2) * PARALLEL));
 
+  // Where a node's edges on one side carry end labels, each edge gets its own port, ordered by
+  // where it heads, far enough apart that the labels don't stack; elsewhere they share the centre.
+  const portOff = new Map<string, number>(); // `${k}:u` / `${k}:v`
+  for (const [key, ks] of sideEdges) {
+    const [node, side] = key.split("\u0000");
+    const texts = ks.map((k) => endText(chains[k].e, node)).filter((t): t is string => !!t);
+    if (!texts.length || ks.length < 2) continue;
+    const step = Math.min(portStep(texts), (cross(node) * 0.8) / (ks.length - 1));
+    const toward = (k: number) => crossMid(side === "out" ? (chains[k].via[0] ?? chains[k].v) : (chains[k].via.at(-1) ?? chains[k].u));
+    [...ks].sort((a, b) => toward(a) - toward(b) || a - b).forEach((k, j) => portOff.set(`${k}:${side === "out" ? "u" : "v"}`, (j - (ks.length - 1) / 2) * step));
+  }
+
   const arrow = (e: (typeof allEdges)[number], pts?: Pt[]): SkeletonEl => {
     const rel = relationOf(e);
     return {
@@ -415,6 +454,8 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
       start: { id: e.from },
       end: { id: e.to },
       label: e.label ?? rel?.label,
+      ...(e.startLabel ? { startLabel: e.startLabel } : {}),
+      ...(e.endLabel ? { endLabel: e.endLabel } : {}),
       strokeStyle: e.style ?? rel?.style ?? "solid",
       startArrowhead: e.startArrowhead !== undefined ? e.startArrowhead : e.bidirectional ? "arrow" : (rel?.start ?? null),
       ...(e.endArrowhead !== undefined ? { endArrowhead: e.endArrowhead } : rel ? { endArrowhead: rel.end } : {}),
@@ -430,16 +471,17 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   };
 
   chains.forEach((ch, k) => {
-    const off = offset.get(k)!;
+    const ou = portOff.get(`${k}:u`) ?? offset.get(k)!;
+    const ov = portOff.get(`${k}:v`) ?? offset.get(k)!;
     const lu = layer.get(ch.u)!;
     const lv = layer.get(ch.v)!;
     // Centre of u, a stub just past u's layer, through each slot, a stub before v's layer, centre of v.
     let pts: Pt[] = [
-      at(mainMid(ch.u), crossMid(ch.u)),
-      at(colEnd(lu) + PORT, crossMid(ch.u) + off),
+      at(mainMid(ch.u), crossMid(ch.u) + (portOff.has(`${k}:u`) ? ou : 0)),
+      at(colEnd(lu) + port, crossMid(ch.u) + ou),
       ...ch.via.flatMap((d, j): Pt[] => [at(colStart[lu + 1 + j], crossMid(d)), at(colEnd(lu + 1 + j), crossMid(d))]),
-      at(colStart[lv] - PORT, crossMid(ch.v) + off),
-      at(mainMid(ch.v), crossMid(ch.v)),
+      at(colStart[lv] - port, crossMid(ch.v) + ov),
+      at(mainMid(ch.v), crossMid(ch.v) + (portOff.has(`${k}:v`) ? ov : 0)),
     ];
     if (ch.reversed) pts.reverse();
     pts = simplify(pts);

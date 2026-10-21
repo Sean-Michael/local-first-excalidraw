@@ -41,7 +41,7 @@ Excalidraw has no UML palette, but the drawing tools map onto the notation:
 | Inheritance / generalisation | Edge `relation: "inheritance"` from the child to the parent: a hollow triangle at the parent. The parent is laid out above (TB) or left of (LR) its children |
 | Realisation (implements) | Edge `relation: "realization"` from the class to the interface: dashed with a hollow triangle |
 | Dependency, `«import»`, `«use»` | Edge `relation: "dependency"`: dashed with an open arrow; put a stereotype in `label` if it matters |
-| Multiplicity | In the edge label, from end to end: `"1 — 0..*"`, or a role and multiplicity: `"items 1..*"`. Keep it short |
+| Multiplicity, role name | Edge `startLabel` (beside `from`) and `endLabel` (beside `to`): `"1"`, `"0..*"`, or a role and multiplicity `"items 1..*"`. Not in the middle `label` |
 | Stereotype | `«name»` above the element name: the node's `stereotype` field |
 | Actor | `stick-figures/stick-man` library shape with a one-line label, or an ellipse labelled with the role |
 | Use case | An ellipse node inside a group (the group's frame is the system boundary, named after the system) |

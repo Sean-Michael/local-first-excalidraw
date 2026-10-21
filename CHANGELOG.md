@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-21
+
 ### Added
 
 - Saved prompts. Type **/** in the assistant's message box to pick one; manage them under **Saved Prompts** in the settings or as `"prompts"` in `ai.json`. The defaults cover the common diagrams (architecture, C4 container, UML class, sequence, state machine, use case, ER) and updating a diagram after a code change.
@@ -137,7 +139,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - A native macOS app and a Homebrew cask that also puts `lfx` on your PATH.
 - A Docker Compose setup with an egress-isolated app container and a loopback-only gateway.
 
-[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.0...v0.1.1

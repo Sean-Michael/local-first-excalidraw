@@ -1,6 +1,6 @@
 {
   "name": "excalidraw",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Local-first Excalidraw MCP server, diagramming skill and commands. Drawings stay as .excalidraw files in your project; nothing leaves your machine.",
   "author": { "name": "Sean-Michael" },
   "license": "MIT",

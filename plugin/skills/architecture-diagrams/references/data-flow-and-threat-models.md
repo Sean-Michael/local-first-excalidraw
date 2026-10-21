@@ -1,4 +1,5 @@
 # Data flow diagrams and threat models
+<!-- keywords: dfd, data flow diagram, data flow, threat model, threat modeling, stride, trust boundary, security, privacy, sensitive data, pii, attack surface -->
 
 A data flow diagram (DFD) shows how data moves through a system: where it comes from, what transforms it, where it's stored and where it goes. With trust boundaries added, it's the standard starting point for threat modelling: Microsoft's SDL threat modelling and STRIDE, and the [OWASP threat modelling process](https://owasp.org/www-community/Threat_Modeling_Process).
 

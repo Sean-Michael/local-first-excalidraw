@@ -1,0 +1,85 @@
+{
+  "skill_name": "architecture-diagrams",
+  "generated_from": "evals/scenarios.json (run them with `npm run evals`)",
+  "evals": [
+    {
+      "id": 0,
+      "name": "uml-class-generic",
+      "prompt": "draw me a uml class diagram for an online store",
+      "expected_output": "A UML class diagram (not boxes-and-arrows architecture) of an online store's domain: Customer, Order, Product and an order line (OrderItem/LineItem), optionally Cart, Payment, Address. Class boxes have name, attribute and operation compartments with visibility markers (+, -) and types. Relationships use UML notation: composition or aggregation diamonds at the whole (Order ◆ OrderItem), multiplicities (1, 0..*, 1..*), and inheritance or realisation with hollow triangles where used. Title names the diagram type.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "uml-ambiguous",
+      "prompt": "draw an e-commerce UML diagram",
+      "expected_output": "The assistant picks a sensible UML type for an unspecified request (a class diagram of the domain is the usual default; it says which type it chose and offers the others) and draws it with UML notation: class compartments with typed members, diamonds or triangles on relationships, multiplicities.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "uml-use-case",
+      "prompt": "Draw a use case diagram for an ATM.",
+      "expected_output": "A UML use case diagram: actors (Customer, and the Bank or a technician) outside a labelled ATM system boundary; use cases as ellipses inside it (Withdraw Cash, Check Balance, Deposit, Transfer); associations as plain lines from actors to use cases; «include» (e.g. Authenticate/Enter PIN) and optionally «extend» as dashed arrows with the stereotype label.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "uml-sequence-login",
+      "prompt": "Make a sequence diagram showing a user logging into a web app with a username and password, including the wrong-password case.",
+      "expected_output": "A UML sequence diagram with participants across the top (User, Browser/Frontend, Auth/API server, User DB), calls as solid arrows and replies dashed, and an alt fragment for valid vs invalid credentials (401 / error message).",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "uml-activity-checkout",
+      "prompt": "Create an activity diagram for an online checkout process.",
+      "expected_output": "A UML activity diagram: an initial node, actions as rounded rectangles in order (review cart, enter shipping, enter payment, place order), at least one decision diamond with guard labels ([payment ok] / [declined]), a final node, and optionally a fork/join or swimlanes.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "uml-state-door",
+      "prompt": "Draw a state machine diagram for a door that can be opened, closed, locked and unlocked.",
+      "expected_output": "A UML state machine: states Opened, Closed, Locked as rounded boxes, an initial pseudostate, and transitions labelled with events (open, close, lock, unlock), optionally with guards. No transition from Locked straight to Opened.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "uml-package",
+      "prompt": "Draw a UML package diagram for a layered web application with presentation, business logic and data access layers.",
+      "expected_output": "A UML package diagram: packages (tabbed folders or labelled frames) for Presentation, Business Logic (Domain/Service) and Data Access (Persistence), each with a few example elements, and dashed dependency arrows (optionally «import») pointing downward from Presentation to Business to Data Access only.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "uml-deployment",
+      "prompt": "Draw a UML deployment diagram: a browser talks to a load balancer, which forwards to two app servers running the API, which use a PostgreSQL database server.",
+      "expected_output": "A UML deployment diagram: nodes with «device» or «executionEnvironment» stereotypes (client device with browser, load balancer, two app server nodes, database server), artifacts (api.jar or similar) deployed on the app servers, and communication paths labelled with protocols (HTTPS, TCP 5432).",
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "uml-object",
+      "prompt": "Draw a UML object diagram showing a snapshot: customer Alice with two orders, one of which contains a book.",
+      "expected_output": "A UML object diagram: instance boxes named instance:Class (alice:Customer, o1:Order, o2:Order, item:OrderItem/LineItem, book:Product) with attribute values (name = \"Alice\", status = …), joined by links (plain lines, no multiplicities).",
+      "files": []
+    },
+    {
+      "id": 9,
+      "name": "uml-communication",
+      "prompt": "Draw a UML communication diagram for placing an order between a customer, an order controller, an inventory service and a payment service.",
+      "expected_output": "A UML communication (collaboration) diagram: objects as boxes placed freely, links between them, and sequence-numbered messages along the links (1: placeOrder(), 1.1: reserveStock(), 1.2: charge(), 2: confirm).",
+      "files": []
+    },
+    {
+      "id": 10,
+      "name": "uml-class-from-code",
+      "prompt": "Draw a UML class diagram of the ledger-orders service.",
+      "expected_output": "A UML class diagram of services/ledger-orders with its real types: OrderRepository (insertPending, markPaid, markPaymentFailed, findById), PaylodeClient (createCharge, refund), OrderEventsPublisher (orderPlaced), the Deps interface that aggregates the three, OrderRow and Charge. Members use the code's names and types; Deps → the three classes as associations/composition; each class links to its file.",
+      "files": [
+        "evals/fixtures/shopapp"
+      ]
+    }
+  ]
+}

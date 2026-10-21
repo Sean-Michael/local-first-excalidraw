@@ -29,6 +29,12 @@ A model without tool calling still works: it answers in Mermaid, which is conver
 
 Click a model in the list to make it active. The same choice is in the menu under the panel title.
 
+## Saved prompts and tools
+
+Type **/** at the start of the message box to pick a saved prompt; keep typing to filter. A prompt that ends mid-sentence ("Draw a UML class diagram of ") goes into the box for you to finish; the others can be sent as they are. The first few also appear as starters in an empty chat. Manage them under **Saved Prompts** in the settings: add, edit, delete, or restore the defaults.
+
+**Tools** in the settings lists every tool the assistant can call, grouped into drawing, code and reference tools, with what each does. Switch one off and no model gets it, Claude Code included. The same page lists the diagram notes the assistant reads (C4, the 14 UML diagrams, ER, data flow, infrastructure, messaging).
+
 ## Edit settings as JSON
 
 Click **Edit as JSON** at the bottom of the settings. Comments and trailing commas are allowed, errors show their line, and unknown keys are flagged.
@@ -99,7 +105,8 @@ The assistant has the same drawing tools as MCP agents ([the tool list](mcp.md#t
 - It prefers `create_diagram` for new diagrams and edits existing ones in place, keeping element ids, so your layout, colours and notes survive. It redraws a whole drawing only when you ask it to start over.
 - After each batch of edits, a model that accepts images renders the drawing, says what it sees wrong ("I see the cache box covering an arrow"), fixes it and renders again.
 - It links nodes to the files they stand for (`code=src/orders/repo.ts#L42` in the drawing description), so when you say the code changed it can list the changes with `git_changes`, match them to nodes by their links and labels, read the changed code, and update just those elements.
-- For "which diagram should this be" and the conventions of C4, sequence, state, ER, data flow, infrastructure and messaging diagrams, it reads the reference notes with `diagram_reference`, the same notes the architecture-diagrams skill gives Claude Code.
+- For "which diagram should this be" and the notation of C4, all 14 UML diagrams (class, object, package, component, composite structure, deployment, use case, activity, state machine, sequence, communication, interaction overview, timing), ER, data flow, infrastructure and messaging diagrams, it reads the reference notes with `diagram_reference`, the same notes the architecture-diagrams skill gives Claude Code. It can ask for them in its own words ("uml class diagram").
+- It draws UML and ER in their real notation: hollow triangles for inheritance, diamonds for composition, «include» arrows, ● and ◉ start and end nodes, crow's feet. Asked for "a UML diagram" without a type, it picks the one that fits (a class diagram for a domain, an activity diagram for a process) and says which.
 - Before a large change it can snapshot the drawing; `restore_drawing` puts the snapshot back. Snapshots are kept in the state directory, not in the project.
 
 ## Chats and history

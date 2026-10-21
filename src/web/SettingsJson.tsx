@@ -3,7 +3,8 @@ import type { PublicSettings } from "../shared/chat";
 import { JsoncError, parseJsonc, tokenize } from "../shared/jsonc";
 import { api } from "./sync";
 
-const TOP_KEYS = ["enabled", "active", "codeAccess", "endpoints"];
+const TOP_KEYS = ["enabled", "active", "codeAccess", "endpoints", "prompts", "disabledTools"];
+const PROMPT_KEYS = ["id", "name", "text"];
 const ENDPOINT_KEYS = ["id", "name", "kind", "baseUrl", "model", "apiKey", "vision", "tools", "effort", "contextLength"];
 const KINDS = ["openai", "ollama", "anthropic", "claude-code"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -30,7 +31,11 @@ export function settingsToJsonc(s: PublicSettings): string {
     `  "enabled": ${s.enabled},`,
     ...(s.active ? [`  "active": ${JSON.stringify(s.active)},`] : []),
     `  "codeAccess": ${s.codeAccess},`,
-    endpoints.length ? `  "endpoints": [\n    ${endpoints.map((e) => pad(e, 4)).join(",\n    ")}\n  ]` : '  "endpoints": []',
+    (endpoints.length ? `  "endpoints": [\n    ${endpoints.map((e) => pad(e, 4)).join(",\n    ")}\n  ]` : '  "endpoints": []') + ",",
+    "  // Offered under / in the message box.",
+    `  "prompts": [${s.prompts.length ? `\n    ${s.prompts.map((p) => `{ ${Object.entries(p).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")} }`).join(",\n    ")}\n  ` : ""}],`,
+    "  // Tools the assistant isn't given, by name (see Tools in the settings).",
+    `  "disabledTools": ${JSON.stringify(s.disabledTools)}`,
     "}",
     "",
   ];
@@ -57,6 +62,18 @@ function lint(v: unknown): string[] {
     if (e.kind === "claude-code" && e.baseUrl !== undefined) out.push(`${label}: Claude Code ignores "baseUrl"`);
   });
   if (typeof o.active === "string" && !eps.some((e) => e?.id === o.active)) out.push(`"active" doesn't match any endpoint id; the first endpoint is used`);
+  if (o.prompts !== undefined && !Array.isArray(o.prompts)) out.push('"prompts" should be a list');
+  else
+    ((o.prompts ?? []) as Record<string, unknown>[]).forEach((p, n) => {
+      if (!p || typeof p !== "object" || Array.isArray(p)) return out.push(`Prompt ${n + 1} should be an object`);
+      const label = typeof p.name === "string" ? `prompt "${p.name}"` : `prompt ${n + 1}`;
+      for (const k of Object.keys(p)) if (!PROMPT_KEYS.includes(k)) out.push(`Unknown property "${k}" in ${label}`);
+      if (typeof p.name !== "string" || !p.name.trim()) out.push(`Prompt ${n + 1} needs a "name"`);
+      if (typeof p.text !== "string" || !p.text.trim()) out.push(`${label} needs a "text"`);
+    });
+  if (o.disabledTools !== undefined && (!Array.isArray(o.disabledTools) || o.disabledTools.some((t) => typeof t !== "string"))) {
+    out.push('"disabledTools" should be a list of tool names');
+  }
   return out;
 }
 
@@ -106,6 +123,8 @@ export function SettingsJson({ settings, onSaved, onBack }: { settings: PublicSe
         codeAccess: v.codeAccess ?? true,
         active: v.active,
         endpoints: Array.isArray(v.endpoints) ? v.endpoints.map((e: Record<string, unknown>) => ({ ...e, hasKey: undefined, keyFromEnv: undefined })) : [],
+        prompts: v.prompts ?? null,
+        disabledTools: v.disabledTools ?? [],
       });
       onSaved(s);
       setFileError(s.fileError);

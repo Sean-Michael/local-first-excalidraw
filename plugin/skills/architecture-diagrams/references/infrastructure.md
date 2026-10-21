@@ -1,4 +1,5 @@
 # Infrastructure and network topology
+<!-- keywords: infrastructure, cloud, aws, gcp, azure, network, network topology, vpc, subnet, kubernetes, k8s, cluster, pods, load balancer, cdn, dns, firewall, servers, on-prem, physical -->
 
 Infrastructure diagrams show where software runs and how traffic reaches it: cloud accounts, regions, networks, subnets, clusters, load balancers, gateways and the managed services in between. This is the physical view in 4+1, and the deployment view in arc42 (section 7) and C4.
 

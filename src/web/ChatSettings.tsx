@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { type EndpointKind, endpointLabel, type PublicEndpoint, type PublicSettings } from "../shared/chat";
+import { DEFAULT_PROMPTS, type EndpointKind, endpointLabel, type PublicEndpoint, type PublicSettings, type SavedPrompt, type ToolCatalog } from "../shared/chat";
 import { SettingsJson } from "./SettingsJson";
 import { api } from "./sync";
 
-type Icon = "local" | "lmstudio" | "llamacpp" | "terminal" | "spark" | "cloud" | "router" | "server";
+type Icon = "local" | "lmstudio" | "llamacpp" | "terminal" | "spark" | "cloud" | "router" | "server" | "prompts" | "tools";
 
 interface Preset {
   label: string;
@@ -35,7 +35,14 @@ const CONTEXTS = [8192, 16384, 32768, 65536, 131072];
 /** An endpoint being edited. `apiKey`: string sets it, null clears it, undefined keeps it. */
 type Draft = PublicEndpoint & { apiKey?: string | null };
 
-type Page = { name: "list" } | { name: "json" } | { name: "providers" } | { name: "form"; id?: string; preset?: Preset };
+type Page =
+  | { name: "list" }
+  | { name: "json" }
+  | { name: "providers" }
+  | { name: "form"; id?: string; preset?: Preset }
+  | { name: "tools" }
+  | { name: "prompts" }
+  | { name: "prompt"; id?: string };
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -91,6 +98,52 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
 
   if (page.name === "json") {
     return <SettingsJson settings={settings} onSaved={onSaved} onBack={() => setPage({ name: "list" })} />;
+  }
+
+  if (page.name === "tools") {
+    return <ToolsPage settings={settings} saving={saving} error={error} onSave={(disabledTools) => save({ disabledTools })} onBack={() => setPage({ name: "list" })} />;
+  }
+
+  if (page.name === "prompts") {
+    return (
+      <PromptsPage
+        prompts={settings.prompts}
+        saving={saving}
+        error={error}
+        onOpen={(id) => setPage({ name: "prompt", id })}
+        onReset={async () => {
+          if (window.confirm("Replace your saved prompts with the default ones?")) await save({ prompts: DEFAULT_PROMPTS });
+        }}
+        onBack={() => setPage({ name: "list" })}
+      />
+    );
+  }
+
+  if (page.name === "prompt") {
+    const initial = page.id ? settings.prompts.find((p) => p.id === page.id) : undefined;
+    const back = () => {
+      setError(null);
+      setPage({ name: "prompts" });
+    };
+    return (
+      <PromptForm
+        key={page.id ?? "new"}
+        initial={initial}
+        saving={saving}
+        error={error}
+        onCancel={back}
+        onRemove={
+          initial &&
+          (async () => {
+            if (await save({ prompts: settings.prompts.filter((p) => p.id !== initial.id) })) back();
+          })
+        }
+        onSave={async (d) => {
+          const next = initial ? settings.prompts.map((p) => (p.id === initial.id ? d : p)) : [...settings.prompts, d];
+          if (await save({ prompts: next })) back();
+        }}
+      />
+    );
   }
 
   if (page.name === "providers") {
@@ -220,6 +273,33 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
                 <span className="lfx-cell-text">
                   <span>Add Model…</span>
                 </span>
+              </button>
+            </li>
+          </ul>
+        </Section>
+
+        <Section title="Prompts and Tools" footer="Type / in the message box to use a saved prompt.">
+          <ul className="lfx-group lfx-list">
+            <li>
+              <button type="button" className="lfx-cell" onClick={() => setPage({ name: "prompts" })}>
+                <Glyph icon="prompts" />
+                <span className="lfx-cell-text">
+                  <span>Saved Prompts</span>
+                  <small>Reusable requests, from “UML class diagram” to “Update after my change”</small>
+                </span>
+                <span className="lfx-cell-value">{settings.prompts.length}</span>
+                <Chevron />
+              </button>
+            </li>
+            <li>
+              <button type="button" className="lfx-cell" onClick={() => setPage({ name: "tools" })}>
+                <Glyph icon="tools" />
+                <span className="lfx-cell-text">
+                  <span>Tools</span>
+                  <small>What the assistant can do, and what it knows about diagrams</small>
+                </span>
+                <span className="lfx-cell-value">{settings.disabledTools.length ? `${settings.disabledTools.length} off` : "All on"}</span>
+                <Chevron />
               </button>
             </li>
           </ul>
@@ -742,6 +822,17 @@ function Glyph({ icon, large }: { icon: Icon; large?: boolean }) {
         <path d="M6.6 10H10l3.5-4.2M10 10l3.5 4.2" />
       </>
     ),
+    prompts: (
+      <>
+        <path d="M5 4.5h10a1.5 1.5 0 011.5 1.5v6a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H5A1.5 1.5 0 013.5 12V6A1.5 1.5 0 015 4.5z" />
+        <path d="M7 8h6M7 10.5h4" />
+      </>
+    ),
+    tools: (
+      <>
+        <path d="M12.6 4.2a3.3 3.3 0 00-4.2 4.2L4 12.8a1.4 1.4 0 002 2l4.4-4.4a3.3 3.3 0 004.2-4.2l-2 2-1.6-.4-.4-1.6z" />
+      </>
+    ),
     server: (
       <>
         <rect x="4" y="4" width="12" height="5" rx="1.2" />
@@ -754,5 +845,245 @@ function Glyph({ icon, large }: { icon: Icon; large?: boolean }) {
     <span className={`lfx-glyph lfx-glyph-${icon}${large ? " lfx-glyph-lg" : ""}`} aria-hidden>
       <svg viewBox="0 0 20 20">{paths[icon]}</svg>
     </span>
+  );
+}
+
+const GROUP_FOOT: Record<string, string> = {
+  Drawing: "Read, create and edit drawings. These change the drawing you have open (and any you mention).",
+  Code: "Read-only access to the project, inside its folder. Needs Read project files.",
+  Reference: "What the assistant reads to get a diagram's notation and layout right.",
+};
+
+function ToolsPage({
+  settings,
+  saving,
+  error,
+  onSave,
+  onBack,
+}: {
+  settings: PublicSettings;
+  saving: boolean;
+  error: string | null;
+  onSave: (disabled: string[]) => Promise<boolean>;
+  onBack: () => void;
+}) {
+  const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    api<ToolCatalog>("GET", "/api/ai/tools").then(setCatalog, (e: Error) => setLoadError(e.message));
+  }, []);
+  const disabled = new Set(settings.disabledTools);
+  const toggle = (name: string, on: boolean) => {
+    const next = new Set(disabled);
+    if (on) next.delete(name);
+    else next.add(name);
+    void onSave([...next]);
+  };
+  const groups = ["Drawing", "Code", "Reference"] as const;
+  return (
+    <div className="lfx-settings">
+      <NavBar title="Tools" onBack={onBack} />
+      <div className="lfx-pane">
+        <p className="lfx-pane-intro">
+          The tools the assistant may call. Switching one off takes it away from every model, including Claude Code. In <code>ai.json</code> this is{" "}
+          <code>"disabledTools"</code>.
+        </p>
+        {loadError && <p className="lfx-error-inline lfx-pane-error">{loadError}</p>}
+        {!catalog && !loadError && <p className="lfx-pane-intro">Loading…</p>}
+        {catalog &&
+          groups.map((g) => {
+            const tools = catalog.tools.filter((t) => t.group === g);
+            if (!tools.length) return null;
+            return (
+              <Section key={g} title={g} footer={GROUP_FOOT[g]}>
+                <ul className="lfx-group lfx-list lfx-toolrows">
+                  {tools.map((t) => (
+                    <li key={t.name}>
+                      <div className="lfx-row-cell lfx-toolrow">
+                        <button type="button" className="lfx-toolrow-text" aria-expanded={open === t.name} onClick={() => setOpen(open === t.name ? null : t.name)}>
+                          <span>
+                            <code>{t.name}</code>
+                            {t.readOnly && <span className="lfx-tag">read-only</span>}
+                          </span>
+                          <small className={open === t.name ? "lfx-toolrow-desc lfx-open" : "lfx-toolrow-desc"}>{t.description}</small>
+                          {t.note && <small className="lfx-toolrow-note">{t.note}</small>}
+                        </button>
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          className="lfx-switch"
+                          aria-label={`Let the assistant use ${t.name}`}
+                          checked={!disabled.has(t.name)}
+                          disabled={saving}
+                          onChange={(e) => toggle(t.name, e.target.checked)}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            );
+          })}
+        {catalog && catalog.topics.length > 0 && (
+          <Section title="Diagram Knowledge" footer="Notes the assistant reads with diagram_reference before drawing a kind of diagram. They are the architecture-diagrams skill’s references, shared with Claude Code’s plugin.">
+            <ul className="lfx-group lfx-list lfx-toolrows">
+              {catalog.topics.map((t) => (
+                <li key={t.topic}>
+                  <div className="lfx-row-cell lfx-toolrow">
+                    <div className="lfx-toolrow-text">
+                      <span>{t.title}</span>
+                      {t.covers.length > 0 && <small className="lfx-toolrow-desc lfx-open">{t.covers.join(" · ")}</small>}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        {error && (
+          <p className="lfx-error-inline lfx-pane-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PromptsPage({
+  prompts,
+  saving,
+  error,
+  onOpen,
+  onReset,
+  onBack,
+}: {
+  prompts: SavedPrompt[];
+  saving: boolean;
+  error: string | null;
+  onOpen: (id?: string) => void;
+  onReset: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="lfx-settings">
+      <NavBar title="Saved Prompts" onBack={onBack} />
+      <div className="lfx-pane">
+        <p className="lfx-pane-intro">
+          Type <kbd>/</kbd> in the message box to pick one. A prompt that ends mid-sentence (“Draw a UML class diagram of ”) leaves the cursor there for you to finish. In{" "}
+          <code>ai.json</code> these are <code>"prompts"</code>.
+        </p>
+        <Section
+          footer={
+            <button type="button" className="lfx-link" disabled={saving} onClick={onReset}>
+              Restore Default Prompts
+            </button>
+          }
+        >
+          <ul className="lfx-group lfx-list">
+            {prompts.map((p) => (
+              <li key={p.id}>
+                <button type="button" className="lfx-cell" onClick={() => onOpen(p.id)}>
+                  <span className="lfx-cell-text">
+                    <span>{p.name}</span>
+                    <small>{p.text}</small>
+                  </span>
+                  <Chevron />
+                </button>
+              </li>
+            ))}
+            <li>
+              <button type="button" className="lfx-cell lfx-cell-add" onClick={() => onOpen()}>
+                <span className="lfx-add-icon" aria-hidden>
+                  +
+                </span>
+                <span className="lfx-cell-text">
+                  <span>Add Prompt…</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </Section>
+        {error && (
+          <p className="lfx-error-inline lfx-pane-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PromptForm({
+  initial,
+  saving,
+  error,
+  onSave,
+  onCancel,
+  onRemove,
+}: {
+  initial?: SavedPrompt;
+  saving: boolean;
+  error: string | null;
+  onSave: (p: SavedPrompt) => void;
+  onCancel: () => void;
+  onRemove?: () => void;
+}) {
+  const [d, setD] = useState<SavedPrompt>(initial ?? { id: newId(), name: "", text: "" });
+  const ids = { name: useId(), text: useId() };
+  return (
+    <form
+      className="lfx-settings"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ ...d, name: d.name.trim(), text: d.text.replace(/^\s+/, "") });
+      }}
+    >
+      <NavBar title={initial ? initial.name : "New Prompt"} onBack={onCancel} />
+      <div className="lfx-pane">
+        <Section>
+          <div className="lfx-group">
+            <Row label="Name" htmlFor={ids.name}>
+              <input id={ids.name} value={d.name} placeholder="UML class diagram" onChange={(e) => setD({ ...d, name: e.target.value })} required maxLength={80} />
+            </Row>
+          </div>
+        </Section>
+        <Section title="Prompt" footer="Sent as if you typed it. You can still edit it in the message box before sending.">
+          <div className="lfx-group">
+            <textarea
+              id={ids.text}
+              className="lfx-prompt-text"
+              aria-label="Prompt text"
+              value={d.text}
+              rows={6}
+              maxLength={8000}
+              required
+              placeholder="Draw a UML class diagram of "
+              onChange={(e) => setD({ ...d, text: e.target.value })}
+            />
+          </div>
+        </Section>
+        {error && (
+          <p className="lfx-error-inline lfx-pane-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      <footer className="lfx-pane-foot">
+        {onRemove && (
+          <button type="button" className="lfx-btn lfx-btn-danger" disabled={saving} onClick={onRemove}>
+            Delete
+          </button>
+        )}
+        <span className="lfx-spacer" />
+        <button type="button" className="lfx-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="lfx-btn lfx-primary" disabled={saving || !d.name.trim() || !d.text.trim()}>
+          Save
+        </button>
+      </footer>
+    </form>
   );
 }

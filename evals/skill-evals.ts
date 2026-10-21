@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadScenarios, REPO_ROOT, skillEvals } from "./scenarios.js";
 
-export const SKILLS = ["excalidraw", "diagram-review", "architecture-discovery", "architecture-review"] as const;
+export const SKILLS = ["excalidraw", "architecture-diagrams", "diagram-review", "architecture-discovery", "architecture-review"] as const;
 
 export const skillEvalsPath = (skill: string) => path.join(REPO_ROOT, "plugin", "skills", skill, "evals", "evals.json");
 

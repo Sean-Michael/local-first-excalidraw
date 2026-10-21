@@ -20,6 +20,8 @@ export interface ClaudeCodeOptions {
   /** Environment for the spawned `lfx mcp`, so it reaches this daemon. */
   mcpEnv: Record<string, string>;
   codeAccess: boolean;
+  /** Drawing and code tools the user switched off in the settings. */
+  disabledTools?: string[];
   signal: AbortSignal;
 }
 
@@ -84,7 +86,7 @@ export function claudeCodeArgs(o: ClaudeCodeOptions): string[] {
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify(mcp),
     "--allowedTools", ["mcp__excalidraw", ...tools].join(","),
-    "--disallowedTools", `${MCP_PREFIX}open_drawing`,
+    "--disallowedTools", ["open_drawing", ...(o.disabledTools ?? [])].map((t) => MCP_PREFIX + t).join(","),
     // Claude Code's own file tools don't go through isSecretFile, so deny the same files in its permissions.
     "--settings", JSON.stringify(claudeCodeSettings()),
     "--append-system-prompt", o.systemPrompt,

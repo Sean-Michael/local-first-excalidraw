@@ -1,4 +1,5 @@
 # Data models: entity-relationship diagrams
+<!-- keywords: er diagram, erd, entity relationship, entity-relationship, data model, database schema, schema, tables, columns, primary key, foreign key, crow's foot, cardinality, relational -->
 
 An ER diagram shows the things a system stores, their key attributes and how they relate. Peter Chen introduced the notation in 1976. Crow's-foot notation (Gordon Everest) is the one most engineers read today.
 
@@ -31,7 +32,7 @@ There are three levels, and you should pick one:
 
 ## Excalidraw recipe
 
-Use `create_diagram`, one node per entity. Put the keys and important attributes in the label under a rule line. Point edges along the chain of references, so every edge joins neighbouring layers. Keep the rule shorter than the longest text line. Boxes are sized from the measured text, and an over-long rule wraps onto a second line that overflows the box.
+Use `create_diagram`, one node per entity: the entity name as `label` and the keys and important columns as `attributes` (the rule line is added for you). Give each edge a crow's-foot `relation`, read from the `from` entity to the `to` entity: `one-to-one`, `one-to-many`, `one-to-one-or-many` or `many-to-many`. Point edges along the chain of references, so every edge joins neighbouring layers. Excalidraw has no "zero" marker, so spell the cardinality out in the label as well.
 
 ```json create_diagram
 {
@@ -39,31 +40,20 @@ Use `create_diagram`, one node per entity. Put the keys and important attributes
   "direction": "LR",
   "title": "ER diagram: orders (logical)",
   "nodes": [
-    { "id": "customer", "label": "CUSTOMER\n─────\nid PK\nemail UK\nname", "color": "green" },
-    { "id": "order", "label": "ORDER\n─────\nid PK\ncustomer_id FK\nstatus\nplaced_at", "color": "green" },
-    { "id": "line_item", "label": "LINE_ITEM\n─────\norder_id FK\nsku FK\nquantity", "color": "green" },
-    { "id": "product", "label": "PRODUCT\n─────\nsku PK\ntitle\nprice_cents", "color": "green" }
+    { "id": "customer", "label": "CUSTOMER", "attributes": ["id PK", "email UK", "name"], "color": "green" },
+    { "id": "order", "label": "ORDER", "attributes": ["id PK", "customer_id FK", "status", "placed_at"], "color": "green" },
+    { "id": "line_item", "label": "LINE_ITEM", "attributes": ["order_id FK", "sku FK", "quantity"], "color": "green" },
+    { "id": "product", "label": "PRODUCT", "attributes": ["sku PK", "title", "price_cents"], "color": "green" }
   ],
   "edges": [
-    { "from": "customer", "to": "order", "label": "places (1 to 0..*)" },
-    { "from": "order", "to": "line_item", "label": "contains (1 to 1..*)" },
-    { "from": "line_item", "to": "product", "label": "refers to (0..* to 1)" }
+    { "from": "customer", "to": "order", "relation": "one-to-many", "label": "places (1 to 0..*)" },
+    { "from": "order", "to": "line_item", "relation": "one-to-one-or-many", "label": "contains (1 to 1..*)" },
+    { "from": "product", "to": "line_item", "relation": "one-to-many", "label": "appears in (1 to 0..*)" }
   ]
 }
 ```
 
-Then swap the arrowheads for crow's feet. Excalidraw has `crowfoot_one`, `crowfoot_many` and `crowfoot_one_or_many`. There is no "zero" marker, which is why the labels above also spell the cardinality out. Arrow ids are `from->to`, with `#n` added for the n-th edge after the first:
-
-```json update_elements
-{
-  "path": "docs/diagrams/orders-er",
-  "updates": [
-    { "id": "customer->order", "startArrowhead": "crowfoot_one", "endArrowhead": "crowfoot_many" },
-    { "id": "order->line_item#1", "startArrowhead": "crowfoot_one", "endArrowhead": "crowfoot_one_or_many" },
-    { "id": "line_item->product#2", "startArrowhead": "crowfoot_many", "endArrowhead": "crowfoot_one" }
-  ]
-}
-```
+To change an end afterwards, set `startArrowhead` / `endArrowhead` (`crowfoot_one`, `crowfoot_many`, `crowfoot_one_or_many`) with `update_elements`. Arrow ids are `from->to`, with `#n` added for the n-th edge after the first.
 
 Mermaid `erDiagram` is the standard text form, and the user may already have it. In this build, `mermaid_to_drawing` brings it in as one uneditable image (the result says "Converted Mermaid into 1 elements"). Translate it into the recipe above instead:
 

@@ -1,4 +1,5 @@
-# UML structure diagrams: class, component, deployment
+# UML structure diagrams: class, object, package, component, composite structure, deployment
+<!-- keywords: class diagram, uml class, domain model, classes, attributes, operations, methods, inheritance, generalization, realization, interface, abstract class, aggregation, composition, association, multiplicity, object diagram, instance diagram, snapshot, package diagram, namespace, layers, module dependencies, dependency graph, import graph, component diagram, provided interface, required interface, composite structure, ports, parts, connectors, deployment diagram, uml deployment, node, device, execution environment, artifact -->
 
 Structure diagrams show what exists and how the parts depend on each other, independent of time. In Kruchten's 4+1 view model, class diagrams belong to the logical view, components and packages to the development view, and deployment to the physical view. For system-level structure, C4 container and component diagrams (`c4.md`) are usually easier for readers than strict UML. Reach for UML when the audience expects it, or when you need its precision (multiplicities, interfaces, inheritance).
 
@@ -28,7 +29,16 @@ Structure diagrams show what exists and how the parts depend on each other, inde
 
 ### Excalidraw recipe
 
-Use `create_diagram`, one node per class. Separate the compartments with a rule line in the label. Keep the rule shorter than the longest text line. Boxes are sized from the measured text, and an over-long rule wraps onto a second line that overflows the box.
+Use `create_diagram` with `direction: "TB"`, one node per class. Give the class name as `label`, its members as `attributes` and `operations` (the compartment rules are added for you), and `stereotype` for interfaces, abstract classes and enumerations. Give every edge a `relation`, so it gets the UML arrowhead and line style:
+
+- `inheritance` from the child to the parent (hollow triangle at the parent; the parent is laid out above its children)
+- `realization` from the class to the interface it implements (dashed, hollow triangle)
+- `composition` from the whole to the part (filled diamond at the whole): the part can't exist without it
+- `aggregation` from the whole to the part (hollow diamond): the part can exist on its own
+- `association` (plain line) or `directed-association` (open arrow) for "knows about"
+- `dependency` (dashed, open arrow) for "uses for a moment" (a parameter, a local variable)
+
+Put multiplicities in the edge label, ordered from the `from` end to the `to` end: `"1 — 1..*"`, or a role name and multiplicity: `"items 1..*"`.
 
 ```json create_diagram
 {
@@ -36,28 +46,27 @@ Use `create_diagram`, one node per class. Separate the compartments with a rule 
   "direction": "TB",
   "title": "Class diagram: orders",
   "nodes": [
-    { "id": "order", "label": "Order\n─────\n+id: string\n+status: OrderStatus\n─────\n+place()\n+cancel()", "color": "blue" },
-    { "id": "stripe", "label": "StripeGateway", "color": "blue" },
-    { "id": "lineitem", "label": "LineItem\n─────\n+sku: string\n+quantity: number", "color": "blue" },
-    { "id": "gateway", "label": "«interface»\nPaymentGateway\n─────\n+charge(amount)", "color": "violet" }
+    { "id": "gateway", "label": "PaymentGateway", "stereotype": "interface", "operations": ["+charge(amount: Money): Receipt"], "color": "violet" },
+    { "id": "order", "label": "Order", "attributes": ["-id: UUID", "-status: OrderStatus"], "operations": ["+place(): void", "+cancel(): void"], "color": "blue" },
+    { "id": "stripe", "label": "StripeGateway", "operations": ["+charge(amount: Money): Receipt"], "color": "blue" },
+    { "id": "lineitem", "label": "LineItem", "attributes": ["-sku: string", "-quantity: int"], "color": "blue" },
+    { "id": "status", "label": "OrderStatus", "stereotype": "enumeration", "attributes": ["PENDING", "PAID", "CANCELLED"], "color": "gray" }
   ],
   "edges": [
-    { "from": "order", "to": "lineitem", "label": "contains 1 → 1..*" },
-    { "from": "order", "to": "gateway", "label": "uses", "style": "dashed" },
-    { "from": "stripe", "to": "gateway", "label": "implements", "style": "dashed" }
+    { "from": "order", "to": "lineitem", "relation": "composition", "label": "1 — 1..*" },
+    { "from": "order", "to": "status", "relation": "association" },
+    { "from": "order", "to": "gateway", "relation": "dependency", "label": "uses" },
+    { "from": "stripe", "to": "gateway", "relation": "realization" }
   ]
 }
 ```
 
-Then give the relationships their UML arrowheads. Excalidraw has `triangle_outline` (inheritance and realisation), `diamond` (composition), `diamond_outline` (aggregation) and `arrow` (association and dependency). `create_diagram` names each arrow `from->to`, adding `#n` for the n-th edge after the first:
+To change an arrow afterwards, `create_diagram` names each arrow `from->to`, adding `#n` for the n-th edge after the first. Excalidraw's arrowheads are `triangle_outline` (inheritance and realisation), `diamond` (composition), `diamond_outline` (aggregation) and `arrow` (association and dependency):
 
 ```json update_elements
 {
   "path": "docs/diagrams/order-classes",
-  "updates": [
-    { "id": "order->lineitem", "startArrowhead": "diamond", "endArrowhead": null },
-    { "id": "stripe->gateway#2", "endArrowhead": "triangle_outline" }
-  ]
+  "updates": [{ "id": "order->lineitem", "startArrowhead": "diamond_outline" }]
 }
 ```
 
@@ -67,12 +76,87 @@ Use the exact class and member names from the code. Link each class box to its f
 
 ### Common mistakes
 
+- **Plain arrows for every relationship.** In a class diagram the arrowhead is the meaning: give every edge a `relation`.
 - **Every field and getter shown.** Show what explains the design.
 - **Aggregation and composition used interchangeably.** If you're unsure, use plain association.
 - **Generated diagrams of a whole package.** These are unreadable. Pick the classes for one question.
 - **Arrows pointing the wrong way.** Inheritance points at the parent. Dependency points at what is used.
 
-## Component diagram (UML) and package / dependency graphs
+## Object diagram
+
+**Use it when** a class diagram is too abstract to follow: to show a concrete example of the objects that exist at one moment (a test fixture, a tricky configuration, a bug's state), or to check a class diagram against a real case.
+
+### Notation
+
+- An object box is named `instanceName : ClassName`, underlined in strict UML. An anonymous object is `: ClassName`.
+- Below the name, the attribute values that matter: `name = "Alice"`, `status = PAID`.
+- Links are plain lines between objects: instances of the class diagram's associations. There are no multiplicities, because every link is one actual link.
+
+### Excalidraw recipe
+
+Use `create_diagram`, one node per object. Put `instance : Class` as the label and the values as `attributes`. Use `relation: "association"` for the links, labelled with the role if it helps:
+
+```json create_diagram
+{
+  "path": "docs/diagrams/alice-orders",
+  "direction": "LR",
+  "title": "Object diagram: Alice's orders",
+  "nodes": [
+    { "id": "alice", "label": "alice : Customer", "attributes": ["name = \"Alice\"", "tier = GOLD"], "color": "blue" },
+    { "id": "o1", "label": "o1 : Order", "attributes": ["status = PAID"], "color": "blue" },
+    { "id": "o2", "label": "o2 : Order", "attributes": ["status = PENDING"], "color": "blue" },
+    { "id": "line", "label": ": OrderItem", "attributes": ["quantity = 1"], "color": "blue" },
+    { "id": "book", "label": "dune : Product", "attributes": ["title = \"Dune\""], "color": "blue" }
+  ],
+  "edges": [
+    { "from": "alice", "to": "o1", "relation": "association" },
+    { "from": "alice", "to": "o2", "relation": "association" },
+    { "from": "o1", "to": "line", "relation": "association" },
+    { "from": "line", "to": "book", "relation": "association" }
+  ]
+}
+```
+
+### Common mistakes
+
+- **Class names with no instance names,** which make it a class diagram.
+- **Multiplicities on links.**
+- **A whole system's objects.** Show the handful that explain the case.
+
+## Package diagram
+
+**Use it when** you're showing how code is organised into packages, namespaces, modules or layers, and which depend on which: to check the layering, find cycles, or see what a change would affect.
+
+### Notation
+
+- A package is a folder: a rectangle with a small tab on its top-left, the name on the tab or in the body.
+- A package can contain classes and other packages.
+- A dashed arrow with an open head is a dependency, pointing from the package that uses to the package used. `«import»` (public import), `«access»` (private import) and `«merge»` are stereotyped dependencies.
+
+### Excalidraw recipe
+
+Use `create_diagram` with `direction: "TB"`, so dependencies point down. For packages with their contents shown, make each package a group (its frame is the folder) with a few member nodes. For packages shown as one box, use a node with `stereotype: "package"`. Make every dependency `relation: "dependency"`, with `label: "«import»"` if that distinction matters.
+
+```json create_diagram
+{
+  "path": "docs/diagrams/layers",
+  "direction": "TB",
+  "title": "Package diagram: layered web app",
+  "nodes": [
+    { "id": "web", "label": "web", "stereotype": "package", "color": "blue" },
+    { "id": "domain", "label": "domain", "stereotype": "package", "color": "violet" },
+    { "id": "persistence", "label": "persistence", "stereotype": "package", "color": "green" }
+  ],
+  "edges": [
+    { "from": "web", "to": "domain", "relation": "dependency", "label": "«import»" },
+    { "from": "persistence", "to": "domain", "relation": "dependency", "label": "«import»" }
+  ]
+}
+```
+
+The second edge shows dependency inversion: `persistence` implements interfaces that `domain` owns. Draw what the code really imports.
+
+## Component diagram (UML) and module / dependency graphs
 
 **Use it when** you're showing how a system or container breaks down into replaceable parts with provided and required interfaces, or how modules and packages depend on each other (layering, cycles, what a change would affect).
 
@@ -80,7 +164,7 @@ Use the exact class and member names from the code. Link each class box to its f
 
 - A component is a rectangle with a `<<component>>` stereotype or the component icon.
 - A lollipop is a provided interface. A socket is a required interface.
-- Dependencies are dashed arrows from the user to the thing used.
+- Dependencies are dashed arrows from the user to the thing used (`relation: "dependency"`).
 - Packages are folders (tabbed rectangles) that group components.
 
 ### Excalidraw recipe
@@ -130,6 +214,20 @@ Build the edge list from real imports, for example by grepping `from "./x.js"` a
 - **Unrelated modules in one picture.** Scope it to one package or layer boundary.
 - **Arrows meaning "calls" in some places and "imports" in others.** Pick one meaning and say which in the title or legend.
 
+## Composite structure diagram
+
+**Use it when** you need to show the inside of one class or component at run time: the parts it's built from, the ports through which it talks to the outside, and the connectors that wire the parts together. It's rare outside embedded and systems engineering. A C4 component diagram usually serves a software audience better.
+
+### Notation
+
+- The outer box is the classifier. Inside it, parts are boxes named `role : Type`.
+- Ports are small squares on the border. Connectors are lines between parts or from a part to a port.
+- Interfaces on ports use the lollipop (provided) and socket (required) symbols.
+
+### Excalidraw recipe
+
+Put the parts in one `create_diagram` group: its frame is the classifier. Give the group the classifier's name. Add each port with `add_elements` as a small square (20×20) straddling the frame's edge, with a text label, and bind arrows to it with `connect_elements`.
+
 ## Deployment diagram (UML)
 
 **Use it when** you're showing which artifacts run on which nodes (devices and execution environments) and how the nodes are connected. C4 deployment diagrams (`c4.md`) are the same idea with container instances.
@@ -142,7 +240,7 @@ Build the edge list from real imports, for example by grepping `from "./x.js"` a
 
 ### Excalidraw recipe
 
-Excalidraw frames don't nest. Use one `create_diagram` group per innermost node, named with its full path and stereotype, such as `"web-01 › Docker [executionEnvironment]"`. Then draw the outer nodes as dashed rectangles with `add_elements`, as in the C4 deployment recipe in `c4.md`. The artifacts are the nodes, labelled with the artifact name and version (`"shop-api.jar\n[artifact] v2.3"`). Label the communication paths with protocol and port: `"HTTPS :443"`, `"PostgreSQL :5432"`.
+Excalidraw frames don't nest. Use one `create_diagram` group per innermost node, named with its full path and stereotype, such as `"web-01 › Docker «executionEnvironment»"`. For a node that holds a single artifact, a node with `stereotype: "device"` (or `"executionEnvironment"`) is simpler than a group. Then draw the outer nodes as dashed rectangles with `add_elements`, as in the C4 deployment recipe in `c4.md`. The artifacts are the nodes, with `stereotype: "artifact"` and the artifact name and version as the label (`"shop-api.jar v2.3"`). Label the communication paths with protocol and port: `"HTTPS :443"`, `"PostgreSQL :5432"`.
 
 ### Common mistakes
 

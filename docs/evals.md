@@ -86,6 +86,11 @@ They live in `evals/scenarios.json`. Each has the common skill-eval fields (`pro
 | `discover-component-scope` | A component diagram of ledger-orders that stays inside that one container |
 | `review-architecture` | The architecture-review skill on the reference diagram: red severity notes for single points of failure and the queue consumer's endless requeue, with every original element left exactly where it was |
 | `review-trust-boundaries` | A security-focused review: a note on the trusted `x-user-id` header, again without moving the user's elements |
+| `uml-class-generic`, `uml-ambiguous` | "draw me a uml class diagram for an online store" and "draw an e-commerce UML diagram", from the prompt alone: class compartments with visibility markers and UML arrowheads (a composition or aggregation diamond) |
+| `uml-use-case`, `uml-sequence-login`, `uml-activity-checkout`, `uml-state-door`, `uml-package`, `uml-deployment`, `uml-object`, `uml-communication` | One per UML diagram type, from the prompt alone: the type's own notation (ellipses inside a system boundary and «include», an `alt` for the failure case, decision diamonds with `[guards]`, dashed dependencies, «device» stereotypes, `instance : Class` boxes, numbered messages) |
+| `uml-class-from-code` | A class diagram of `ledger-orders` with the real class and member names, linked to their files |
+
+The `uml-*` scenarios other than `uml-class-from-code` use `evals/fixtures/blank/`, a project with only a README, so they test what the agent knows about the notation rather than what it can read.
 
 The fixture, `evals/fixtures/shopapp/`, is a small TypeScript shop: `turnstile-gateway`, `keymaster-auth`, `ledger-orders` (with the `PaylodeClient` for an external card processor and an `OrderRepository` over Postgres `shopapp-pg`), `courier-worker` consuming the `order-events` queue on `postbox-mq` and mailing through Pigeonpost, Redis `token-cache`, all wired in `docker-compose.yml`. The names are unusual on purpose, so a check for them shows that the agent read the code and didn't guess.
 
@@ -111,6 +116,10 @@ The graders in `evals/grade.ts` are deterministic and read only the `.excalidraw
 | `user-edits` | The listed baseline elements still exist with the listed properties unchanged (1px tolerance on numbers), and the listed texts are still there |
 | `links` | At least `minLinked` elements link to files in the project (relative, absolute, `file://` or `vscode://file/`, with an optional `#L12` or `:12`), and with `allExist`, none link anywhere else |
 | `improves` | The chosen metrics (overlaps, bound-arrow share, smallest font, overflow) are better than the baseline's, or already perfect |
+| `arrowheads` | Each list of arrowheads (`triangle_outline`, `diamond`, `crowfoot_many`, …) is used at one end of some arrow |
+| `element-types` | At least this many elements of each type (`{ "ellipse": 3 }` for use cases) |
+| `required-patterns` | Each regular expression (case-insensitive, multiline) matches some text: class members like `+id: UUID`, guards like `[paid]`, numbered messages |
+| `dashed-arrows` | At least this many dashed or dotted arrows (dependencies, «include», replies) |
 
 `text-fit` uses a label's stored size when it was measured with real fonts (by the editor or the Mermaid converter). Labels at exactly the width the server clamps to (the container's width minus 20) are estimated with the metrics the server uses for layout, which run wide for the hand-drawn font, so `text-fit` errs towards reporting an overflow.
 

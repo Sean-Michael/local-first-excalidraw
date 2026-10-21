@@ -352,3 +352,32 @@ test("required edges can allow a chain through intermediate elements", () => {
   assert.equal(edges(), false);
   assert.equal(edges(1), true);
 });
+
+test("UML checks: arrowheads, element types, text patterns and dashed arrows", () => {
+  const s = scene([
+    { type: "rectangle", id: "a", x: 0, y: 0, label: "Order\n───\n+id: UUID" },
+    { type: "rectangle", id: "b", x: 300, y: 0, label: "OrderItem" },
+    { type: "ellipse", id: "c", x: 0, y: 300, label: "Withdraw" },
+    { type: "arrow", start: { id: "a" }, end: { id: "b" }, startArrowhead: "diamond", endArrowhead: null },
+    { type: "arrow", start: { id: "c" }, end: { id: "a" }, strokeStyle: "dashed", label: "«include»" },
+  ]);
+  const g = grade({
+    final: s,
+    checks: {
+      requiredArrowheads: [["diamond", "diamond_outline"], ["triangle_outline"]],
+      minByType: { ellipse: 1, diamond: 1 },
+      requiredPatterns: ["(^|\\n)\\s*[+\\-#~]\\s?\\w", "include|extend", "^1\\."],
+      minDashedArrows: 1,
+    },
+    projectRoot: "/p",
+    projectFiles: new Set(),
+  });
+  const by = Object.fromEntries(g.checks.map((c) => [c.name, c]));
+  assert.equal(by.arrowheads.pass, false);
+  assert.match(by.arrowheads.detail, /missing triangle_outline \(used: diamond 1, arrow 1\)/);
+  assert.equal(by["element-types"].pass, false);
+  assert.match(by["element-types"].detail, /diamond 0\/1/);
+  assert.equal(by["required-patterns"].pass, false);
+  assert.match(by["required-patterns"].detail, /2\/3 present; missing \/\^1\\\.\//);
+  assert.equal(by["dashed-arrows"].pass, true);
+});

@@ -1,4 +1,5 @@
 # Living diagrams: keeping drawings in step with the code
+<!-- keywords: living diagrams, code links, docs as code, keep diagrams up to date, sync, stale, adr, architecture decision record, update after code change, drift -->
 
 A diagram that disagrees with the code is worse than no diagram, because readers trust it. Most architecture diagrams rot because nothing connects them to the code they describe, and redrawing them is expensive. This project keeps drawings as `.excalidraw` files in the repo, so they can live with the code: reviewed in the same pull request, linked to the files they describe, and updated element by element.
 

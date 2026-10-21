@@ -153,3 +153,78 @@ test("layout input errors are SceneErrors", () => {
   assert.throws(() => layoutGraph({ nodes: n("a", "a") }), SceneError);
   assert.throws(() => layoutGraph({ nodes: n("a"), edges: e("ab") }), SceneError);
 });
+
+test("layout: UML relations set arrowheads and put parents above their children", () => {
+  const els = build({
+    direction: "TB",
+    nodes: [
+      { id: "card", label: "CardPayment" },
+      { id: "payment", label: "Payment", stereotype: "abstract", attributes: ["-amount: Money"], operations: ["+pay(): void"] },
+      { id: "order", label: "Order" },
+      { id: "item", label: "OrderItem" },
+      { id: "base", label: "Withdraw" },
+      { id: "auth", label: "Authenticate" },
+    ],
+    edges: [
+      { from: "card", to: "payment", relation: "inheritance" },
+      { from: "order", to: "item", relation: "composition", label: "1 — 1..*" },
+      { from: "order", to: "payment", relation: "association" },
+      { from: "base", to: "auth", relation: "include" },
+      { from: "order", to: "base", relation: "one-to-many", endArrowhead: "crowfoot_one_or_many" },
+    ],
+  });
+  const byId = (id: string) => els.find((e) => e.id === id)!;
+  // The parent is laid out first even though the arrow runs child -> parent.
+  assert.ok(byId("payment").y < byId("card").y, "parent above child");
+  const inherit = byId("card->payment");
+  assert.equal(inherit.endArrowhead, "triangle_outline");
+  assert.equal(inherit.startArrowhead, null);
+  assert.equal(inherit.startBinding.elementId, "card");
+  const comp = byId("order->item#1");
+  assert.equal(comp.startArrowhead, "diamond");
+  assert.equal(comp.endArrowhead, null);
+  assert.equal(byId("order->payment#2").endArrowhead, null);
+  const inc = byId("base->auth#3");
+  assert.equal(inc.strokeStyle, "dashed");
+  assert.ok(els.some((e) => e.type === "text" && e.containerId === inc.id && e.text === "«include»"));
+  // An explicit arrowhead overrides the relation's.
+  const er = byId("order->base#4");
+  assert.equal(er.startArrowhead, "crowfoot_one");
+  assert.equal(er.endArrowhead, "crowfoot_one_or_many");
+  // Compartments: stereotype, name, a rule, attributes, a rule, operations.
+  const label = els.find((e) => e.type === "text" && e.containerId === "payment")!.text as string;
+  assert.match(label, /^«abstract»\nPayment\n─+\n-amount: Money\n─+\n\+pay\(\): void$/);
+});
+
+test("layout: initial, final and bar shapes are small unlabelled UML symbols", () => {
+  const els = build({
+    direction: "TB",
+    nodes: [
+      { id: "start", label: "", shape: "initial" },
+      { id: "fork", label: "", shape: "bar" },
+      { id: "a", label: "Pack" },
+      { id: "b", label: "Invoice" },
+      { id: "end", label: "", shape: "final" },
+    ],
+    edges: [
+      { from: "start", to: "fork" },
+      { from: "fork", to: "a" },
+      { from: "fork", to: "b" },
+      { from: "a", to: "end" },
+      { from: "b", to: "end" },
+    ],
+  });
+  const byId = (id: string) => els.find((e) => e.id === id)!;
+  assert.equal(byId("start").type, "ellipse");
+  assert.equal(byId("start").width, 30);
+  assert.equal(byId("start").fillStyle, "solid");
+  assert.ok(byId("fork").width > byId("fork").height * 5, "a horizontal bar across a TB flow");
+  // The final node is a ring (what arrows bind to) around a solid dot, grouped.
+  const ring = byId("end");
+  const dot = byId("end-dot");
+  assert.equal(ring.backgroundColor, "transparent");
+  assert.ok(dot.x > ring.x && dot.x + dot.width < ring.x + ring.width);
+  assert.deepEqual(dot.groupIds, ring.groupIds);
+  assert.equal(byId("a->end#3").endBinding.elementId, "end");
+  assert.ok(!els.some((e) => e.type === "text" && ["start", "fork", "end"].includes(e.containerId)), "no labels");
+});

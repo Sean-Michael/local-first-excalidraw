@@ -4,6 +4,18 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- Saved prompts. Type **/** in the assistant's message box to pick one; manage them under **Saved Prompts** in the settings or as `"prompts"` in `ai.json`. The defaults cover the common diagrams (architecture, C4 container, UML class, sequence, state machine, use case, ER) and updating a diagram after a code change.
+- A **Tools** page in the assistant settings that lists every tool with what it does, lets you switch tools off (`"disabledTools"` in `ai.json`, honoured by Claude Code too), and shows which diagram notes the assistant can read.
+- UML and ER notation in `create_diagram`: an edge `relation` (`inheritance`, `realization`, `composition`, `aggregation`, `association`, `dependency`, `include`, `extend`, `message`, `reply`, and the crow's-foot `one-to-many` family) sets the arrowheads and line style, and parents are laid out above their subclasses. Nodes take `attributes`, `operations` and `stereotype` for class compartments, and `initial`, `final` and `bar` shapes draw ●, ◉ and fork/join bars.
+- Reference notes for all 14 UML diagrams: a new UML overview (which diagram answers which question, what to draw for a vague "UML diagram", how UML symbols map onto the tools), and use case, object, package, composite structure, communication, interaction overview and timing diagrams.
+- Eval scenarios for UML diagrams drawn from a prompt alone (`uml-*`), with graders for arrowheads, element types, text patterns and dashed arrows.
+
+### Fixed
+
+- `diagram_reference` finds topics from a description in the caller's own words. Asking for `"uml-class"`, `"use case"` or `"uml-state"` used to fail with "No reference"; in evals the in-app assistant hit that error in 10 of 11 UML requests.
+
 ## [1.1.0] - 2026-10-19
 
 ### Added

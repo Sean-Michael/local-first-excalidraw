@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { writeFileAtomic } from "../config.js";
-import type { EndpointKind, PublicEndpoint, PublicSettings } from "../../shared/chat.js";
+import { DEFAULT_PROMPTS, type EndpointKind, type PublicEndpoint, type PublicSettings, type SavedPrompt } from "../../shared/chat.js";
 import { parseJsonc } from "../../shared/jsonc.js";
 
 export interface Endpoint {
@@ -33,6 +33,10 @@ export interface AiSettings {
   /** Let the assistant list, search and read project files. */
   codeAccess: boolean;
   endpoints: Endpoint[];
+  /** Saved prompts; unset means the defaults. */
+  prompts?: SavedPrompt[];
+  /** Tool names the assistant isn't given. */
+  disabledTools?: string[];
 }
 
 const KINDS: EndpointKind[] = ["openai", "ollama", "anthropic", "claude-code"];
@@ -96,6 +100,31 @@ function parseEndpoint(raw: Record<string, unknown>): Omit<Endpoint, "apiKey"> {
   };
 }
 
+/** Validates saved prompts: at most 100, each with a name and text. */
+function parsePrompts(raw: unknown): SavedPrompt[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) throw new SettingsError('"prompts" must be an array');
+  if (raw.length > 100) throw new SettingsError("Too many prompts (100 at most)");
+  const ids = new Set<string>();
+  return raw.map((p: Record<string, unknown>, n) => {
+    if (!p || typeof p !== "object" || Array.isArray(p)) throw new SettingsError(`Prompt ${n + 1} must be an object`);
+    const name = str(p.name, 80);
+    const text = typeof p.text === "string" ? p.text.slice(0, 8000) : "";
+    if (!name) throw new SettingsError(`Prompt ${n + 1} needs a "name"`);
+    if (!text.trim()) throw new SettingsError(`Prompt "${name}" needs a "text"`);
+    let id = typeof p.id === "string" && /^[\w-]{1,64}$/.test(p.id) ? p.id : crypto.randomBytes(4).toString("hex");
+    while (ids.has(id)) id = crypto.randomBytes(4).toString("hex");
+    ids.add(id);
+    return { id, name, text };
+  });
+}
+
+function parseToolNames(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.some((t) => typeof t !== "string")) throw new SettingsError('"disabledTools" must be a list of tool names');
+  return [...new Set((raw as string[]).map((t) => t.trim()).filter((t) => /^[\w-]{1,64}$/.test(t)))].slice(0, 200);
+}
+
 export class SettingsStore {
   private file: string;
   private data: AiSettings = { ...DEFAULT_SETTINGS };
@@ -130,6 +159,8 @@ export class SettingsStore {
         codeAccess: raw.codeAccess === undefined ? DEFAULT_SETTINGS.codeAccess : !!raw.codeAccess,
         active: typeof raw.active === "string" ? raw.active : undefined,
         endpoints: (list as Record<string, unknown>[]).map((e) => ({ ...parseEndpoint(e), apiKey: str(e.apiKey, 4096) })),
+        prompts: parsePrompts(raw.prompts),
+        disabledTools: parseToolNames(raw.disabledTools),
       };
       this.fileError = undefined;
     } catch (e) {
@@ -161,6 +192,16 @@ export class SettingsStore {
     return (id && data.endpoints.find((e) => e.id === id)) || this.active();
   }
 
+  /** The saved prompts, or the defaults until the user saves a list of their own. */
+  prompts(): SavedPrompt[] {
+    return this.get().prompts ?? DEFAULT_PROMPTS;
+  }
+
+  /** Whether the assistant may call a tool. */
+  toolEnabled(name: string): boolean {
+    return !(this.get().disabledTools ?? []).includes(name);
+  }
+
   public(claudeCode: { available: boolean; path?: string }): PublicSettings {
     const data = this.get();
     return {
@@ -170,6 +211,8 @@ export class SettingsStore {
       claudeCode,
       file: this.file,
       fileError: this.fileError,
+      prompts: this.prompts(),
+      disabledTools: data.disabledTools ?? [],
       endpoints: data.endpoints.map((e): PublicEndpoint => {
         const env = envKeyName(e);
         return {
@@ -218,6 +261,8 @@ export class SettingsStore {
       codeAccess: body.codeAccess === undefined ? current.codeAccess : !!body.codeAccess,
       active: typeof body.active === "string" ? body.active : current.active,
       endpoints,
+      prompts: body.prompts === undefined ? current.prompts : parsePrompts(body.prompts),
+      disabledTools: body.disabledTools === undefined ? current.disabledTools : parseToolNames(body.disabledTools),
     };
     writeFileAtomic(this.file, JSON.stringify(this.data, null, 2), 0o600);
     this.mtime = fs.statSync(this.file).mtimeMs;

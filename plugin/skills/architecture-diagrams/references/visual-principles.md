@@ -1,4 +1,5 @@
 # Visual principles for technical diagrams
+<!-- keywords: visual principles, readability, legend, colour, color, accessibility, colorblind, layout, reading direction, gestalt, clutter, labels, titles, style -->
 
 A diagram works when the reader can answer its question without the author in the room. These principles come from perception research (Gestalt psychology), information design (Edward Tufte) and the practice of architecture documentation (C4, arc42, ISO/IEC/IEEE 42010). The diagram-review skill turns them into a checklist for a rendered drawing. This file explains why the checks exist and how to design for them from the start.
 

@@ -52,6 +52,14 @@ export interface Checks {
   preserve?: { ids?: string[]; props?: string[]; texts?: string[] };
   /** Elements carrying a `link` to a file in the project. */
   links?: { minLinked?: number; allExist?: boolean };
+  /** Each entry: some arrow has one of these arrowheads at either end (UML notation: triangle_outline, diamond, …). */
+  requiredArrowheads?: string[][];
+  /** At least this many live elements of each type (e.g. { "ellipse": 3, "diamond": 1 }). */
+  minByType?: Record<string, number>;
+  /** Each regular expression (case-insensitive, multiline) must match some text in the drawing. */
+  requiredPatterns?: string[];
+  /** At least this many dashed or dotted arrows (dependencies, includes, replies). */
+  minDashedArrows?: number;
   /** Metrics that must be better than the baseline's. */
   improve?: { overlaps?: boolean; boundRatio?: boolean; minFontSize?: boolean; overflow?: boolean };
 }
@@ -73,7 +81,7 @@ export interface Scenario {
   id: string;
   title: string;
   /** The plugin skill this scenario exercises (for the skill evals.json files). */
-  skill: "excalidraw" | "diagram-review" | "architecture-discovery" | "architecture-review";
+  skill: "excalidraw" | "architecture-diagrams" | "diagram-review" | "architecture-discovery" | "architecture-review";
   prompt: string;
   expected_output: string;
   files: string[];

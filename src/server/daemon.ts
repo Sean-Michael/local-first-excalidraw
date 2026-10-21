@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ChatEvent, ChatRequest } from "../shared/chat.js";
-import { Assistant, AssistantError } from "./ai/agent.js";
+import { Assistant, AssistantError, toolCatalog } from "./ai/agent.js";
 import { listAnthropicModels } from "./ai/anthropic.js";
 import { listOllamaModels } from "./ai/ollama.js";
 import { listOpenAIModels } from "./ai/openai.js";
@@ -26,7 +26,7 @@ import { DrawingSetWatcher } from "./drawing-watch.js";
 import { changedFiles, drawingStatus } from "./git.js";
 import { type MentionSuggestion, suggestMentions } from "./mentions.js";
 import { HeadlessBrowser, headlessMode, HeadlessUnavailable } from "./headless.js";
-import { layoutGraph, type GraphSpec } from "./layout.js";
+import { layoutGraph, PSEUDO_SHAPES, type GraphSpec } from "./layout.js";
 import { findShape, labelSize, Libraries, LibraryError, type LibraryShape, PRIMITIVE_SHAPES, placeShape, shapeScale, slug } from "./library.js";
 import { fetchCatalog, fetchCatalogLibrary } from "./catalog.js";
 import {
@@ -577,7 +577,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         const lib = new Map<string, LibraryShape>();
         let shapes: LibraryShape[] | undefined;
         for (const n of spec.nodes) {
-          if (!n.shape || PRIMITIVE_SHAPES.has(n.shape)) continue;
+          if (!n.shape || PRIMITIVE_SHAPES.has(n.shape) || PSEUDO_SHAPES.has(n.shape)) continue;
           shapes ??= libraries.shapes(projectRootFor(p));
           const shape = findShape(shapes, n.shape);
           const scale = shapeScale(shape, { normalize: true });
@@ -1115,6 +1115,7 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
         return json(res, 200, publicSettings());
       }
     }
+    if (pathname === "/api/ai/tools" && method === "GET") return json(res, 200, toolCatalog(settings));
     if (pathname === "/api/ai/models" && method === "POST") {
       return json(res, 200, { models: await listModels(await readBody(req)) });
     }

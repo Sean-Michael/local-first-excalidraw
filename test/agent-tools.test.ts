@@ -123,7 +123,16 @@ test("diagram references are found next to the code and served by name only", ()
   assert.ok(topics.some((t) => t.topic === "c4" && /C4/.test(t.title)));
   assert.match(readTopic("c4"), /^# C4/);
   assert.match(readTopic("C4.md"), /^# C4/);
-  assert.throws(() => readTopic("../../../package.json"), /No reference/);
+  // A path never reaches the filesystem: it is only matched against the topics.
+  assert.doesNotMatch(readTopic("../../../package.json"), /"devDependencies"/);
+  // Topics are found by what they cover, in the caller's own words.
+  assert.match(readTopic("uml-class"), /^\(Best match for "uml-class": uml-structure, section "Class diagram"/);
+  assert.match(readTopic("UML class diagram"), /# UML structure diagrams/);
+  assert.match(readTopic("use case diagram"), /## Use case diagram/);
+  assert.match(readTopic("erd"), /# Data models/);
+  assert.match(readTopic("sequence"), /# UML behaviour diagrams/);
+  assert.match(readTopic("what kinds of uml diagrams are there"), /# UML: the 14 diagram types/);
+  assert.match(readTopic("zzzz qqq"), /No reference topic matches "zzzz qqq"\. Topics/);
 });
 
 // ---- tools against a daemon -------------------------------------------------------------

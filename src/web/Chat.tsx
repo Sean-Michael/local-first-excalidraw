@@ -8,6 +8,7 @@ import {
   type Mention,
   type PublicSettings,
   revertSummary,
+  type SavedPrompt,
   type ToolPart,
 } from "../shared/chat";
 import { mentionLabel } from "../shared/mentions";
@@ -219,12 +220,14 @@ function SessionList({
   );
 }
 
-const STARTERS = [
-  "Draw the architecture of this project",
-  "Tidy up the selected items and align them",
-  "Turn the selection into a sequence diagram",
-  "Add a legend explaining the colours",
-];
+/** A prompt that ends mid-sentence ("Draw a UML class diagram of ") is for finishing, not sending. */
+const unfinished = (p: SavedPrompt) => /(\s|…|:)$/.test(p.text);
+
+/** Saved prompts whose name or text contains every word typed after the "/". */
+function matchPrompts(prompts: SavedPrompt[], q: string): SavedPrompt[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  return prompts.filter((p) => words.every((w) => `${p.name} ${p.text}`.toLowerCase().includes(w))).slice(0, 12);
+}
 
 export function Chat({
   path,
@@ -249,6 +252,8 @@ export function Chat({
   const [useSelection, setUseSelection] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [suggest, setSuggest] = useState<{ query: string; items: Suggestion[]; index: number } | null>(null);
+  /** The / menu of saved prompts: open while the message is "/" plus a filter. */
+  const [promptMenu, setPromptMenu] = useState<{ query: string; index: number } | null>(null);
   const [pending, setPending] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -321,8 +326,13 @@ export function Chat({
     return () => window.clearTimeout(t);
   }, [suggest?.query, path]);
 
+  const prompts = settings?.prompts ?? [];
+  const promptItems = promptMenu ? matchPrompts(prompts, promptMenu.query) : [];
+
   const onInput = (value: string, caret: number) => {
     setText(value);
+    const slash = value.slice(0, caret).match(/^\/([^\n]*)$/);
+    setPromptMenu(slash && prompts.length ? (s) => ({ query: slash[1], index: s?.query === slash[1] ? s.index : 0 }) : null);
     const m = value.slice(0, caret).match(/(?:^|\s)@([^\s@]*)$/);
     setSuggest(m ? (s) => ({ query: m[1], items: s?.items ?? [], index: 0 }) : null);
   };
@@ -338,6 +348,18 @@ export function Chat({
     requestAnimationFrame(() => {
       el.focus();
       el.setSelectionRange(before.length, before.length);
+    });
+  };
+
+  /** Puts a saved prompt in the message box, with the cursor at its end to finish or send it. */
+  const applyPrompt = (p: SavedPrompt) => {
+    const el = inputRef.current;
+    setText(p.text);
+    setPromptMenu(null);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(p.text.length, p.text.length);
     });
   };
 
@@ -368,6 +390,19 @@ export function Chat({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
+    if (promptMenu && promptItems.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const n = promptItems.length;
+        setPromptMenu({ ...promptMenu, index: (promptMenu.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n });
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyPrompt(promptItems[Math.min(promptMenu.index, promptItems.length - 1)]);
+        return;
+      }
+    }
     if (suggest && suggest.items.length) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -382,7 +417,8 @@ export function Chat({
       }
     }
     if (e.key === "Escape") {
-      if (suggest) setSuggest(null);
+      if (promptMenu) setPromptMenu(null);
+      else if (suggest) setSuggest(null);
       else onClose();
       e.preventDefault();
       return;
@@ -523,11 +559,20 @@ export function Chat({
             ) : items.length === 0 ? (
               <div className="lfx-empty-chat">
                 <p className="lfx-empty-title">What should we draw?</p>
-                <p>Select items on the canvas to ask about them, or type @ to mention a file, a folder, lines (@file:10-40), a symbol or another drawing.</p>
+                <p>
+                  Select items on the canvas to ask about them, type @ to mention a file, a folder, lines (@file:10-40), a symbol or another drawing, or / for a saved
+                  prompt.
+                </p>
                 <div className="lfx-starters">
-                  {STARTERS.map((s) => (
-                    <button type="button" key={s} onClick={() => submit(s)} disabled={busy || !!otherBusy}>
-                      {s}
+                  {prompts.slice(0, 4).map((p) => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      title={p.text}
+                      onClick={() => (unfinished(p) ? applyPrompt(p) : submit(p.text))}
+                      disabled={busy || !!otherBusy}
+                    >
+                      {unfinished(p) ? `${p.text.trimEnd()}…` : p.name}
                     </button>
                   ))}
                 </div>
@@ -594,6 +639,26 @@ export function Chat({
                 ))}
               </div>
             )}
+            {promptMenu && promptItems.length > 0 && (
+              <ul className="lfx-suggest" role="listbox" aria-label="Saved prompts">
+                {promptItems.map((p, i) => (
+                  <li
+                    key={p.id}
+                    role="option"
+                    aria-selected={i === promptMenu.index}
+                    className={i === promptMenu.index ? "lfx-sel" : ""}
+                    title={p.text}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      applyPrompt(p);
+                    }}
+                  >
+                    <span className="lfx-prompt-name">{p.name}</span>
+                    <span className="lfx-muted">{p.text}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {suggest && suggest.items.length > 0 && (
               <ul className="lfx-suggest" role="listbox">
                 {suggest.items.map((s, i) => (
@@ -633,10 +698,15 @@ export function Chat({
               rows={1}
               value={text}
               disabled={!configured}
-              placeholder={configured ? (selectionCount && useSelection ? "Ask about the selection…" : "Describe a change or a new diagram…") : "Set up a model first"}
+              placeholder={configured ? (selectionCount && useSelection ? "Ask about the selection…" : "Describe a change or a new diagram, or type / for a saved prompt") : "Set up a model first"}
               onChange={(e) => onInput(e.target.value, e.target.selectionStart)}
               onKeyDown={onKeyDown}
-              onBlur={() => setTimeout(() => setSuggest(null), 150)}
+              onBlur={() =>
+                setTimeout(() => {
+                  setSuggest(null);
+                  setPromptMenu(null);
+                }, 150)
+              }
               aria-label="Message the assistant"
             />
             <div className="lfx-composer-foot">

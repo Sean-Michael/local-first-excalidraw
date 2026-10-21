@@ -7,13 +7,14 @@ description: Draw, edit and keep up to date Excalidraw diagrams that live as .ex
 
 Drawings are plain `.excalidraw` JSON files in the repo (default folder `docs/diagrams/`). A local daemon serves the real Excalidraw editor on `localhost`. Changes you make through the MCP tools appear in the user's open tab at once, and their edits are saved straight back to the file. Nothing is sent over the network.
 
-To pick the right kind of diagram (C4, sequence, state, ER, deployment, data flow), use the architecture-diagrams skill or the `diagram_reference` tool. For a readability pass on a finished drawing, use the diagram-review skill.
+To pick the right kind of diagram and its notation (C4; any of the 14 UML diagrams, such as class, use case, activity, state machine or sequence; ER; deployment; data flow), use the architecture-diagrams skill or the `diagram_reference` tool, which takes a description in your own words ("uml class diagram"). For a readability pass on a finished drawing, use the diagram-review skill.
 
 ## Tools
 
 | Goal | Tool |
 |---|---|
 | Boxes and arrows (architecture, request flow, pipeline, state machine, dependencies) | `create_diagram`: nodes + edges, automatic layout; nodes take `code` links |
+| UML or ER notation (class, use case, activity, ER, …) | `create_diagram` with edge `relation`s (inheritance, composition, include, one-to-many, …), node `attributes` / `operations` / `stereotype`, and `initial` / `final` / `bar` shapes |
 | A flowchart or sequence diagram, or the user gave you Mermaid | `mermaid_to_drawing` (only `flowchart` and `sequenceDiagram` stay editable) |
 | Icons: people, databases, cloud services | `list_shapes`, then a shape key as a node `shape` or `insert_shape` |
 | Look at what is there | `read_drawing` (ids, labels, `code=` links and a `rev`; `query` to find elements) |

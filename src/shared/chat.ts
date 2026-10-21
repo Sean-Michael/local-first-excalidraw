@@ -123,7 +123,53 @@ export interface PublicSettings {
   file?: string;
   /** Set when a hand edit to the file couldn't be loaded; the last good settings stay in use. */
   fileError?: string;
+  /** Prompts offered under / in the message box and as starters in an empty chat. */
+  prompts: SavedPrompt[];
+  /** Tools the assistant isn't given (by name, see GET /api/ai/tools). */
+  disabledTools: string[];
 }
+
+/** A reusable message for the assistant. */
+export interface SavedPrompt {
+  id: string;
+  /** Short name shown in the / menu, e.g. "UML class diagram". */
+  name: string;
+  text: string;
+}
+
+/** One tool the assistant can call, as the settings page lists it. */
+export interface ToolInfo {
+  name: string;
+  title: string;
+  description: string;
+  group: "Drawing" | "Code" | "Reference";
+  readOnly: boolean;
+  enabled: boolean;
+  /** Why the assistant never gets it, or gets it only sometimes, whatever the setting. */
+  note?: string;
+}
+
+/** What GET /api/ai/tools returns: the tools, and the diagram reference topics the assistant can read. */
+export interface ToolCatalog {
+  tools: ToolInfo[];
+  topics: { topic: string; title: string; covers: string[] }[];
+}
+
+/**
+ * The prompts a new install starts with. Once the user saves their own list (in settings or
+ * ai.json), that list replaces these.
+ */
+export const DEFAULT_PROMPTS: SavedPrompt[] = [
+  { id: "architecture", name: "Architecture of this project", text: "Draw the architecture of this project: its services, data stores, queues and external systems, and how they talk to each other." },
+  { id: "c4-container", name: "C4 container diagram", text: "Draw a C4 container diagram of this project, with the system boundary, the people who use it and the external systems it depends on." },
+  { id: "uml-class", name: "UML class diagram", text: "Draw a UML class diagram of " },
+  { id: "sequence", name: "Sequence diagram", text: "Draw a sequence diagram of what happens when " },
+  { id: "state", name: "State machine", text: "Draw a state machine diagram of the lifecycle of " },
+  { id: "use-case", name: "Use case diagram", text: "Draw a UML use case diagram for " },
+  { id: "er", name: "ER diagram", text: "Draw an entity-relationship diagram of the data model in " },
+  { id: "update", name: "Update after my change", text: "The code changed. Update this diagram to match: keep my layout and only change what the change affects." },
+  { id: "tidy", name: "Tidy the selection", text: "Tidy up the selected items: fix overlaps, align them and make every label fit." },
+];
 
 export function applyChatEvent(items: ChatItem[], ev: ChatEvent): ChatItem[] {
   const turn = (id: string, f: (t: AssistantItem) => AssistantItem) =>

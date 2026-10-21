@@ -11,8 +11,9 @@ import { listFiles, readFile, searchFiles } from "./code.js";
 import { findSymbol, outlineFile, projectOverview } from "./explore.js";
 import { gitChanges } from "./git-changes.js";
 import { GUIDE } from "./guide.js";
+import { RELATIONS, type Relation } from "./layout.js";
 import { type LibraryShape, searchShapes } from "./library.js";
-import { listTopics, readTopic } from "./references.js";
+import { readTopic, topicIndex } from "./references.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
 
@@ -77,6 +78,11 @@ const skeleton = z
     code: z.string().optional().describe('Shape: project file it stands for, optionally with a line ("src/orders/repo.ts" or "src/orders/repo.ts:42"); stored as a code link'),
   })
   .describe("Simplified Excalidraw element; any raw Excalidraw property is also accepted");
+
+const arrowhead = z
+  .enum(["arrow", "bar", "dot", "circle", "circle_outline", "triangle", "triangle_outline", "diamond", "diamond_outline", "crowfoot_one", "crowfoot_many", "crowfoot_one_or_many"])
+  .nullable()
+  .optional();
 
 const ifRev = z
   .string()
@@ -143,15 +149,11 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "diagram_reference",
       title: "Diagram reference",
       description:
-        "Reference notes on architecture and design diagrams: choosing a diagram for the audience and question, C4, UML sequence/activity/state and class/component/deployment, data flow and threat models, ER, infrastructure, messaging, visual principles, and keeping diagrams in step with code. Omit topic for the list.",
-      input: { topic: z.string().optional().describe('A topic from the list, e.g. "c4" or "choosing-a-diagram"') },
+        "Notes on what each kind of architecture or design diagram is for, its notation, and how to draw it here: choosing a diagram for an audience and question; C4 (context, container, component, deployment, dynamic); all 14 UML diagrams (class, object, package, component, composite structure, deployment, use case, activity, state machine, sequence, communication, interaction overview, timing); ER; data flow and threat models; infrastructure; messaging; visual principles; keeping diagrams in step with code. " +
+        'Pass a topic name or just describe the diagram in your own words ("uml class diagram", "use case", "erd"): the best-matching notes come back. Omit topic for the list.',
+      input: { topic: z.string().optional().describe('A topic name from the list, or a description of the diagram, e.g. "uml-overview", "class diagram", "use case diagram"') },
       readOnly: true,
-      run: async ({ topic }) => {
-        if (topic?.trim()) return { text: readTopic(topic) };
-        const topics = listTopics();
-        if (!topics.length) return { text: "The diagram reference files aren't installed with this copy of Local-first Excalidraw." };
-        return { text: `Topics (pass one as topic):\n${topics.map((t) => `- ${t.topic}: ${t.title}`).join("\n")}` };
-      },
+      run: async ({ topic }) => ({ text: topic?.trim() ? readTopic(topic) : topicIndex() }),
     },
     {
       name: "list_drawings",
@@ -222,7 +224,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "create_diagram",
       title: "Create diagram from a graph",
       description:
-        "Draws nodes and edges with automatic layered layout: the fastest way to a clean architecture, flow, state or dependency diagram. Creates the file if needed; otherwise appends to the right of existing content. " +
+        "Draws nodes and edges with automatic layered layout: the fastest way to a clean architecture, flow, state, dependency, UML (class, object, use case, component, package, deployment, communication) or ER diagram. Creates the file if needed; otherwise appends to the right of existing content. " +
+        "For UML and ER notation give edges a `relation` (inheritance, composition, include, one-to-many, …) and class nodes `attributes`/`operations`/`stereotype` instead of restyling afterwards. " +
         "replace: true swaps the whole drawing for this one (only when the user asks to start over: it discards their edits). Node ids become element ids, so later edits can refer to them.",
       input: {
         path: pathArg,
@@ -234,10 +237,15 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
               shape: z
                 .string()
                 .optional()
-                .describe("rectangle (default), ellipse, diamond, or a library shape key from list_shapes (drawn as that icon; the label replaces its caption or goes below)"),
+                .describe(
+                  'rectangle (default), ellipse, diamond; UML symbols "initial" (● start), "final" (◉ end) and "bar" (fork/join), which take no label (pass ""); or a library shape key from list_shapes (drawn as that icon; the label replaces its caption or goes below)',
+                ),
               color,
               group: z.string().optional().describe("Group id; members are drawn inside a labelled frame"),
               code: z.string().optional().describe('Project file the node stands for, optionally with a line ("src/orders/repo.ts:42"); stored as a code link'),
+              stereotype: z.string().optional().describe('UML stereotype shown as «…» above the label: "interface", "abstract", "enumeration", "device", "executionEnvironment", "artifact", "component", "actor"'),
+              attributes: z.array(z.string()).optional().describe('UML class attributes, one per line, under a rule: "+id: UUID", "-total: Money"'),
+              operations: z.array(z.string()).optional().describe('UML class operations, under a second rule: "+place(): void"'),
             }),
           )
           .min(1),
@@ -249,6 +257,14 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
               label: z.string().optional().describe("Only when the meaning isn't obvious from the two ends; 12 characters or fewer"),
               style: z.enum(["solid", "dashed", "dotted"]).optional().describe("dashed for async or optional flows"),
               bidirectional: z.boolean().optional(),
+              relation: z
+                .enum(Object.keys(RELATIONS) as [Relation, ...Relation[]])
+                .optional()
+                .describe(
+                  "What the edge means; sets the standard arrowheads and line style. UML: association (plain line), directed-association, dependency (dashed, open arrow), inheritance (from child to parent, hollow triangle; the parent is laid out first), realization (class to interface, dashed, hollow triangle), aggregation (from whole to part, hollow diamond), composition (from whole to part, filled diamond), include / extend (use cases, dashed, labelled «include»/«extend»), message / async-message / reply (sequence and communication). ER crow's foot: one-to-one, one-to-many, many-to-many, one-to-one-or-many. Omit for a plain arrow.",
+                ),
+              startArrowhead: arrowhead.describe("Override the arrowhead at `from`"),
+              endArrowhead: arrowhead.describe("Override the arrowhead at `to`"),
             }),
           )
           .optional(),

@@ -62,8 +62,18 @@ Assistant settings live in `~/.local-first-excalidraw/ai.json` (mode 0600). Edit
       "contextLength": 32768,
     },
   ],
+  // Offered under / in the message box; leave out for the defaults
+  "prompts": [
+    { "id": "uml-class", "name": "UML class diagram", "text": "Draw a UML class diagram of " },
+  ],
+  "disabledTools": ["export_drawing"],   // tools the assistant isn't given
 }
 ```
+
+| Field | Meaning |
+|---|---|
+| `prompts` | Saved prompts: `id`, `name` (shown in the **/** menu) and `text`. A text ending in a space or `…` is put in the message box to finish rather than sent. Leave the field out to get the defaults back. Also editable under **Saved Prompts** in the settings |
+| `disabledTools` | Names of tools the assistant isn't given, for every endpoint including Claude Code. The **Tools** page in the settings lists them all with what each does |
 
 Endpoint fields:
 

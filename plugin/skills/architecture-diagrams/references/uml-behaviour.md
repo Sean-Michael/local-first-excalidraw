@@ -1,6 +1,59 @@
-# UML behaviour diagrams: sequence, activity, state
+# UML behaviour diagrams: use case, activity, state machine, sequence, communication, interaction overview, timing
+<!-- keywords: behavioural diagram, behavioral diagram, dynamic diagram, interaction diagram, use case diagram, use cases, actors, system boundary, include, extend, requirements, activity diagram, flowchart, workflow, process, swimlanes, fork, join, decision, guard, state machine, state diagram, statechart, lifecycle, status, transitions, sequence diagram, lifelines, messages, request flow, communication diagram, collaboration diagram, numbered messages, interaction overview, timing diagram -->
 
-Behaviour diagrams show what happens over time. In the 4+1 view model (Kruchten, 1995) they belong to the process view and the scenarios. In arc42, they belong to the runtime view (section 6). Each one should cover one scenario, one process or one object's lifecycle.
+Behaviour diagrams show what happens over time: what users want from the system (use case), how a process flows (activity), how one thing's state changes (state machine), and how parts exchange messages (the four interaction diagrams: sequence, communication, interaction overview and timing). In the 4+1 view model (Kruchten, 1995) they belong to the process view and the scenarios. In arc42, they belong to the runtime view (section 6). Each one should cover one scenario, one process or one object's lifecycle.
+
+## Use case diagram
+
+**Use it when** you're capturing what a system does for whom: the actors (people and external systems) and the goals they use the system for, and where the system's boundary lies. It suits requirements, scoping and talking to non-technical stakeholders. It says nothing about how the use cases work: pair it with an activity or sequence diagram for that.
+
+### Notation
+
+- **Actors** are stick figures outside the system, named by role (`Customer`, `Bank`), not by person. Primary actors (who start a use case) go on the left, and secondary actors (who the system calls on) go on the right.
+- **Use cases** are ellipses named with a verb phrase (`Withdraw Cash`), inside the **system boundary**: a rectangle labelled with the system's name.
+- **Association:** a plain line between an actor and a use case it takes part in.
+- **`«include»`:** a dashed arrow from a base use case to one it always uses (`Withdraw Cash` → `Authenticate`).
+- **`«extend»`:** a dashed arrow from an optional use case to the base use case it sometimes extends (`Print Receipt` → `Withdraw Cash`), optionally with a condition.
+- **Generalisation:** a hollow-triangle arrow from a specialised actor or use case to the general one.
+
+### Excalidraw recipe
+
+Use `create_diagram` with `direction: "LR"`. Put the use cases in a group whose label is the system's name: its frame is the system boundary. Leave the actors outside the group as `stick-figures/stick-man` shapes (check `list_shapes`) or ellipses. Use `relation: "association"` for actor lines, and `"include"` or `"extend"` for the dashed stereotyped arrows (the label is added for you).
+
+```json create_diagram
+{
+  "path": "docs/diagrams/atm-use-cases",
+  "direction": "LR",
+  "title": "Use case diagram: ATM",
+  "nodes": [
+    { "id": "customer", "label": "Customer", "shape": "stick-figures/stick-man" },
+    { "id": "withdraw", "label": "Withdraw Cash", "shape": "ellipse", "group": "atm", "color": "blue" },
+    { "id": "balance", "label": "Check Balance", "shape": "ellipse", "group": "atm", "color": "blue" },
+    { "id": "auth", "label": "Authenticate", "shape": "ellipse", "group": "atm", "color": "blue" },
+    { "id": "receipt", "label": "Print Receipt", "shape": "ellipse", "group": "atm", "color": "blue" },
+    { "id": "bank", "label": "Bank", "shape": "stick-figures/stick-man" }
+  ],
+  "groups": [{ "id": "atm", "label": "ATM" }],
+  "edges": [
+    { "from": "customer", "to": "withdraw", "relation": "association" },
+    { "from": "customer", "to": "balance", "relation": "association" },
+    { "from": "withdraw", "to": "auth", "relation": "include" },
+    { "from": "balance", "to": "auth", "relation": "include" },
+    { "from": "receipt", "to": "withdraw", "relation": "extend" },
+    { "from": "auth", "to": "bank", "relation": "association" }
+  ]
+}
+```
+
+Render it and check that the extend arrow and the include arrows don't cross the use case labels. Move a use case with `update_elements` if they do.
+
+### Common mistakes
+
+- **Use cases that are steps** (`Enter PIN`, `Click OK`) instead of goals. Steps belong in an activity diagram.
+- **Arrows between actors and use cases.** Associations are plain lines.
+- **`«include»` and `«extend»` pointing the wrong way,** or used to draw a flowchart.
+- **No system boundary,** or actors drawn inside it.
+- **Too many use cases.** About 5–12 per diagram. Split by actor or feature area.
 
 ## Sequence diagram
 
@@ -87,7 +140,7 @@ Classic flowchart notation (ISO 5807) is close enough: an oval for start and end
 
 ### Excalidraw recipe
 
-`create_diagram` with `direction: "TB"`. Use ellipses for start and end, diamonds for decisions, and groups for swimlanes:
+`create_diagram` with `direction: "TB"`. Use `shape: "initial"` for the start (●) and `shape: "final"` for each end (◉), with an empty label. Use rounded rectangles (the default) for actions, diamonds for decisions with a `[guard]` on every outgoing edge, `shape: "bar"` for a fork or join, and groups for swimlanes:
 
 ```json create_diagram
 {
@@ -95,28 +148,34 @@ Classic flowchart notation (ISO 5807) is close enough: an oval for start and end
   "direction": "TB",
   "title": "Activity: deploy to production",
   "nodes": [
-    { "id": "start", "label": "Merge to main", "shape": "ellipse", "color": "gray" },
+    { "id": "start", "label": "", "shape": "initial" },
     { "id": "build", "label": "Build and test", "color": "blue" },
     { "id": "green", "label": "Tests pass?", "shape": "diamond", "color": "yellow" },
     { "id": "stage", "label": "Deploy to staging", "color": "blue" },
     { "id": "fail", "label": "Notify author", "color": "red" },
+    { "id": "failed", "label": "", "shape": "final" },
     { "id": "approve", "label": "Approved?", "shape": "diamond", "color": "yellow" },
     { "id": "prod", "label": "Deploy to production", "color": "blue" },
-    { "id": "cancel", "label": "Release cancelled", "shape": "ellipse", "color": "gray" },
-    { "id": "end", "label": "Released", "shape": "ellipse", "color": "gray" }
+    { "id": "cancel", "label": "Release cancelled", "color": "gray" },
+    { "id": "cancelled", "label": "", "shape": "final" },
+    { "id": "end", "label": "", "shape": "final" }
   ],
   "edges": [
     { "from": "start", "to": "build" },
     { "from": "build", "to": "green" },
-    { "from": "green", "to": "stage", "label": "yes" },
-    { "from": "green", "to": "fail", "label": "no", "style": "dashed" },
+    { "from": "green", "to": "stage", "label": "[pass]" },
+    { "from": "green", "to": "fail", "label": "[fail]", "style": "dashed" },
+    { "from": "fail", "to": "failed" },
     { "from": "stage", "to": "approve" },
-    { "from": "approve", "to": "prod", "label": "yes" },
-    { "from": "approve", "to": "cancel", "label": "no", "style": "dashed" },
+    { "from": "approve", "to": "prod", "label": "[approved]" },
+    { "from": "approve", "to": "cancel", "label": "[rejected]", "style": "dashed" },
+    { "from": "cancel", "to": "cancelled" },
     { "from": "prod", "to": "end" }
   ]
 }
 ```
+
+For parallel work, add a `bar` node as the fork with one edge in and an edge to each parallel action, and a second `bar` as the join with an edge from each action and one edge out.
 
 Give each branch its own end node rather than routing it back to a shared "Done": an edge that skips a layer is drawn straight through the nodes in between.
 
@@ -126,7 +185,8 @@ Mermaid `flowchart TD` is the alternative when the user already has Mermaid. It 
 
 ### Common mistakes
 
-- **Unlabelled decision branches.** Every edge out of a diamond needs a guard.
+- **Unlabelled decision branches.** Every edge out of a diamond needs a guard, in brackets: `[valid]`, `[invalid]`.
+- **Start and end drawn as labelled boxes** ("Start checkout"). Use the ● and ◉ symbols (`initial` and `final`), and put the first action in its own box.
 - **Decisions phrased as statements.** Phrase them as yes/no questions.
 - **Flow running in several directions.** Keep the main path straight down. Make loops and failure paths dashed.
 - **Mixing levels of detail,** like "Deploy" next to "Set env var FOO".
@@ -147,7 +207,7 @@ Mermaid `flowchart TD` is the alternative when the user already has Mermaid. It 
 
 ### Excalidraw recipe
 
-Use `create_diagram`. States are rounded rectangles, the initial pseudo-state is a small ellipse, and final states are marked with a tag and a colour (green for success, gray or red for the other endings):
+Use `create_diagram`. States are rounded rectangles, the initial pseudostate is `shape: "initial"` (●), and a final state that ends the object's life is `shape: "final"` (◉). A terminal state that the object stays in (`Delivered`, `Refunded`) is an ordinary state marked with a tag and a colour (green for success, gray or red for the other endings):
 
 ```json create_diagram
 {
@@ -155,7 +215,7 @@ Use `create_diagram`. States are rounded rectangles, the initial pseudo-state is
   "direction": "LR",
   "title": "State machine: Order.status",
   "nodes": [
-    { "id": "initial", "label": "start", "shape": "ellipse", "color": "black" },
+    { "id": "initial", "label": "", "shape": "initial" },
     { "id": "pending", "label": "Pending", "color": "blue" },
     { "id": "paid", "label": "Paid", "color": "blue" },
     { "id": "cancelled", "label": "Cancelled\n(final)", "color": "gray" },
@@ -185,3 +245,71 @@ Take the state and event names from the code (the enum values and handler names)
 - **States missing from the code's enum,** or enum values missing from the diagram.
 - **No initial state.**
 - **Terminal states that aren't marked.**
+
+## Communication diagram
+
+**Use it when** the links between objects matter as much as the order of messages: who holds a reference to whom, and which messages travel over each link. It carries the same information as a sequence diagram, laid out as a network instead of a timeline. It was called a collaboration diagram in UML 1.
+
+### Notation
+
+- Objects are boxes named `name : Class` (or `: Class`), placed freely.
+- Links are plain lines between objects that talk.
+- Messages are written along the links with a sequence number and a small arrow for their direction: `1: placeOrder()`, then `1.1: checkStock()` and `1.2: charge()` for the calls made while handling message 1, then `2: confirm()`. A guard goes in brackets: `1.3 [in stock]: reserve()`.
+
+### Excalidraw recipe
+
+Use `create_diagram`, one node per object. Make one edge per message, from the sender to the receiver, with its numbered message as the label and `relation: "message"`. If several messages share a link, put them in one label on one edge, separated by a newline (`"1.1: checkStock()\n1.3: reserve()"`), so the arrows don't stack.
+
+```json create_diagram
+{
+  "path": "docs/diagrams/place-order-communication",
+  "direction": "LR",
+  "title": "Communication diagram: place order",
+  "nodes": [
+    { "id": "customer", "label": ": Customer", "color": "gray" },
+    { "id": "ctrl", "label": ": OrderController", "color": "blue" },
+    { "id": "inventory", "label": ": InventoryService", "color": "blue" },
+    { "id": "payment", "label": ": PaymentService", "color": "blue" }
+  ],
+  "edges": [
+    { "from": "customer", "to": "ctrl", "label": "1: placeOrder()", "relation": "message" },
+    { "from": "ctrl", "to": "inventory", "label": "1.1: reserve()", "relation": "message" },
+    { "from": "ctrl", "to": "payment", "label": "1.2: charge()", "relation": "message" }
+  ]
+}
+```
+
+Prefer a sequence diagram (`mermaid_to_drawing`) when the reader cares about timing, replies or fragments, and a communication diagram when they care about structure.
+
+## Interaction overview diagram
+
+**Use it when** a process is made of several interactions, each worth its own sequence diagram, and you need to show how they connect: which runs first, which branch is taken, and which run in parallel.
+
+### Notation
+
+It's an activity diagram (● start, ◉ end, decision diamonds with guards, fork and join bars) whose nodes are interaction frames instead of actions. A frame tagged `sd` holds a small sequence diagram drawn inline. A frame tagged `ref` points to an interaction drawn elsewhere.
+
+### Excalidraw recipe
+
+Use `create_diagram` with `direction: "TB"`, like an activity diagram, but label each interaction node `"ref\nAuthenticate user"` (a rectangle per referenced interaction). Draw each referenced interaction as its own sequence diagram, and link each node to that drawing with `update_elements` `code` or a `link`.
+
+## Timing diagram
+
+**Use it when** exact timing matters: how the states of a few objects (or the value of a signal) change along a time axis, and the deadlines between those changes (a session timeout, a retry back-off, a hardware handshake).
+
+### Notation
+
+- Time runs left to right along the bottom.
+- Each lifeline is a horizontal band labelled with the object, listing its possible states down the side.
+- A line steps up and down between the states as time passes. Duration constraints such as `{< 30s}` are marked between events.
+
+### Excalidraw recipe
+
+There is no auto-layout for this: position carries the meaning. Draw it with `add_elements`:
+
+- one `line` per lifeline, using `points` to step between state rows
+- a text label for each state row at the left
+- a time axis `line` with tick labels
+- dashed `line`s and text for the constraints
+
+Keep it to two or three lifelines.

@@ -1,4 +1,5 @@
 # Choosing a diagram
+<!-- keywords: choosing, which diagram, what diagram, diagram types, audience, viewpoint, 4+1, arc42, flowchart, decision tree, mind map, mindmap, timeline, gantt, roadmap, wardley map, brainstorm -->
 
 Pick the diagram from the question being asked, not from habit. ISO/IEC/IEEE 42010 frames it this way: stakeholders have concerns, and a viewpoint decides which kind of view answers them. Kruchten's 4+1 views, the arc42 views and C4's levels are ready-made sets of viewpoints. Start with the reader and the question, then pick the cheapest diagram that answers it.
 

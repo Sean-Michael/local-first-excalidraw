@@ -1,4 +1,5 @@
 # Messaging and event-driven architecture
+<!-- keywords: messaging, events, event-driven, event driven, queue, topic, pub/sub, publish subscribe, kafka, rabbitmq, sqs, sns, saga, choreography, orchestration, dead letter queue, async, enterprise integration patterns -->
 
 Asynchronous systems are hard to read from code, because the coupling sits in topic names and configuration rather than in calls. A messaging diagram makes producers, channels and consumers explicit.
 

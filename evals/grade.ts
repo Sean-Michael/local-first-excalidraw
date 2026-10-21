@@ -41,6 +41,11 @@ export interface Metrics {
   frames: string[];
   edges: { from: string; to: string; bidirectional: boolean }[];
   links: { id: string; link: string }[];
+  /** Arrowheads used on arrows, with counts ("none" for a plain end). */
+  arrowheads: Record<string, number>;
+  /** Live elements per type. */
+  types: Record<string, number>;
+  dashedArrows: number;
 }
 
 const SHAPES = new Set(["rectangle", "ellipse", "diamond", "image"]);
@@ -171,6 +176,12 @@ export function nonFinite(els: El[]): string[] {
   return bad;
 }
 
+function count(xs: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const x of xs) out[x] = (out[x] ?? 0) + 1;
+  return out;
+}
+
 export function measure(scene: SceneLike): Metrics {
   const all = live(scene.elements ?? []);
   const labels = labelIndex(all);
@@ -196,6 +207,9 @@ export function measure(scene: SceneLike): Metrics {
       bidirectional: !!a.startArrowhead && !!a.endArrowhead,
     })),
     links: all.filter((e) => typeof e.link === "string" && e.link && !(e.type === "text" && e.containerId)).map((e) => ({ id: e.id, link: e.link as string })),
+    arrowheads: count(arrows.flatMap((a) => [a.startArrowhead ?? "none", a.endArrowhead ?? "none"].map(String))),
+    types: count(all.map((e) => String(e.type))),
+    dashedArrows: arrows.filter((a) => a.strokeStyle === "dashed" || a.strokeStyle === "dotted").length,
   };
 }
 
@@ -282,6 +296,20 @@ export function grade(input: GradeInput): Grade {
       `${c.requiredEdges.length - missing.length}/${c.requiredEdges.length} present${missing.length ? `; missing ${missing.map((e) => `${e.from[0]}->${e.to[0]}`).join(", ")}` : ""}`,
     );
   }
+  if (c.requiredArrowheads) {
+    const missing = c.requiredArrowheads.filter((heads) => !heads.some((h) => m.arrowheads[h])).map((h) => h.join("|"));
+    const used = Object.entries(m.arrowheads).filter(([h]) => h !== "none").map(([h, n]) => `${h} ${n}`);
+    add("arrowheads", missing.length === 0, `${missing.length ? `missing ${missing.join(", ")}` : "all present"} (used: ${used.join(", ") || "none"})`);
+  }
+  if (c.minByType) {
+    const short = Object.entries(c.minByType).filter(([t, n]) => (m.types[t] ?? 0) < n).map(([t, n]) => `${t} ${m.types[t] ?? 0}/${n}`);
+    add("element-types", short.length === 0, short.length ? `too few: ${short.join(", ")}` : Object.keys(c.minByType).map((t) => `${t} ${m.types[t] ?? 0}`).join(", "));
+  }
+  if (c.requiredPatterns) {
+    const missing = c.requiredPatterns.filter((p) => !texts.some((t) => new RegExp(p, "im").test(t)));
+    add("required-patterns", missing.length === 0, `${c.requiredPatterns.length - missing.length}/${c.requiredPatterns.length} present${missing.length ? `; missing /${missing.join("/, /")}/` : ""}`);
+  }
+  if (c.minDashedArrows !== undefined) add("dashed-arrows", m.dashedArrows >= c.minDashedArrows, `${m.dashedArrows} dashed or dotted arrows (min ${c.minDashedArrows})`);
   if (c.minShapes !== undefined) add("min-shapes", m.shapes >= c.minShapes, `${m.shapes} shapes (min ${c.minShapes})`);
   if (c.minArrows !== undefined) add("min-arrows", m.arrows >= c.minArrows, `${m.arrows} arrows (min ${c.minArrows})`);
   if (c.minBoundRatio !== undefined) {

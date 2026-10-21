@@ -17,6 +17,7 @@ import {
   endpointHost,
   endpointLabel,
   type Mention,
+  type ToolCatalog,
   type UserItem,
 } from "../../shared/chat.js";
 import { readJson, writeFileAtomic } from "../config.js";
@@ -38,6 +39,7 @@ import {
   traceEnv,
   withSpan,
 } from "../telemetry.js";
+import { listTopics } from "../references.js";
 import { codeTools, drawingTools, jsonSchema, relPath, type ToolContext, type ToolDef } from "../tools.js";
 import { AnthropicProvider, DEFAULT_ANTHROPIC_MODEL } from "./anthropic.js";
 import { runClaudeCode } from "./claude-code.js";
@@ -142,7 +144,12 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     o.mermaidOnly ? "" : "- Call excalidraw_guide once before your first edit in a conversation: it has the sizing rules, layout anti-patterns and error recovery.",
     "- \"This\", \"these\" and \"the selection\" mean the selected elements listed in the context. Change them by id with update_elements, arrange_elements or delete_elements. Keep ids stable: edit in place rather than deleting and re-adding, and never redraw the whole drawing (create_diagram replace: true) unless the user asks to start over, because it throws away their layout and styling.",
     "- For new diagrams prefer create_diagram (automatic layout); mermaid_to_drawing keeps only flowcharts and sequence diagrams editable. Use add_elements for notes and precise placement, and apply_changes for a planned set of adds, updates and deletes in one step. New content goes to the right of existing content unless you position it.",
-    "- To choose the kind of diagram (C4, sequence, state, ER, data flow, deployment) or follow its conventions, read the matching topic with diagram_reference.",
+    o.mermaidOnly
+      ? ""
+      : "- Pick the kind of diagram from the question it answers, then use that notation's real symbols, not generic boxes and arrows. Architecture: C4 (context, container, component, deployment). Software design: UML, structural (class, object, package, component, composite structure, deployment) or behavioural (use case, activity, state machine, and the interaction diagrams: sequence, communication, interaction overview, timing). Data: ER. Security: data flow with trust boundaries. Also infrastructure and messaging. diagram_reference has the notation and a ready create_diagram recipe for each: call it with the diagram described in your own words (\"uml class diagram\", \"use case\"), or with no topic for the list, before drawing a type you haven't drawn in this conversation.",
+    o.mermaidOnly
+      ? ""
+      : "- UML and ER notation in create_diagram: give each edge a `relation` (inheritance, realization, composition, aggregation, association, dependency, include, extend, message, one-to-many, …) so it gets the right arrowhead and line style; give class and entity nodes `attributes`, `operations` and `stereotype`; use the `initial`, `final` and `bar` shapes for ●, ◉ and fork/join; label decision branches with [guards]. When the type isn't named (\"a UML diagram of an online store\"), choose the best fit (a class diagram for a domain, activity for a process, sequence for one scenario, use case for who-does-what), say in a sentence which you chose, and draw it rather than asking.",
     "- Call read_drawing (filter with query on a big drawing) before editing parts the context doesn't describe. The user may be editing at the same time: pass the rev it returns as if_rev, and if a write says the drawing changed, read it again before retrying.",
     "- Layout: labels of 1-4 words; at least 40 px between elements; name a zone with a frame or free text at its top-left, never a label bound in the middle of a big rectangle; label an arrow only when its meaning isn't obvious, in 12 characters or fewer; bind every connection at both ends (connect_elements, or start/end); keep most arrows within a zone or between neighbouring zones.",
     "- For icons or a house style (people, cloud services, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape (next_to places it beside an existing element). Don't imitate an icon with plain boxes when the library has it.",
@@ -163,6 +170,36 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
   ]
     .filter(Boolean)
     .join("\n");
+
+const REFERENCE_TOOLS = new Set(["excalidraw_guide", "diagram_reference"]);
+/** Code tools the Claude Code endpoint replaces with its own Read, Grep and Glob. */
+const CLAUDE_CODE_OWN = new Set(["list_files", "search_files", "read_file", "find_symbol", "outline_file"]);
+
+/** Every tool the assistant can be given, for the settings page, and the diagram reference topics. */
+export function toolCatalog(settings: SettingsStore): ToolCatalog {
+  const s = settings.get();
+  const code = new Set(codeTools().map((t) => t.name));
+  const defs = [...drawingTools({ currentDrawing: true }).filter((t) => t.name !== "open_drawing"), ...codeTools()];
+  const note = (name: string) => {
+    if (code.has(name) && !s.codeAccess) return "Off while Read project files is off";
+    if (name === "render_drawing") return "Only for models that accept images, and Claude Code";
+    if (CLAUDE_CODE_OWN.has(name)) return "Claude Code uses its own Read, Grep and Glob instead";
+    return undefined;
+  };
+  return {
+    tools: defs.map((t) => ({
+      name: t.name,
+      title: t.title,
+      description: t.description,
+      group: REFERENCE_TOOLS.has(t.name) ? "Reference" : code.has(t.name) ? "Code" : "Drawing",
+      readOnly: !!t.readOnly,
+      enabled: settings.toolEnabled(t.name),
+      note: note(t.name),
+    })),
+    // Headings every topic has say nothing about what it covers.
+    topics: listTopics().map((t) => ({ topic: t.topic, title: t.title, covers: t.covers.filter((c) => !/^(notation\b|excalidraw recipe|common mistakes)/i.test(c)) })),
+  };
+}
 
 function clip(s: string, max: number, hint: string): string {
   return s.length <= max ? s : `${s.slice(0, max)}\n… truncated (${hint})`;
@@ -654,7 +691,7 @@ export class Assistant {
         // Pictures of shapes are no use to a model that can't see them.
         .map((t) => (t.name === "list_shapes" && !ep.vision ? { ...t, input: Object.fromEntries(Object.entries(t.input).filter(([k]) => k !== "preview")) } : t)),
       ...(code ? codeTools() : []),
-    ];
+    ].filter((t) => this.d.settings.toolEnabled(t.name));
   }
 
   /** Runs one user message to completion. Resolves when the turn has ended. */
@@ -1001,6 +1038,7 @@ export class Assistant {
           systemPrompt: SYSTEM({ vision: true, code, mermaidOnly: false, claudeCode: true }),
           mcpEnv: { ...this.d.mcpEnv, ...traceEnv() },
           codeAccess: code,
+          disabledTools: this.d.settings.get().disabledTools,
           signal,
         },
         prompt(sessionId),

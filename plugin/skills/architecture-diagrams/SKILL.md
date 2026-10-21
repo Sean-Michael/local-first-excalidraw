@@ -1,6 +1,6 @@
 ---
 name: architecture-diagrams
-description: Choose and draw the right software architecture or design diagram (C4 system context, container, component, deployment, dynamic; UML sequence, activity, state, class; data flow and threat models with trust boundaries; ER data models; infrastructure and network topology; messaging and event flows) with the local-first excalidraw MCP tools. Use when the user asks for an architecture diagram, system design, a C4 diagram, a sequence, state, ER, deployment or data-flow diagram, or to "document how X works" or "show how X fits together".
+description: Choose and draw the right software architecture or design diagram with the local-first excalidraw MCP tools, in its real notation. Covers C4 (system context, container, component, deployment, dynamic), all 14 UML diagrams (structural - class, object, package, component, composite structure, deployment; behavioural - use case, activity, state machine, sequence, communication, interaction overview, timing), ER data models, data flow and threat models with trust boundaries, infrastructure and network topology, and messaging and event flows. Use when the user asks for any of these by name ("a UML class diagram", "use case diagram for an ATM", "ERD"), for "a UML diagram" of something, an architecture diagram or system design, or to "document how X works" or "show how X fits together".
 ---
 
 # Architecture diagrams
@@ -12,9 +12,10 @@ Reference files in `references/` go deeper. Read the one for your diagram type b
 | File | Read it for |
 |---|---|
 | `choosing-a-diagram.md` | The full question-to-diagram table, including flowcharts, mind maps, timelines and Wardley maps |
+| `uml-overview.md` | The 14 UML diagram types, which question each answers, what to draw for a vague "UML diagram", and how UML symbols map onto the drawing tools |
 | `c4.md` | System context, container, component, landscape, dynamic and deployment diagrams |
-| `uml-behaviour.md` | Sequence, activity and state machine diagrams |
-| `uml-structure.md` | Class, component and UML deployment diagrams |
+| `uml-structure.md` | Class, object, package, component, composite structure and UML deployment diagrams |
+| `uml-behaviour.md` | Use case, activity, state machine, sequence, communication, interaction overview and timing diagrams |
 | `data-flow-and-threat-models.md` | DFDs, trust boundaries, STRIDE |
 | `data-models.md` | Entity-relationship diagrams |
 | `infrastructure.md` | Cloud, network and cluster topology |
@@ -39,10 +40,16 @@ Reference files in `references/` go deeper. Read the one for your diagram type b
    | What runs where, in which environment? | C4 / UML deployment | `create_diagram` groups per node, plus outer boundary rectangles |
    | What does the network look like? | Infrastructure topology | `create_diagram` with network and system-design library shapes |
    | Where does sensitive data flow and cross trust levels? | DFD with trust boundaries | `create_diagram` plus dashed boundary rectangles |
-   | What are the entities and how do they relate? | ER diagram | `create_diagram`, then crow's-foot arrowheads |
-   | What are the types and their relationships in this code? | UML class | `create_diagram`, then UML arrowheads |
+   | What are the entities and how do they relate? | ER diagram | `create_diagram` with crow's-foot `relation`s (`one-to-many`, …) |
+   | What are the types and their relationships in this code or domain? | UML class | `create_diagram` with `attributes`/`operations` and edge `relation`s |
+   | What does one concrete case look like (these objects, these values)? | UML object | `create_diagram`, `relation: "association"` |
+   | How is the code organised into packages or layers? | UML package (or dependency graph) | `create_diagram` TB, `relation: "dependency"` |
+   | Who uses the system, for what goals? | UML use case | `create_diagram` LR, a group as the system boundary, `include`/`extend` relations |
+   | Who talks to whom, in what numbered order? | UML communication | `create_diagram`, numbered `message` edges |
    | Who publishes and who consumes which events? | Messaging / event flow | `create_diagram` with channels as nodes |
    | What depends on what? | Dependency graph | `create_diagram` TB |
+
+   When the user names a family but not a type ("a UML diagram of an online store"), choose the best fit and say which: a class diagram for a domain, activity for a process, sequence for one scenario, use case for who does what. `uml-overview.md` has the full table.
 
 4. **Level.** For structure, pick one C4 level and stay on it: context (systems and people), container (deployable apps and data stores), component (modules inside one container), or code (classes, rarely worth drawing by hand). Most teams need only context and container diagrams.
 5. **Investigate.** Read the code, config, infrastructure files and existing docs so every box and arrow is real. Use the names from the code. Note the file each node comes from (see `living-diagrams.md`). For a diagram of a codebase, follow the architecture-discovery skill: it finds the deployables, entrypoints, outbound calls and trust boundaries and hands back a model table to draw from.
@@ -54,19 +61,23 @@ Reference files in `references/` go deeper. Read the one for your diagram type b
 
 **Sequence or dynamic.** Use `mermaid_to_drawing` with `sequenceDiagram`. Declare `actor` and `participant` lines in reading order. Use solid arrows (`->>`) for calls and dashed arrows (`-->>`) for replies. Use `alt`/`opt`/`loop` for branches, and a `Note` for anything that needs explaining. Keep it to one scenario and about 12 messages. For a C4 dynamic diagram in collaboration style, use `create_diagram` with numbered edge labels (`"1. Submits order"`).
 
-**State machine.** Use `create_diagram` LR, with one node per enum value, a small ellipse for the initial state, and final states tagged `(final)` and coloured. Label each transition `event [guard] / action`.
+**State machine.** Use `create_diagram` LR, with one node per enum value, `shape: "initial"` (●) for the initial pseudostate, and `shape: "final"` (◉) or a tagged, coloured state for final states. Label each transition `event [guard] / action`.
 
-**Activity or flowchart.** Use `create_diagram` `direction: "TB"`, with ellipses for start and end, rectangles for actions and diamonds for decisions. Label the decision edges `yes`/`no`. Give each branch its own end node. Use groups for swimlanes only when each lane is a run of consecutive steps (see the layout rules below). For lanes that interleave, use Mermaid `flowchart` with `subgraph` lanes.
+**Activity or flowchart.** Use `create_diagram` `direction: "TB"`, with `shape: "initial"` (●) for the start, `shape: "final"` (◉) for each end, rounded rectangles for actions, diamonds for decisions and `shape: "bar"` for fork/join. Label the decision edges with guards: `[valid]`/`[invalid]`. Give each branch its own end node. Use groups for swimlanes only when each lane is a run of consecutive steps (see the layout rules below). For lanes that interleave, use Mermaid `flowchart` with `subgraph` lanes.
 
 **Deployment.** Excalidraw frames don't nest. Give each innermost deployment node (a pod, a VM, a database server) a `create_diagram` group, and name it with its path, such as `"eks-prod › api pod [Kubernetes]"`. Draw the outer nodes (region, VPC, cluster) as dashed rectangles with `add_elements`, sized from `read_drawing` bounds, and put a text label in each top-left corner. Draw one diagram per environment. See `c4.md` and `infrastructure.md`.
 
 **Data flow / threat model.** Use `create_diagram` `direction: "LR"`, with external entities as rectangles (`color: "gray"`), processes as ellipses (`color: "blue"`) and data stores as `software-architecture/database` or green rectangles. Label every edge with the data it carries (`"card number"`, `"session cookie"`). Then add each trust boundary as a dashed red rectangle with a label (`add_elements`, `strokeStyle: "dashed"`, `backgroundColor: "transparent"`), and number the flows that cross it so threats can refer to them. See `data-flow-and-threat-models.md`.
 
-**ER.** Use `create_diagram`, with each entity's label as `"NAME\n─────\nid PK\nfk_id FK\n…"` (keys and the 3-6 columns that matter). Label each edge with a verb plus cardinality, then set `crowfoot_one` / `crowfoot_many` / `crowfoot_one_or_many` arrowheads with `update_elements`.
+**ER.** Use `create_diagram`, with each entity's name as `label` and its keys and the 3-6 columns that matter as `attributes` (`"id PK"`, `"customer_id FK"`). Give each edge a crow's-foot `relation` (`one-to-one`, `one-to-many`, `one-to-one-or-many`, `many-to-many`) and a label with a verb plus cardinality.
 
 **Messaging.** Use `create_diagram` LR. Draw the topics and queues as their own nodes (`software-architecture/event-bus-or-pipeline` or `system-design-components/message-queue`), so producers point at the channel and the channel points at consumers. Make async edges dashed and label them with the event or command name. Draw dead-letter queues in red. See `messaging-and-events.md`.
 
-**Class.** Use `create_diagram`, with compartments separated by a rule line in the label. Then set `triangle_outline` (inherits or implements) or `diamond` (composition) arrowheads with `update_elements`. Include only the classes and members that answer the question.
+**Class.** Use `create_diagram` TB. Give each class node `attributes` and `operations` (with visibility and types: `"-id: UUID"`, `"+place(): void"`) and a `stereotype` for interfaces, abstract classes and enumerations. Give every edge a `relation`: `inheritance` (child to parent), `realization` (class to interface), `composition` / `aggregation` (whole to part), `association`, or `dependency`, with multiplicities in the label (`"1 — 1..*"`). Include only the classes and members that answer the question. Object diagrams use the same nodes, labelled `name : Class`, with attribute values.
+
+**Use case.** Use `create_diagram` LR. Put the use cases (ellipses, verb phrases) in a group named after the system: its frame is the system boundary. Keep the actors outside it (`stick-figures/stick-man` or ellipses), joined to their use cases with `relation: "association"`, and use `relation: "include"` / `"extend"` between use cases.
+
+**Other UML diagrams.** Package, component, composite structure, communication, interaction overview and timing diagrams have recipes in `uml-structure.md` and `uml-behaviour.md`.
 
 Only Mermaid `flowchart` and `sequenceDiagram` become editable elements. Everything else (`classDiagram`, `erDiagram`, `stateDiagram`, `gantt`, `mindmap`, `timeline`, `C4Context`, …) arrives as one uneditable image, and the result says "Converted Mermaid into 1 elements". When that happens, delete the image and build the diagram with `create_diagram` or `add_elements` instead.
 

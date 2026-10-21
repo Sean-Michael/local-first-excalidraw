@@ -20,7 +20,64 @@ export interface NodeSpec {
   size?: { w: number; h: number };
   /** Project file (optionally `:line`) the node stands for; the caller turns it into a code link. */
   code?: string;
+  /** UML: shown as «stereotype» above the name (interface, abstract, enumeration, device, …). */
+  stereotype?: string;
+  /** UML class compartments, below the name, each under a rule line. */
+  attributes?: string[];
+  operations?: string[];
 }
+
+export type Arrowhead =
+  | "arrow"
+  | "bar"
+  | "dot"
+  | "circle"
+  | "circle_outline"
+  | "triangle"
+  | "triangle_outline"
+  | "diamond"
+  | "diamond_outline"
+  | "crowfoot_one"
+  | "crowfoot_many"
+  | "crowfoot_one_or_many";
+
+interface RelationStyle {
+  style: "solid" | "dashed";
+  start: Arrowhead | null;
+  end: Arrowhead | null;
+  label?: string;
+  /** The `to` end is the parent, laid out in the earlier layer (above in TB, left in LR). */
+  parentFirst?: boolean;
+}
+
+/**
+ * Standard relationships and how they are drawn, so a model can say what an edge means and
+ * get the notation right.
+ */
+export const RELATIONS = {
+  // UML class, object, component and package diagrams
+  association: { style: "solid", start: null, end: null },
+  "directed-association": { style: "solid", start: null, end: "arrow" },
+  dependency: { style: "dashed", start: null, end: "arrow" },
+  inheritance: { style: "solid", start: null, end: "triangle_outline", parentFirst: true },
+  realization: { style: "dashed", start: null, end: "triangle_outline", parentFirst: true },
+  aggregation: { style: "solid", start: "diamond_outline", end: null },
+  composition: { style: "solid", start: "diamond", end: null },
+  // UML use case diagrams
+  include: { style: "dashed", start: null, end: "arrow", label: "«include»" },
+  extend: { style: "dashed", start: null, end: "arrow", label: "«extend»" },
+  // Sequence and communication messages
+  message: { style: "solid", start: null, end: "triangle" },
+  "async-message": { style: "solid", start: null, end: "arrow" },
+  reply: { style: "dashed", start: null, end: "arrow" },
+  // Crow's foot ER relationships, read from the `from` entity to the `to` entity
+  "one-to-one": { style: "solid", start: "crowfoot_one", end: "crowfoot_one" },
+  "one-to-many": { style: "solid", start: "crowfoot_one", end: "crowfoot_many" },
+  "many-to-many": { style: "solid", start: "crowfoot_many", end: "crowfoot_many" },
+  "one-to-one-or-many": { style: "solid", start: "crowfoot_one", end: "crowfoot_one_or_many" },
+} satisfies Record<string, RelationStyle>;
+
+export type Relation = keyof typeof RELATIONS;
 
 export interface EdgeSpec {
   from: string;
@@ -28,6 +85,11 @@ export interface EdgeSpec {
   label?: string;
   style?: "solid" | "dashed" | "dotted";
   bidirectional?: boolean;
+  /** What the edge means; sets its arrowheads, line style and (for include/extend) label. */
+  relation?: Relation;
+  /** Override the relation's arrowheads; null for a plain end. */
+  startArrowhead?: Arrowhead | null;
+  endArrowhead?: Arrowhead | null;
 }
 
 export interface GroupSpec {
@@ -52,8 +114,19 @@ const PARALLEL = 18; // spacing between edges joining the same two nodes
 const FRAME_PAD = 60; // room around a group's members for its frame (frames use 40, plus the title)
 const BAND_GAP = 40; // between neighbouring groups
 
-function nodeSize(n: NodeSpec): { w: number; h: number } {
+/**
+ * UML symbols that aren't boxes: the activity/state initial node (●), final node (◉) and a
+ * fork/join bar (across the flow). They carry no label.
+ */
+export const PSEUDO_SHAPES = new Set(["initial", "final", "bar"]);
+
+const INK = "#1e1e1e";
+
+function nodeSize(n: NodeSpec, dir: "LR" | "TB"): { w: number; h: number } {
   if (n.size) return n.size;
+  if (n.shape === "initial") return { w: 30, h: 30 };
+  if (n.shape === "final") return { w: 36, h: 36 };
+  if (n.shape === "bar") return dir === "TB" ? { w: 160, h: 10 } : { w: 10, h: 160 };
   const m = measureText(n.label, 20);
   // Excalidraw fits bound text in the inscribed box: about half a diamond, ~70% of an ellipse.
   if (n.shape === "diamond") return { w: Math.round(Math.max(170, m.width * 2 + 50)), h: Math.round(Math.max(100, m.height * 2 + 40)) };
@@ -76,9 +149,21 @@ function simplify(pts: Pt[]): Pt[] {
   return out;
 }
 
+/** The «stereotype», name and compartments of a UML node as one label. */
+export function compartmentLabel(n: Pick<NodeSpec, "label" | "stereotype" | "attributes" | "operations">): string {
+  const st = n.stereotype?.trim().replace(/^(«|<<)\s*|\s*(»|>>)$/g, "");
+  const head = [st ? `«${st}»` : "", n.label].filter(Boolean).join("\n");
+  const sections = [n.attributes, n.operations].filter((x): x is string[] => Array.isArray(x));
+  if (!sections.length) return head;
+  // Shorter than the longest line, or the rule wraps and overflows the box (boxes are sized to the text).
+  const longest = Math.max(...[head, ...sections.flat()].flatMap((t) => t.split("\n")).map((l) => l.length));
+  const rule = "─".repeat(Math.max(4, Math.min(16, Math.floor(longest * 0.6))));
+  return [head, ...sections.map((xs) => [rule, ...xs].join("\n"))].join("\n");
+}
+
 export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonEl[] {
   const dir = spec.direction ?? "LR";
-  const nodes = spec.nodes ?? [];
+  const nodes = (spec.nodes ?? []).map((n) => (n.stereotype || n.attributes || n.operations ? { ...n, label: compartmentLabel(n) } : n));
   if (!nodes.length) throw new SceneError("A diagram needs at least one node");
   const ids = new Set<string>();
   for (const n of nodes) {
@@ -93,7 +178,11 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
 
   // Break cycles with a DFS so layering terminates.
   const out = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
-  for (const e of edges) out.get(e.from)!.push(e.to);
+  const relationOf = (e: EdgeSpec): RelationStyle | undefined => (e.relation ? RELATIONS[e.relation] : undefined);
+  for (const e of edges) {
+    if (relationOf(e)?.parentFirst) out.get(e.to)!.push(e.from);
+    else out.get(e.from)!.push(e.to);
+  }
   const state = new Map<string, 0 | 1 | 2>();
   const dag = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
   const visit = (u: string) => {
@@ -223,7 +312,7 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   reindex();
 
   // Coordinates: layers advance along the main axis; siblings spread on the cross axis.
-  const size = new Map(nodes.map((n) => [n.id, nodeSize(n)]));
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n, dir)]));
   const main = (id: string) => (dummies.has(id) ? 0 : dir === "LR" ? size.get(id)!.w : size.get(id)!.h);
   const cross = (id: string) => (dummies.has(id) ? SLOT : dir === "LR" ? size.get(id)!.h : size.get(id)!.w);
   const gapAfter = (a: string, b: string) => (dummies.has(a) && dummies.has(b) ? SLOT : V_GAP);
@@ -283,6 +372,19 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   for (const n of nodes) {
     const c = coord.get(n.id)!;
     const s = size.get(n.id)!;
+    if (n.shape && PSEUDO_SHAPES.has(n.shape)) {
+      const [x, y] = [Math.round(c[0]), Math.round(c[1])];
+      const solid = { strokeColor: INK, backgroundColor: INK, fillStyle: "solid" };
+      if (n.shape === "initial") els.push({ type: "ellipse", id: n.id, x, y, width: s.w, height: s.h, ...solid });
+      else if (n.shape === "bar") els.push({ type: "rectangle", id: n.id, x, y, width: s.w, height: s.h, ...solid });
+      else {
+        // A ring the arrows bind to, around a solid dot, moved as one.
+        const g = [`${n.id}-symbol`];
+        els.push({ type: "ellipse", id: n.id, x, y, width: s.w, height: s.h, strokeColor: INK, backgroundColor: "transparent", strokeWidth: 2, groupIds: g });
+        els.push({ type: "ellipse", id: `${n.id}-dot`, x: x + 8, y: y + 8, width: s.w - 16, height: s.h - 16, ...solid, groupIds: g });
+      }
+      continue;
+    }
     els.push({
       type: n.shape ?? "rectangle",
       id: n.id,
@@ -305,23 +407,27 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   const offset = new Map<number, number>();
   for (const ks of pairs.values()) ks.forEach((k, j) => offset.set(k, (j - (ks.length - 1) / 2) * PARALLEL));
 
-  const arrow = (e: (typeof allEdges)[number], pts?: Pt[]): SkeletonEl => ({
-    type: "arrow",
-    id: `${e.from}->${e.to}${e.i ? `#${e.i}` : ""}`,
-    start: { id: e.from },
-    end: { id: e.to },
-    label: e.label,
-    strokeStyle: e.style ?? "solid",
-    startArrowhead: e.bidirectional ? "arrow" : null,
-    ...(pts && pts.length > 2
-      ? {
-          x: Math.round(pts[0][0]),
-          y: Math.round(pts[0][1]),
-          points: pts.map(([x, y]) => [Math.round(x - pts[0][0]), Math.round(y - pts[0][1])] as Pt),
-          roundness: null,
-        }
-      : {}),
-  });
+  const arrow = (e: (typeof allEdges)[number], pts?: Pt[]): SkeletonEl => {
+    const rel = relationOf(e);
+    return {
+      type: "arrow",
+      id: `${e.from}->${e.to}${e.i ? `#${e.i}` : ""}`,
+      start: { id: e.from },
+      end: { id: e.to },
+      label: e.label ?? rel?.label,
+      strokeStyle: e.style ?? rel?.style ?? "solid",
+      startArrowhead: e.startArrowhead !== undefined ? e.startArrowhead : e.bidirectional ? "arrow" : (rel?.start ?? null),
+      ...(e.endArrowhead !== undefined ? { endArrowhead: e.endArrowhead } : rel ? { endArrowhead: rel.end } : {}),
+      ...(pts && pts.length > 2
+        ? {
+            x: Math.round(pts[0][0]),
+            y: Math.round(pts[0][1]),
+            points: pts.map(([x, y]) => [Math.round(x - pts[0][0]), Math.round(y - pts[0][1])] as Pt),
+            roundness: null,
+          }
+        : {}),
+    };
+  };
 
   chains.forEach((ch, k) => {
     const off = offset.get(k)!;

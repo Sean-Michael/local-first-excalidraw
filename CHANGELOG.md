@@ -4,6 +4,38 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-21
+
+### Added
+
+- **Record assistant traces** in the macOS app's Settings (Diagnostics) writes every assistant turn to `~/.local-first-excalidraw/traces.jsonl`, without a trace receiver or a terminal.
+- `npm run chats` summarises the assistant's saved chats, one row per reply: model, tool calls, failures, repeated failed calls and files read.
+- Evals run local models through the in-app assistant with `--via assistant --model ollama:NAME`. The summary gains Repeats and Files read columns, and a new `sequence-code-shapes` scenario covers a sequence diagram drawn from code with library shapes.
+
+### Changed
+
+- Smaller local models recover from their mistakes instead of looping:
+  - Tools report the fields they ignored, with the name probably meant.
+  - `create_diagram` repairs edges listed as nodes (and nodes listed as edges) and `type` used for `shape` or `relation`, and says what it changed.
+  - A validation error repeated across items is reported once, with what the field means.
+  - The assistant refuses to rerun a call that failed, or a lookup it already made twice with nothing written since, and stops a turn that keeps repeating itself.
+- Errors say how to fix the problem:
+  - an edge to an unknown node lists the node ids and the closest match
+  - a group id lists its members (`delete_elements` and `arrange_elements` accept it)
+  - a missing path lists the project's top-level folders
+  - asking the library for "arrow" or "box" points to the drawing tools
+- The assistant says when it drew a diagram of the code without reading any, and `create_diagram` and `mermaid_to_drawing` say when they drew a diagram that was already in the drawing.
+- In the assistant, a `code` link to a file that doesn't exist is left off the element, with a note on finding the real file. MCP clients still link it, with a note.
+- On Ollama, each tool result is capped to about a tenth of the context window, and a reply cut off by a full window says so.
+- Sequence diagrams converted from Mermaid leave gaps in the lifelines behind the labels that cross them.
+- The UML references ask for a stereotype on every dependency and for messages inside the right `alt` branch.
+
+### Fixed
+
+- A failed tool call in the chat no longer reads as a success ("Drew a diagram"); it says what failed and why.
+- `list_shapes` finds a library by the slug its shape keys start with (`system-design-components`).
+- `find_symbol` no longer counts matches in drawing files as references.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
@@ -139,7 +171,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - A native macOS app and a Homebrew cask that also puts `lfx` on your PATH.
 - A Docker Compose setup with an egress-isolated app container and a loopback-only gateway.
 
-[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v0.1.1...v1.0.0

@@ -86,17 +86,35 @@ final class Daemon: @unchecked Sendable {
         throw Failure(message: "The running daemon did not stop. Run `lfx stop` and try again.")
     }
 
+    /// The daemon normally answers within a few hundred milliseconds. One that exits is a fatal
+    /// error and is reported at once; one that stalls is killed and started again.
     private func launch() async throws {
-        try start()
-        for _ in 0..<60 {
-            try await Task.sleep(for: .milliseconds(150))
-            if try await healthy() {
-                try loadToken()
-                return
+        let attempts = 3
+        for attempt in 1...attempts {
+            let p = try start()
+            let deadline = Date.now.addingTimeInterval(3)
+            while p.isRunning && Date.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+                if try await healthy() {
+                    try loadToken()
+                    return
+                }
             }
-            if let p = process, !p.isRunning { break }
+            if !p.isRunning {
+                // Another launcher may have won the race for the port.
+                if try await healthy() {
+                    try loadToken()
+                    process = nil
+                    return
+                }
+                throw Failure(message: "The daemon exited with status \(p.terminationStatus). See \(logURL.path).\n\n\(logTail())")
+            }
+            NSLog("lfx daemon made no progress in 3s (attempt \(attempt) of \(attempts)); stopping it.")
+            p.terminate()
+            p.waitUntilExit()
+            process = nil
         }
-        throw Failure(message: "The daemon failed to start. See \(logURL.path).\n\n\(logTail())")
+        throw Failure(message: "The daemon did not respond after \(attempts) attempts. See \(logURL.path).\n\n\(logTail())")
     }
 
     /// Stops the daemon, including one the CLI or an agent started that this app adopted.
@@ -154,7 +172,7 @@ final class Daemon: @unchecked Sendable {
 
     private var logURL: URL { stateDir.appending(path: "daemon.log") }
 
-    private func start() throws {
+    private func start() throws -> Process {
         let runtime = try Runtime.locate()
         try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
@@ -180,6 +198,7 @@ final class Daemon: @unchecked Sendable {
         p.standardError = log
         try p.run()
         process = p
+        return p
     }
 
     private func loadToken() throws {

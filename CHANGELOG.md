@@ -16,6 +16,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Fixed
 
 - `diagram_reference` finds topics from a description in the caller's own words. Asking for `"uml-class"`, `"use case"` or `"uml-state"` used to fail with "No reference"; in evals the in-app assistant hit that error in 10 of 11 UML requests.
+- The macOS app no longer reports "The daemon failed to start" when the daemon is slow on its first run. If the daemon makes no progress for 3 seconds the app restarts it, up to three times, and a daemon that exits is reported straight away with its log.
 
 ## [1.1.0] - 2026-10-19
 

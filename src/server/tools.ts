@@ -12,7 +12,7 @@ import { findSymbol, outlineFile, projectOverview } from "./explore.js";
 import { gitChanges } from "./git-changes.js";
 import { GUIDE } from "./guide.js";
 import { RELATIONS, type Relation } from "./layout.js";
-import { type LibraryShape, searchShapes } from "./library.js";
+import { type LibraryShape, searchShapes, slug } from "./library.js";
 import { readTopic, topicIndex } from "./references.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
@@ -45,6 +45,8 @@ export interface ToolDef {
   input: z.ZodRawShape;
   readOnly?: boolean;
   destructive?: boolean;
+  /** Fixes common mistakes in raw arguments before validation; returns a note for each fix. */
+  normalize?(args: Record<string, unknown>): string[];
   run(args: any, ctx: ToolContext): Promise<ToolOutput>;
 }
 
@@ -129,6 +131,78 @@ export function relPath(ctx: ToolContext, abs: string): string {
 const other = (ctx: ToolContext, file: string) => (file !== ctx.currentDrawing ? file : undefined);
 
 /** Drawing tools. `currentDrawing` makes `path` optional (it defaults to the open drawing). */
+const NODE_SHAPES = new Set(["rectangle", "ellipse", "diamond", "initial", "final", "bar"]);
+const SEQUENCE_RELATIONS = new Set(["message", "async-message", "reply"]);
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Repairs the graph mistakes weaker models make with create_diagram: edges listed under `nodes`,
+ * nodes under `edges`, `type` where the schema says `shape` or `relation`. Each repair is reported
+ * back so the model learns the real field names.
+ */
+export function normalizeGraphArgs(a: Obj): string[] {
+  const notes: string[] = [];
+  const nodes = Array.isArray(a.nodes) ? (a.nodes as unknown[]) : [];
+  const edges = Array.isArray(a.edges) ? (a.edges as unknown[]) : [];
+  const keptNodes: unknown[] = [];
+  const keptEdges: unknown[] = [];
+  const moved: string[] = [];
+  for (const n of nodes) {
+    if (isObj(n) && typeof n.from === "string" && typeof n.to === "string") {
+      keptEdges.push(n);
+      moved.push(String(n.id ?? `${n.from}->${n.to}`));
+    } else keptNodes.push(n);
+  }
+  if (moved.length) notes.push(`Moved ${moved.join(", ")} from nodes to edges: entries with from and to are edges.`);
+  const nodeIds = new Set(keptNodes.filter(isObj).map((n) => n.id));
+  const asNodes: string[] = [];
+  const dropped: string[] = [];
+  for (const e of edges) {
+    // An "edge" with no target but an id and a label is a node written in the wrong list.
+    if (isObj(e) && e.to === undefined && typeof e.id === "string" && typeof e.label === "string") {
+      if (nodeIds.has(e.id)) dropped.push(e.id);
+      else {
+        const shape = e.shape ?? e.type;
+        keptNodes.push({ id: e.id, label: e.label, ...(typeof shape === "string" && NODE_SHAPES.has(shape) ? { shape } : {}) });
+        nodeIds.add(e.id);
+        asNodes.push(e.id);
+      }
+    } else keptEdges.push(e);
+  }
+  if (asNodes.length) notes.push(`Moved ${asNodes.join(", ")} from edges to nodes: an edge needs from and to node ids.`);
+  if (dropped.length) notes.push(`Dropped edges ${dropped.join(", ")}: they had no \`to\` and repeat nodes already listed.`);
+  const shapes: string[] = [];
+  for (const n of keptNodes) {
+    if (isObj(n) && typeof n.type === "string" && n.shape === undefined) {
+      if (n.type !== "rectangle") n.shape = n.type;
+      delete n.type;
+      shapes.push(String(n.id));
+    }
+  }
+  if (shapes.length) notes.push(`Read \`type\` as \`shape\` on nodes ${shapes.join(", ")}.`);
+  const relations: string[] = [];
+  for (const e of keptEdges) {
+    if (!isObj(e) || typeof e.type !== "string") continue;
+    if (e.type in RELATIONS && e.relation === undefined) {
+      e.relation = e.type;
+      relations.push(`${e.from}->${e.to}`);
+    }
+    if (e.type in RELATIONS || e.type === "arrow" || e.type === "line") delete e.type;
+  }
+  if (relations.length) notes.push(`Read \`type\` as \`relation\` on edges ${relations.join(", ")}.`);
+  if (moved.length || asNodes.length || dropped.length) {
+    a.nodes = keptNodes;
+    a.edges = keptEdges;
+  }
+  if (keptEdges.some((e) => isObj(e) && typeof e.relation === "string" && SEQUENCE_RELATIONS.has(e.relation))) {
+    notes.push(
+      "Message edges draw a communication diagram. For a sequence diagram (lifelines, messages in order, alt and loop) use mermaid_to_drawing with a sequenceDiagram instead.",
+    );
+  }
+  return notes;
+}
+
 export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
   const pathArg = opts.currentDrawing
     ? z.string().optional().describe(`${PATH_HELP} Omit to use the drawing the user has open.`)
@@ -252,8 +326,8 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         edges: z
           .array(
             z.object({
-              from: z.string(),
-              to: z.string(),
+              from: z.string().describe("id of the node the edge starts at"),
+              to: z.string().describe("id of the node the edge points to"),
               label: z.string().optional().describe("Only when the meaning isn't obvious from the two ends; 12 characters or fewer"),
               startLabel: z
                 .string()
@@ -279,6 +353,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         replace: z.boolean().optional().describe("Replace everything in the drawing with this diagram (one atomic write)"),
         ...openArg,
       },
+      normalize: normalizeGraphArgs,
       run: async ({ path: p, nodes, edges, groups, direction, title, replace, open }, ctx) => {
         const file = resolveDrawing(ctx, p);
         const r = await ctx.op({ op: "diagram", path: file, replace: !!replace, graph: { nodes, edges, groups, direction, title } });
@@ -310,8 +385,10 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         }
         let pool = r.shapes;
         if (library) {
+          // Shape keys start with the library's slug, so models often pass that.
           const l = library.toLowerCase();
-          pool = pool.filter((s) => s.library.toLowerCase() === l || s.libraryName.toLowerCase().includes(l));
+          const ls = slug(library);
+          pool = pool.filter((s) => s.library.toLowerCase() === l || s.libraryName.toLowerCase().includes(l) || slug(s.libraryName) === ls);
           if (!pool.length) return { text: `No library matches "${library}". Libraries: ${enabled.map((x) => x.name).join(", ")}` };
         }
         const hits = query ? searchShapes(pool, query) : pool;

@@ -65,7 +65,26 @@ const TOOL_LABELS: Record<string, string> = {
   Glob: "Listed files",
 };
 
+/** Labels for failed calls, so a failure never reads as "Drew a diagram". */
+const FAILED_LABELS: Record<string, string> = {
+  create_drawing: "Couldn't create the drawing",
+  create_diagram: "Couldn't draw the diagram",
+  add_elements: "Couldn't add elements",
+  update_elements: "Couldn't update elements",
+  delete_elements: "Couldn't delete elements",
+  mermaid_to_drawing: "Couldn't convert Mermaid",
+  insert_shape: "Couldn't insert the shape",
+  apply_changes: "Couldn't apply the changes",
+};
+
+/** The first line of an error, without the "Error:" / "Invalid arguments:" prefix. */
+function errorLine(result: string | undefined): string | undefined {
+  const line = result?.replace(/^(Error|Invalid arguments|Not run):\s*/, "").split("\n").find((l) => l.trim());
+  return line ? line.replace(/^✖\s*/, "").trim() : undefined;
+}
+
 function toolSummary(p: ToolPart): string {
+  if (p.status === "error") return errorLine(p.result) ?? "";
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(p.args || "{}");
@@ -80,7 +99,7 @@ function toolSummary(p: ToolPart): string {
 }
 
 function ToolChip({ part }: { part: ToolPart }) {
-  const label = TOOL_LABELS[part.name] ?? part.name;
+  const label = part.status === "error" ? (FAILED_LABELS[part.name] ?? `${TOOL_LABELS[part.name] ?? part.name} (failed)`) : (TOOL_LABELS[part.name] ?? part.name);
   const summary = toolSummary(part);
   return (
     <details className={`lfx-tool lfx-tool-${part.status}`}>

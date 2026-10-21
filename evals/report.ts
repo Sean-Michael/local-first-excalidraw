@@ -3,6 +3,9 @@ import type { TranscriptSummary } from "./claude.js";
 import type { Grade } from "./grade.js";
 import type { Judgement } from "./judge.js";
 
+/** A transcript as saved in results: failed calls keep their input, the rest only their name. */
+export type SavedTranscript = Omit<TranscriptSummary, "toolCalls"> & { toolCalls: { name: string; error?: string; input?: unknown }[] };
+
 export interface RunResult {
   scenario: string;
   run: number;
@@ -19,12 +22,29 @@ export interface RunResult {
   projectFiles: string[];
   grade: Grade;
   judge?: Judgement;
-  transcript: Omit<TranscriptSummary, "toolCalls"> & { toolCalls: { name: string; error?: string }[] };
+  transcript: SavedTranscript;
   stderr?: string;
   error?: string;
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
+
+/** Failed calls that repeat an earlier failed call exactly: the model retrying without a change. */
+export function repeatedFailures(t: SavedTranscript): number {
+  const seen = new Set<string>();
+  let n = 0;
+  for (const c of t.toolCalls) {
+    if (!c.error) continue;
+    const key = `${c.name} ${JSON.stringify(c.input)}`;
+    if (seen.has(key)) n++;
+    seen.add(key);
+  }
+  return n;
+}
+
+/** Calls that read source code: the sign that the model looked before drawing. */
+export const filesRead = (t: SavedTranscript) =>
+  t.toolCalls.filter((c) => /(^|__)(read_file|outline_file|Read)$/.test(c.name)).length;
 const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 export function summaryMarkdown(title: string, runs: RunResult[]): string {
@@ -32,8 +52,8 @@ export function summaryMarkdown(title: string, runs: RunResult[]): string {
   const passed = runs.filter((r) => r.grade.pass).length;
   const cost = runs.reduce((s, r) => s + (r.transcript.costUsd ?? 0) + (r.judge?.costUsd ?? 0), 0);
   out.push(`${passed}/${runs.length} runs passed every check. Total cost $${cost.toFixed(2)}.`, "");
-  out.push("| Scenario | Run | Result | Score | Failed checks | Tool calls (MCP) | Tool errors | Turns | Cost | Time | Judge |");
-  out.push("|---|---|---|---|---|---|---|---|---|---|---|");
+  out.push("| Scenario | Run | Result | Score | Failed checks | Tool calls (MCP) | Tool errors | Repeats | Files read | Turns | Cost | Time | Judge |");
+  out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const r of runs) {
     const t = r.transcript;
     const total = Object.values(t.toolCounts).reduce((a, b) => a + b, 0);
@@ -41,7 +61,7 @@ export function summaryMarkdown(title: string, runs: RunResult[]): string {
     const failed = r.grade.checks.filter((c) => !c.pass).map((c) => c.name).join(", ") || "-";
     const j = r.judge ? (r.judge.error ? `error` : `R${r.judge.readability ?? "?"} C${r.judge.correctness ?? "?"}`) : "-";
     out.push(
-      `| ${r.scenario} | ${r.run} | ${r.error ? "ERROR" : r.grade.pass ? "pass" : "FAIL"} | ${pct(r.grade.score)} | ${esc(failed)} | ${total} (${mcp}) | ${t.toolErrors.length} | ${t.turns ?? "-"} | ${t.costUsd !== undefined ? `$${t.costUsd.toFixed(2)}` : "-"} | ${Math.round(r.wallMs / 1000)}s${r.timedOut ? " (timeout)" : ""} | ${j} |`,
+      `| ${r.scenario} | ${r.run} | ${r.error ? "ERROR" : r.grade.pass ? "pass" : "FAIL"} | ${pct(r.grade.score)} | ${esc(failed)} | ${total} (${mcp}) | ${t.toolErrors.length} | ${repeatedFailures(t)} | ${filesRead(t)} | ${t.turns ?? "-"} | ${t.costUsd !== undefined ? `$${t.costUsd.toFixed(2)}` : "-"} | ${Math.round(r.wallMs / 1000)}s${r.timedOut ? " (timeout)" : ""} | ${j} |`,
     );
   }
   out.push("");

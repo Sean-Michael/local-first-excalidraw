@@ -554,4 +554,5 @@ func realPath(_ path: String) -> String {
 
 enum Prefs {
     static let keepDaemonRunning = "keepDaemonRunning"
+    static let traceAssistant = "traceAssistant"
 }

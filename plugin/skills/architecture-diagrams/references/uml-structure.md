@@ -29,14 +29,14 @@ Structure diagrams show what exists and how the parts depend on each other, inde
 
 ### Excalidraw recipe
 
-Use `create_diagram` with `direction: "TB"`, one node per class. Give the class name as `label`, its members as `attributes` and `operations` (the compartment rules are added for you), and `stereotype` for interfaces, abstract classes and enumerations. Give every edge a `relation`, so it gets the UML arrowhead and line style:
+Use `create_diagram` with `direction: "TB"`, one node per class. Give the class name as `label`, its members as `attributes` and `operations` (the compartment rules are added for you), and `stereotype` for interfaces, abstract classes and enumerations. UML italicises an abstract class's name, which Excalidraw can't do for part of a label, so `stereotype: "abstract"` is the marker. Give every edge a `relation`, so it gets the UML arrowhead and line style:
 
 - `inheritance` from the child to the parent (hollow triangle at the parent; the parent is laid out above its children)
 - `realization` from the class to the interface it implements (dashed, hollow triangle)
 - `composition` from the whole to the part (filled diamond at the whole): the part can't exist without it
 - `aggregation` from the whole to the part (hollow diamond): the part can exist on its own
 - `association` (plain line) or `directed-association` (open arrow) for "knows about"
-- `dependency` (dashed, open arrow) for "uses for a moment" (a parameter, a local variable)
+- `dependency` (dashed, open arrow) for "uses for a moment" (a parameter, a local variable). Label each one with its kind, `«use»`, `«create»` or `«call»`, so that every dependency in the diagram says what it is, not just some of them.
 
 Put multiplicities at the ends they belong to: `startLabel` beside the `from` end and `endLabel` beside the `to` end (`"1"`, `"0..*"`, or a role and multiplicity such as `"items 1..*"`). Keep `label` for the association's name, if any. Each end label is grouped with the class at that end, so it moves with the box.
 
@@ -81,6 +81,7 @@ Use the exact class and member names from the code. Link each class box to its f
 - **Aggregation and composition used interchangeably.** If you're unsure, use plain association.
 - **Generated diagrams of a whole package.** These are unreadable. Pick the classes for one question.
 - **Arrows pointing the wrong way.** Inheritance points at the parent. Dependency points at what is used.
+- **Unlabelled dependencies next to labelled ones.** If one dependency says `«create»`, label the others too.
 
 ## Object diagram
 

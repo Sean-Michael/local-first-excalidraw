@@ -467,6 +467,129 @@ test("OpenAI-compatible endpoint: streamed tool calls edit the drawing and can b
   }
 });
 
+test("an identical failing call is refused, and the turn stops when the model keeps sending it", async () => {
+  const args = JSON.stringify({ nodes: [{ id: "user", label: "User" }, { id: "chat", label: "Chat" }], edges: [{ from: "chat", to: "server" }] });
+  const fake = await fakeServer(() => [oaChunk({ tool_calls: [{ index: 0, id: "c1", function: { name: "create_diagram", arguments: args } }] }, "tool_calls")]);
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fake.url, model: "m" }] });
+    const t = await tab(path.join(root, "docs", "diagrams", "repeat.excalidraw"));
+    await t.chat("draw it");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "error");
+    assert.match(turn.error ?? "", /kept repeating the same tool call without making progress/);
+    assert.equal(fake.requests.length, 3, "two refused repeats, then the turn stops");
+    const results = (n: number) => fake.requests[n].body.messages.filter((m: any) => m.role === "tool").map((m: any) => m.content);
+    assert.match(results(1)[0], /"server", which isn't a node\. Node ids are: user, chat/);
+    assert.match(results(2).at(-1), /Not run: this exact create_diagram call already failed/);
+    t.ws.close();
+  } finally {
+    fake.close();
+  }
+});
+
+test("a read-only call made twice is refused the third time, and the turn stops if it continues", async () => {
+  const list = (id: string, args: unknown) => [oaChunk({ tool_calls: [{ index: 0, id, function: { name: "list_files", arguments: JSON.stringify(args) } }] }, "tool_calls")];
+  const same = { dir: "src", glob: "**/OrderService.ts" };
+  // A different call in between doesn't reset the count; only a write does.
+  const script = [same, same, { dir: "src", glob: "*.md" }, same, same];
+  const fake = await fakeServer((_req, n) => list(`c${n}`, script[n - 1] ?? same));
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fake.url, model: "m" }] });
+    const t = await tab(path.join(root, "docs", "diagrams", "reads.excalidraw"));
+    await t.chat("find the order service");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "error");
+    assert.match(turn.error ?? "", /without making progress/);
+    assert.equal(fake.requests.length, 5);
+    const last = (n: number) => fake.requests[n].body.messages.filter((m: any) => m.role === "tool").at(-1).content;
+    assert.doesNotMatch(last(2), /Not run/, "the second identical read runs");
+    assert.match(last(4), /^Error: Not run: you already made this exact list_files call 2 times, and nothing has changed since\. It returned:/);
+    t.ws.close();
+  } finally {
+    fake.close();
+  }
+});
+
+test("create_diagram repairs a weaker model's graph and says what it changed", async () => {
+  // As lfm2 wrote it: an edge under nodes, a node under edges, and `type` for shape and relation.
+  const args = JSON.stringify({
+    nodes: [
+      { id: "user", label: "User", type: "ellipse" },
+      { id: "chat", label: "Chat" },
+      { id: "prompt", from: "user", to: "chat", label: "Prompts", type: "arrow" },
+    ],
+    edges: [
+      { from: "server", id: "server", label: "Server", type: "rectangle" },
+      { from: "chat", to: "server", type: "message", direction: "down" },
+    ],
+  });
+  const fake = await fakeServer((_req, n) =>
+    n === 1 ? [oaChunk({ tool_calls: [{ index: 0, id: "c1", function: { name: "create_diagram", arguments: args } }] }, "tool_calls")] : [oaChunk({ content: "Done." }, "stop")],
+  );
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fake.url, model: "m" }] });
+    const file = path.join(root, "docs", "diagrams", "repair.excalidraw");
+    const t = await tab(file);
+    await t.chat("draw it");
+    const result: string = fake.requests[1].body.messages.find((m: any) => m.role === "tool").content;
+    assert.match(result, /^Drew 3 nodes and 2 edges/);
+    assert.match(result, /Moved prompt from nodes to edges/);
+    assert.match(result, /Moved server from edges to nodes/);
+    assert.match(result, /Read `type` as `shape` on nodes user/);
+    assert.match(result, /Read `type` as `relation` on edges chat->server/);
+    assert.match(result, /edges\[1\]\.direction/);
+    assert.match(result, /mermaid_to_drawing with a sequenceDiagram/);
+    const els = JSON.parse(fs.readFileSync(file, "utf8")).elements;
+    assert.equal(els.find((e: any) => e.id === "user").type, "ellipse");
+    t.ws.close();
+  } finally {
+    fake.close();
+  }
+});
+
+test("drawing the code without reading it gets one nudge, and drawing it again gets a warning", async () => {
+  const args = JSON.stringify({ nodes: [{ id: "gw", label: "Gateway" }, { id: "orders", label: "Order Service" }], edges: [{ from: "gw", to: "orders" }] });
+  const call = (id: string) => [oaChunk({ tool_calls: [{ index: 0, id, function: { name: "create_diagram", arguments: args } }] }, "tool_calls")];
+  const fake = await fakeServer((_req, n) => (n === 1 ? call("c1") : n === 2 ? call("c2") : [oaChunk({ content: "Done." }, "stop")]));
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fake.url, model: "m" }] });
+    const t = await tab(path.join(root, "docs", "diagrams", "unread.excalidraw"));
+    await t.chat("Draw the request flow, referencing the files in the codebase");
+    const results = (n: number) => fake.requests[n].body.messages.filter((m: any) => m.role === "tool").map((m: any) => m.content);
+    const [first] = results(1);
+    const second = results(2).at(-1);
+    assert.match(first, /you drew this without reading any of it/);
+    assert.doesNotMatch(first, /already had nodes/);
+    assert.doesNotMatch(second, /without reading/, "the nudge comes once per turn");
+    assert.match(second, /already had nodes labelled "gateway", "order service", so this added a second copy beside them \(its ids start with "[0-9a-f]{4}-"\)/);
+    t.ws.close();
+  } finally {
+    fake.close();
+  }
+});
+
+test("the assistant's code links to files that don't exist are left out, with a note", async () => {
+  const args = JSON.stringify({ elements: [{ type: "rectangle", id: "gw", x: 0, y: 0, width: 120, height: 60, label: "Gateway", code: "src/types/Gateway.ts" }] });
+  const fake = await fakeServer((_req, n) =>
+    n === 1 ? [oaChunk({ tool_calls: [{ index: 0, id: "c1", function: { name: "add_elements", arguments: args } }] }, "tool_calls")] : [oaChunk({ content: "Done." }, "stop")],
+  );
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fake.url, model: "m" }] });
+    const file = path.join(root, "docs", "diagrams", "nolink.excalidraw");
+    const t = await tab(file);
+    await t.chat("add a gateway box");
+    const result: string = fake.requests[1].body.messages.find((m: any) => m.role === "tool").content;
+    assert.match(result, /gw: not linked, because src\/types\/Gateway\.ts doesn't exist/);
+    const gw = JSON.parse(fs.readFileSync(file, "utf8")).elements.find((e: any) => e.id === "gw");
+    assert.ok(gw && !gw.link);
+    t.ws.close();
+  } finally {
+    fake.close();
+  }
+});
+
 test("selection and @-mentions are described in the context; bad tool args are reported back", async () => {
   const fake = await fakeServer((_req, n) =>
     n === 1

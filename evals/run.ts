@@ -10,8 +10,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assistantSettings, runAssistant, summariseChat, traceFileFor } from "./assistant.js";
-import { runClaude, summariseTranscript } from "./claude.js";
+import { assistantSettings, ollamaModel, runAssistant, summariseChat, traceFileFor } from "./assistant.js";
+import { runClaude, summariseTranscript, type TranscriptSummary } from "./claude.js";
 import { baseEnv, CLI, EvalDaemon, freePort, isolatedEnv } from "./daemon.js";
 import { grade, type SceneLike } from "./grade.js";
 import { judge } from "./judge.js";
@@ -40,7 +40,8 @@ const HELP = `Usage: npm run evals -- [options]
   --via claude|assistant
                        claude: claude -p over MCP with the plugin (default).
                        assistant: the daemon's in-app assistant with a Claude Code endpoint
-  --model NAME         Model for Claude Code (default: Claude Code's own choice)
+  --model NAME         Model for Claude Code (default: Claude Code's own choice).
+                       With --via assistant, ollama:NAME runs a local Ollama model instead
   --runs N             Runs per scenario (default 1)
   --judge              Also render the result and ask an LLM judge to score it
   --timeout SEC        Per-run time limit (default: the scenario's, else 900)
@@ -80,8 +81,12 @@ function parseArgs(argv: string[]): Options {
       process.exit(0);
     } else throw new Error(`Unknown option ${a}\n\n${HELP}`);
   }
+  if (ollamaModel(o.model) && o.via !== "assistant") throw new Error("An ollama: model runs only --via assistant");
   return o;
 }
+
+/** Tool calls as saved in results: names and errors, plus the input of failed calls to spot repeats. */
+const slimCalls = (calls: TranscriptSummary["toolCalls"]) => calls.map((c) => ({ name: c.name, error: c.error, ...(c.error ? { input: c.input } : {}) }));
 
 /** Tools the agent may use without asking. Everything else is denied (permission mode dontAsk). */
 export const ALLOWED_TOOLS = [
@@ -178,7 +183,7 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
       await new Promise((r) => setTimeout(r, 500));
       const sum = summariseChat(fs.readFileSync(transcriptFile, "utf8").split("\n"), traceFileFor(runDir));
       result.model = sum.model ?? o.model;
-      result.transcript = { ...sum, toolCalls: sum.toolCalls.map((c) => ({ name: c.name, error: c.error })) };
+      result.transcript = { ...sum, toolCalls: slimCalls(sum.toolCalls) };
     } else {
       // MCP server and plugin, both pointing at this run's daemon only.
       const mcpConfig = path.join(tmp, "mcp.json");
@@ -205,7 +210,7 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
       Object.assign(result, { exitCode: run.exitCode, timedOut: run.timedOut, wallMs: run.wallMs, stderr: run.stderr || undefined });
       const sum = summariseTranscript(fs.readFileSync(transcriptFile, "utf8").split("\n"));
       result.model = sum.model ?? o.model;
-      result.transcript = { ...sum, toolCalls: sum.toolCalls.map((c) => ({ name: c.name, error: c.error })) };
+      result.transcript = { ...sum, toolCalls: slimCalls(sum.toolCalls) };
     }
 
     // Which drawing to grade: the named one, else whichever changed most recently.
@@ -228,7 +233,8 @@ async function runOne(s: Scenario, graphs: Record<string, unknown>, n: number, o
 
     if (o.judge && result.drawing) {
       console.log(`[${s.id} #${n}] judging…`);
-      result.judge = await judge({ daemon, drawing: path.join(project, result.drawing), runDir, prompt: s.prompt, expected: s.expected_output, model: o.model, env: { ...baseEnv(), ...env } });
+      // An Ollama model can't judge; the judge then uses Claude Code's default model.
+      result.judge = await judge({ daemon, drawing: path.join(project, result.drawing), runDir, prompt: s.prompt, expected: s.expected_output, model: ollamaModel(o.model) ? undefined : o.model, env: { ...baseEnv(), ...env } });
     }
   } catch (e) {
     result.error = (e as Error).stack ?? String(e);

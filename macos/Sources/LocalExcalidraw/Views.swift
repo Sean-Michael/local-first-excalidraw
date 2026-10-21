@@ -612,6 +612,7 @@ struct NewDrawingSheet: View {
 
 struct SettingsView: View {
     @AppStorage(Prefs.keepDaemonRunning) private var keepRunning = false
+    @AppStorage(Prefs.traceAssistant) private var traceAssistant = false
     let model: AppModel
 
     var body: some View {
@@ -619,6 +620,12 @@ struct SettingsView: View {
             Section {
                 Toggle("Keep the daemon running after quitting", isOn: $keepRunning)
                 Text("Off: quitting stops the daemon, whoever started it. Coding agents start it again when they need it, and it stops itself after 30 idle minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Diagnostics") {
+                Toggle("Record assistant traces", isOn: $traceAssistant)
+                Text("Saves every assistant turn, with prompts, tool calls and results, to ~/.local-first-excalidraw/traces.jsonl. Takes effect the next time the app starts the daemon. Nothing leaves your machine.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

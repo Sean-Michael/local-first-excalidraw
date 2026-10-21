@@ -7,7 +7,7 @@
  * Each group gets its own band across the layers, so group frames never overlap each other
  * or enclose nodes from outside the group.
  */
-import { measureText, SceneError, type SkeletonEl } from "./scene.js";
+import { closest, measureText, SceneError, type SkeletonEl } from "./scene.js";
 
 export interface NodeSpec {
   id: string;
@@ -175,7 +175,17 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   }
   const allEdges = (spec.edges ?? []).map((e, i) => ({ ...e, i }));
   for (const e of allEdges) {
-    if (!ids.has(e.from) || !ids.has(e.to)) throw new SceneError(`Edge ${e.from} -> ${e.to} references an unknown node`);
+    const missing = [e.from, e.to].filter((id) => !ids.has(id));
+    if (missing.length) {
+      const hints = missing.map((id) => {
+        const near = closest(id, ids, 2);
+        return near ? `"${id}" (did you mean "${near}"?)` : `"${id}"`;
+      });
+      throw new SceneError(
+        `Edge ${e.from} -> ${e.to} references ${hints.join(" and ")}, which ${missing.length > 1 ? "aren't nodes" : "isn't a node"}. ` +
+          `Node ids are: ${[...ids].join(", ")}. Add the missing node to \`nodes\`, or fix or drop the edge.`,
+      );
+    }
   }
   const edges = allEdges.filter((e) => e.from !== e.to);
 

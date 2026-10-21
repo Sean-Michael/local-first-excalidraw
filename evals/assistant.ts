@@ -1,7 +1,7 @@
 /**
  * `--via assistant`: runs a scenario through the daemon's in-app assistant instead of
  * `claude -p` over MCP. The isolated daemon gets an ai.json with one Claude Code endpoint (which
- * uses your `claude` login), and the harness acts as an editor tab: it opens the drawing over
+ * uses your `claude` login) or one Ollama model, and the harness acts as an editor tab: it opens the drawing over
  * the WebSocket, sends the prompt as a chat message, and records the chat events until the turn
  * ends. Cost and turns come from the daemon's trace file.
  */
@@ -11,14 +11,19 @@ import { WebSocket } from "ws";
 import type { TranscriptSummary } from "./claude.js";
 import type { EvalDaemon } from "./daemon.js";
 
-/** ai.json for the isolated daemon: the assistant on, project file access on, Claude Code as the only endpoint. */
+/** `ollama:<model>` picks a local Ollama model instead of Claude Code. */
+export const ollamaModel = (model?: string) => (model?.startsWith("ollama:") ? model.slice("ollama:".length) : undefined);
+
+/**
+ * ai.json for the isolated daemon: the assistant on, project file access on, and one endpoint:
+ * Claude Code, or an Ollama model for `--model ollama:<name>` (at $OLLAMA_HOST, else localhost:11434).
+ */
 export function assistantSettings(model?: string) {
-  return {
-    enabled: true,
-    active: "claude-code",
-    codeAccess: true,
-    endpoints: [{ id: "claude-code", name: "Claude Code", kind: "claude-code", ...(model ? { model } : {}) }],
-  };
+  const local = ollamaModel(model);
+  const endpoint = local
+    ? { id: "ollama", name: "Ollama", kind: "ollama", baseUrl: process.env.OLLAMA_HOST ?? "http://localhost:11434", model: local, tools: true, contextLength: 32768 }
+    : { id: "claude-code", name: "Claude Code", kind: "claude-code", ...(model ? { model } : {}) };
+  return { enabled: true, active: endpoint.id, codeAccess: true, endpoints: [endpoint] };
 }
 
 export interface AssistantRun {

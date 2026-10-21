@@ -25,6 +25,7 @@
     "dev:web": "vite",
     "evals": "npm run build:server && node dist/evals/run.js",
     "evals:skills": "npm run build:server && node dist/evals/skill-evals.js",
+    "chats": "npm run build:server && node dist/evals/chats.js",
     "build:mac": "macos/build-app.sh"
   },
   "dependencies": {

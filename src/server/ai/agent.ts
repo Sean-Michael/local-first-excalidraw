@@ -167,9 +167,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     o.mermaidOnly
       ? "- You can't call tools here. To draw, reply with one ```mermaid code block (a flowchart or a sequence diagram; other Mermaid types arrive as an uneditable image); it is converted into editable Excalidraw elements and added to the open drawing. Keep any prose to a sentence or two."
       : "- Act, don't describe: when the user asks for a change, make it with the tools, then reply in one or two sentences saying what you did. Don't paste element JSON.",
-    o.claudeCode
-      ? "- Drawing tools need `path`: pass the open drawing's path from the context unless the user asks for a different drawing."
-      : "- Drawing tools act on the open drawing when you omit `path`; pass a path only to read or create a different drawing.",
+    "- Drawing tools act on the open drawing when you omit `path`; pass a path only to read or create a different drawing.",
     o.mermaidOnly ? "" : "- Call excalidraw_guide once before your first edit in a conversation: it has the sizing rules, layout anti-patterns and error recovery.",
     o.mermaidOnly
       ? ""
@@ -1129,6 +1127,7 @@ export class Assistant {
         {
           bin,
           cwd: root,
+          drawing: c.path,
           model: ep.model,
           effort: ep.effort,
           sessionId,

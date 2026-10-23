@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- The assistant no longer draws in `docs/diagrams/<name>.excalidraw` when the open drawing is elsewhere. Claude Code now gets the open drawing as its default (`lfx mcp --drawing`), the path help no longer points models at `docs/diagrams/`, diagram recipes leave out their example paths, a path that names the open drawing's file in another folder is refused, and a write to any other drawing says so in its result.
+
 ## [1.3.0] - 2026-10-21
 
 ### Added

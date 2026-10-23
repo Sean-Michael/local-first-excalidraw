@@ -193,6 +193,10 @@ test("Claude Code runs restricted, with only this project's MCP server", () => {
   const mcp = JSON.parse(args[args.indexOf("--mcp-config") + 1]);
   assert.deepEqual(Object.keys(mcp.mcpServers), ["excalidraw"]);
   assert.deepEqual(mcp.mcpServers.excalidraw.args.slice(1), ["mcp", "--root", "/p"]);
+  // The open drawing reaches `lfx mcp`, so its tools default to it as they do for other models.
+  const withDrawing = claudeCodeArgs({ bin: "claude", cwd: "/p", drawing: "/p/a.excalidraw", systemPrompt: "", mcpEnv: {}, codeAccess: false, signal: new AbortController().signal });
+  const mcp2 = JSON.parse(withDrawing[withDrawing.indexOf("--mcp-config") + 1]);
+  assert.deepEqual(mcp2.mcpServers.excalidraw.args.slice(1), ["mcp", "--root", "/p", "--drawing", "/p/a.excalidraw"]);
   const noCode = claudeCodeArgs({ bin: "claude", cwd: "/p", systemPrompt: "", mcpEnv: {}, codeAccess: false, signal: new AbortController().signal });
   assert.equal(noCode[noCode.indexOf("--tools") + 1], "");
 });
@@ -762,6 +766,29 @@ test("in the assistant, a bare drawing name means the open drawing's folder, not
   assert.equal(resolveDrawing(assistant, "docs/x"), "/home/me/docs/x.excalidraw");
   // MCP agents keep the docs/diagrams default.
   assert.equal(resolveDrawing(base, "sketch"), "/home/me/docs/diagrams/sketch.excalidraw");
+});
+
+test("in the assistant, the open drawing's name in another folder is refused, not written", async () => {
+  const base = { projectRoot: "/home/me", op: async () => ({}), withEditor: async () => ({}), list: async () => [] } as ToolContext;
+  const assistant = { ...base, currentDrawing: "/home/me/test.excalidraw" };
+  // What models did after reading that drawings live in docs/diagrams/.
+  assert.throws(() => resolveDrawing(assistant, "docs/diagrams/test.excalidraw"), /not the open drawing: the user has test.excalidraw open/);
+  assert.throws(() => resolveDrawing(assistant, "docs/diagrams/test"), /Leave out path/);
+  assert.equal(resolveDrawing(assistant, "./test.excalidraw"), "/home/me/test.excalidraw");
+  assert.equal(resolveDrawing(assistant, "/home/me/docs/diagrams/test.excalidraw"), "/home/me/docs/diagrams/test.excalidraw");
+  assert.equal(resolveDrawing(base, "docs/diagrams/test"), "/home/me/docs/diagrams/test.excalidraw");
+
+  // A write that lands in another drawing says so; recipes lose their docs/diagrams paths.
+  const tools = new Map(drawingTools({ currentDrawing: true }).map((t) => [t.name, t]));
+  const ctx = { ...assistant, op: async () => ({ created: ["a"] }) } as ToolContext;
+  const other = await tools.get("add_elements")!.run({ path: "docs/other", elements: [] }, ctx);
+  assert.match(other.text, /not the drawing the user has open \(test.excalidraw\)/);
+  const open = await tools.get("add_elements")!.run({ elements: [] }, ctx);
+  assert.doesNotMatch(open.text, /not the drawing/);
+  const recipe = await tools.get("diagram_reference")!.run({ topic: "c4" }, ctx);
+  assert.doesNotMatch(recipe.text, /"path":/);
+  const mcpRecipe = await drawingTools({ currentDrawing: false }).find((t) => t.name === "diagram_reference")!.run({ topic: "c4" }, base);
+  assert.match(mcpRecipe.text, /"path": "docs\/diagrams\//);
 });
 
 test("library shapes: list, insert, and use as create_diagram nodes with bound arrows", async () => {

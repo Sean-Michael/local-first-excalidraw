@@ -54,6 +54,8 @@ The project root is the client's MCP root if it provides one, otherwise `$CLAUDE
 
 Relative drawing paths resolve against the project root. A bare name such as `auth-flow` becomes `docs/diagrams/auth-flow.excalidraw` (change the folder with `LFX_DEFAULT_DIR`).
 
+`--drawing FILE` makes `path` optional and defaults it to FILE, and bare names then go next to FILE. The in-app assistant passes the open drawing this way when it runs Claude Code.
+
 If the server picks the wrong project, or tools fail with "Path is outside the allowed roots", see [Troubleshooting](troubleshooting.md#the-mcp-server-cant-see-the-project).
 
 ## Tools

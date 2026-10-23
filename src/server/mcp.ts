@@ -19,9 +19,11 @@ function fail(e: unknown): CallToolResult {
   return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
 }
 
-export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void> {
+export async function runMcp(cfg: Config, opts: { root?: string; drawing?: string }): Promise<void> {
   const client = new DaemonClient(cfg);
   let projectRoot = path.resolve(opts.root ?? process.env.LFX_PROJECT_ROOT ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
+  // Set when the in-app assistant runs Claude Code: tools default to the drawing the user has open.
+  const currentDrawing = opts.drawing ? path.resolve(opts.drawing) : undefined;
 
   let ready: Promise<void> | undefined;
   const ensure = () =>
@@ -112,6 +114,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
     get projectRoot() {
       return projectRoot;
     },
+    currentDrawing,
     op,
     withEditor,
     list: async (root) => {
@@ -124,7 +127,7 @@ export async function runMcp(cfg: Config, opts: { root?: string }): Promise<void
   // Started by the in-app assistant (through Claude Code), tool spans join the turn's trace.
   const parent = contextFromEnv();
   // Plus the two code tools coding agents lack: a project map and a git change summary.
-  for (const def of [...drawingTools({ currentDrawing: false }), ...sharedCodeTools()]) {
+  for (const def of [...drawingTools({ currentDrawing: !!currentDrawing }), ...sharedCodeTools()]) {
     server.registerTool(
       def.name,
       {

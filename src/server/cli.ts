@@ -12,7 +12,8 @@ Usage:
   lfx open [file.excalidraw]   Open the editor (starts the daemon if needed)
   lfx url [file.excalidraw]    Print a one-time sign-in link instead of opening a browser
   lfx serve                    Run the daemon in the foreground
-  lfx mcp [--root DIR]         MCP server over stdio (for coding agents)
+  lfx mcp [--root DIR] [--drawing FILE]
+                               MCP server over stdio (for coding agents); --drawing makes FILE the default drawing
   lfx status                   Show daemon status
   lfx stop                     Stop the daemon
   lfx roots [list]             List the folders the daemon may read and write drawings in
@@ -67,7 +68,7 @@ async function main() {
     case "mcp": {
       if (initTelemetry("local-first-excalidraw-mcp")) exitOnSignals();
       const { runMcp } = await import("./mcp.js");
-      await runMcp(cfg, { root: argValue(args, "--root") });
+      await runMcp(cfg, { root: argValue(args, "--root"), drawing: argValue(args, "--drawing") });
       return;
     }
     case "open":

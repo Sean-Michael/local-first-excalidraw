@@ -389,11 +389,58 @@ function selfLoop(arrow: El, el: El): El {
  * other shape (or at the nearest waypoint, which is kept). An arrow from a shape to itself
  * becomes a small loop.
  */
-export function routeArrow(arrow: El, from: El | undefined, to: El | undefined): El {
+/** Ports keep this far from a rectangle's corners. */
+const PORT_INSET = 12;
+/** The shortest gap a route can turn in and still leave a straight run for its arrowhead. */
+const TURN_GAP = 60;
+
+/**
+ * Waypoints that take an arrow from one shape to another at right angles, as on a schematic:
+ * straight across when the shapes face each other, otherwise out of one, a turn in the gap
+ * between them, and into the other. Undefined when a straight line between the centres is
+ * already square, or the shapes are too close to route between.
+ */
+export function squareWaypoints(from: El, to: El): [number, number][] | undefined {
+  const gx = Math.max(to.x - (from.x + from.width), from.x - (to.x + to.width));
+  const gy = Math.max(to.y - (from.y + from.height), from.y - (to.y + to.height));
+  if (gx <= 0 && gy <= 0) return undefined;
+  // Along the main axis the shapes are apart; `c` is the other axis.
+  const vertical = gy > 0 && (gx <= 0 || gy >= gx);
+  const axes = (e: El) => {
+    const [c0, cw, m0, mw] = vertical ? [e.x, e.width, e.y, e.height] : [e.y, e.height, e.x, e.width];
+    return { c0, c1: c0 + cw, c: c0 + cw / 2, m0, m1: m0 + mw, m: m0 + mw / 2, flat: e.type === "rectangle" };
+  };
+  const [a, b] = [axes(from), axes(to)];
+  if (Math.abs(a.c - b.c) < 1) return undefined;
+  const xy = (c: number, m: number): [number, number] => (vertical ? [c, m] : [m, c]);
+  const between = a.m < b.m ? (a.m1 + b.m0) / 2 : (b.m1 + a.m0) / 2;
+  // A rectangle can be left anywhere along its side, so facing shapes are joined by a straight line.
+  const reach = (e: typeof a, c: number) => (e.flat ? c >= e.c0 + PORT_INSET && c <= e.c1 - PORT_INSET : Math.abs(c - e.c) < 1);
+  const shared = [Math.max(a.c0, b.c0) + PORT_INSET, Math.min(a.c1, b.c1) - PORT_INSET];
+  const straight = [b.c, a.c, (shared[0] + shared[1]) / 2].find((c) => reach(a, c) && reach(b, c));
+  if (straight !== undefined) return [xy(straight, between)];
+  if ((vertical ? gy : gx) >= TURN_GAP) return [xy(a.c, between), xy(b.c, between)];
+  // Too little room to turn between them: out of the side of one and into the end of the other.
+  if (gx > 0 && gy > 0) return [xy(b.c, a.m)];
+  return undefined;
+}
+
+/** Whether every segment of a path runs along an axis. */
+export function isSquare(points: [number, number][] | undefined): boolean {
+  return !!points && points.length >= 2 && points.every((p, i) => i === 0 || Math.abs(p[0] - points[i - 1][0]) < 1.5 || Math.abs(p[1] - points[i - 1][1]) < 1.5);
+}
+
+/**
+ * Attaches an arrow to its shapes. With `square`, an arrow that has no waypoints of its own is
+ * routed at right angles and drawn with sharp corners.
+ */
+export function routeArrow(arrow: El, from: El | undefined, to: El | undefined, opts: { square?: boolean } = {}): El {
   if (from && to && from.id === to.id) return selfLoop(arrow, from);
   const pts = (arrow.points as [number, number][])?.length >= 2 ? (arrow.points as [number, number][]) : [[0, 0], [100, 0]];
   const abs = pts.map(([px, py]) => [arrow.x + px, arrow.y + py] as [number, number]);
-  const inner = abs.slice(1, -1);
+  let inner = abs.slice(1, -1);
+  const square = !!opts.square && !!from && !!to && !inner.length;
+  if (square) inner = squareWaypoints(from, to) ?? [];
   let start = abs[0];
   let end = abs[abs.length - 1];
   const center = (e: El): [number, number] => [e.x + e.width / 2, e.y + e.height / 2];
@@ -410,8 +457,11 @@ export function routeArrow(arrow: El, from: El | undefined, to: El | undefined):
   };
   if (from) start = port(from, aim0) ?? boundaryPoint(from, aim0[0] - center(from)[0], aim0[1] - center(from)[1], GAP);
   if (to) end = port(to, aim1) ?? boundaryPoint(to, aim1[0] - center(to)[0], aim1[1] - center(to)[1], GAP);
+  // A waypoint on the straight line between the ends was only there to aim them.
+  if (square && inner.length === 1 && (Math.abs(start[0] - end[0]) < 1 || Math.abs(start[1] - end[1]) < 1)) inner = [];
   return {
     ...polyline(arrow, [start, ...inner, end]),
+    ...(square ? { roundness: null } : {}),
     startBinding: from ? { elementId: from.id, focus: 0, gap: GAP } : (arrow.startBinding ?? null),
     endBinding: to ? { elementId: to.id, focus: 0, gap: GAP } : (arrow.endBinding ?? null),
   };
@@ -658,7 +708,8 @@ export function addSkeletons(existing: El[], skeletons: SkeletonEl[]): { element
     if (s.start?.id && !from) throw new SceneError(`Arrow start "${s.start.id}" not found`);
     if (s.end?.id && !to) throw new SceneError(`Arrow end "${s.end.id}" not found`);
     if (from || to) {
-      el = routeArrow(el, from, to);
+      // An arrow given no path of its own is drawn the way create_diagram draws them.
+      el = routeArrow(el, from, to, { square: s.type === "arrow" && !s.points?.length && s.roundness === undefined });
       if (from) all.set(from.id, addBound(all.get(from.id)!, { id: el.id, type: "arrow" }));
       if (to) all.set(to.id, addBound(all.get(to.id)!, { id: el.id, type: "arrow" }));
       for (const t of [from, to]) {
@@ -1033,7 +1084,14 @@ export function updateElements(existing: El[], updates: ElementUpdate[]): El[] {
     const s = e.startBinding?.elementId;
     const t = e.endBinding?.elementId;
     if ((s && moved.has(s)) || (t && moved.has(t))) {
-      const routed = bump(routeArrow(e, s ? all.get(s) : undefined, t ? all.get(t) : undefined));
+      const [from, to] = [s ? all.get(s) : undefined, t ? all.get(t) : undefined];
+      let routed = routeArrow(e, from, to);
+      // A right-angle arrow stays one: when the move bent it, route it afresh.
+      if (e.type === "arrow" && !e.roundness && from && to && isSquare(e.points) && !isSquare(routed.points)) {
+        const pts = e.points as [number, number][];
+        routed = routeArrow({ ...e, points: [pts[0], pts[pts.length - 1]] }, from, to, { square: true });
+      }
+      routed = bump(routed);
       all.set(e.id, routed);
       for (const b of routed.boundElements ?? []) {
         const lbl = all.get(b.id);
@@ -1099,10 +1157,10 @@ export function connectArrow(existing: El[], arrowId: string, fromId: string, to
     }
   }
   for (const e of [from, to]) all.set(e.id, bump(addBound(all.get(e.id)!, { id: arrowId, type: "arrow" })));
-  // Start from a straight arrow: old waypoints were drawn for other ends.
+  // Start from a plain arrow: old waypoints were drawn for other ends.
   const pts = arrow.points as [number, number][];
   const straight = { ...arrow, points: [pts?.[0] ?? [0, 0], pts?.at(-1) ?? [100, 0]] };
-  const routed = bump(routeArrow(straight, all.get(fromId), all.get(toId)));
+  const routed = bump(routeArrow(straight, all.get(fromId), all.get(toId), { square: !arrow.roundness }));
   all.set(arrowId, routed);
   for (const b of routed.boundElements ?? []) {
     const lbl = all.get(b.id);

@@ -108,9 +108,11 @@ export function toolSummary(p: ToolPart, drawing?: string): string {
     // partial or invalid
   }
   const pick = (k: string) => (typeof args[k] === "string" && args[k] ? String(args[k]) : undefined);
-  const file = pick("file_path") ?? (p.name !== "add_elements" ? pick("path") : undefined);
+  // The open drawing is what every drawing tool acts on: naming it on each chip says nothing.
+  const path = pick("path");
+  const file = pick("file_path") ?? (path && p.name !== "add_elements" && path !== drawing && !drawing?.endsWith(`/${path}`) ? path : undefined);
   const detail =
-    pick("pattern") ?? (file ? shortPath(file, drawing) : undefined) ?? pick("glob") ?? pick("title") ?? pick("name") ?? pick("query") ?? pick("topic") ?? pick("shape") ?? pick("dir");
+    pick("pattern") ?? (file ? shortPath(file, drawing) : undefined) ?? pick("glob") ?? pick("title") ?? pick("label") ?? pick("name") ?? pick("query") ?? pick("topic") ?? pick("shape") ?? pick("dir");
   const list = (k: string) => (Array.isArray(args[k]) ? (args[k] as unknown[]).length : undefined);
   const changes = ["add", "update", "delete"].map((k) => (list(k) ? `${list(k)} ${k === "add" ? "added" : `${k}d`}` : "")).filter(Boolean);
   const count =

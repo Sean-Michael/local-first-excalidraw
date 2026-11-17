@@ -19,9 +19,18 @@ All notable changes to this project are listed here. The format follows [Keep a 
   - An edge's label sits on the edge's own last run, clear of the lines of its siblings, and labels of edges that end at the same box no longer sit side by side.
   - Boxes of one kind share a width, unless one label is far longer than the rest.
   - With no `direction`, the layout picks left to right or top to bottom, whichever is closer to the shape of a window. `LR` was the default before; pass it to keep it.
+  - A long chain, which is a strip in either direction, wraps into rows that read left to right like lines of text. Rows are cut only between layers that no group and no long edge spans.
+  - A label that would land where another edge's line passes is moved along its own edge to a clear stretch.
   - Groups whose layers don't overlap sit in one row instead of stacking as a staircase, and an edge into a group runs inside its frame.
   - An arrow arriving on the side of a box that other arrows leave from gets its own port, so the pair no longer reads as one two-headed arrow.
-- The assistant refers to things by their label and position in its replies, not by element id or coordinates.
+- Arrows from `connect_elements`, and bound arrows from `add_elements` that give no `points`, run at right angles too: straight when the two shapes face each other, otherwise with a turn in the gap between them. Give an arrow its own `points` to keep a path of your own.
+- Right-angle arrows stay that way when a tool moves one of their shapes. They were left slanting before.
+- The layout check also reports an arrow that runs through another arrow's label.
+- The assistant refers to things by their label and position in its replies, not by element id or coordinates, and replies in plain sentences instead of a formatted recap of the canvas.
+- When a model stops after its last edit without replying, the chat says how many elements changed instead of showing nothing.
+- A fitted drawing keeps a margin, so its top no longer sits under the toolbar.
+- Tool calls in the chat no longer repeat the open drawing's path on every line; a connection shows its label.
+- The Assistant button has a speech-bubble icon in place of sparkles, and elements the assistant changed flash with a plain outline instead of a glow.
 - Opening the assistant puts the cursor in the message box. In a narrow window the drawings sidebar closes to make room for it (⌘B brings it back).
 - The drawing is fitted to the canvas again when a panel opens or closes or the window is resized, until you pan or zoom, and after each of the assistant's edits.
 - Tool calls in the chat read as what they did ("Looked over the project", "Read a file · services/orders/server.ts") for every tool, with paths shown from the project down instead of from the filesystem root.
@@ -31,6 +40,9 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Fixed
 
 - At window widths around 1024 px with the sidebar open, the Assistant and Library buttons were pushed off the right edge of the canvas. The top-right controls now shrink to icons and wrap.
+- Titles in the list of past chats were cut mid-letter; they end with an ellipsis now.
+- Three subtitles on the settings page were too long for the panel and were cut off.
+- The settings page named `~/.local-first-excalidraw/ai.json` as where keys are stored even when `LFX_STATE_DIR` puts it elsewhere.
 - `lfx open docs/diagrams/x` in a folder that is already inside a root no longer registers `docs/diagrams` as a second root.
 - The assistant no longer draws in `docs/diagrams/<name>.excalidraw` when the open drawing is elsewhere. Claude Code now gets the open drawing as its default (`lfx mcp --drawing`), the path help no longer points models at `docs/diagrams/`, diagram recipes leave out their example paths, a path that names the open drawing's file in another folder is refused, and a write to any other drawing says so in its result.
 

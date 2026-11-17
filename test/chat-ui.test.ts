@@ -78,6 +78,10 @@ test("toolSummary says what a call was about", () => {
   assert.equal(toolSummary(part("list_shapes", { query: "database" })), "database");
   assert.equal(toolSummary(part("apply_changes", { add: [{}, {}], update: [{}], delete: [] })), "2 added, 1 updated");
   assert.equal(toolSummary(part("delete_elements", { ids: ["a", "b"] })), "2");
+  // A drawing tool's path is nearly always the open drawing: the chip shows what the call was about instead.
+  assert.equal(toolSummary(part("connect_elements", { path: "docs/diagrams/shop.excalidraw", from: "a", to: "b", label: "SQL" }), DRAWING), "SQL");
+  assert.equal(toolSummary(part("connect_elements", { path: DRAWING, from: "a", to: "b" }), DRAWING), "");
+  assert.equal(toolSummary(part("read_drawing", { path: "docs/diagrams/other.excalidraw" }), DRAWING), "docs/diagrams/other.excalidraw");
   // add_elements takes a drawing path that is nearly always the open drawing: not worth showing.
   assert.equal(toolSummary(part("add_elements", { path: "docs/diagrams/shop.excalidraw", elements: [{}, {}] })), "2");
   assert.equal(toolSummary(part("project_overview", {})), "");

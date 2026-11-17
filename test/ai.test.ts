@@ -566,6 +566,27 @@ test("a turn that leaves layout problems in its drawing is sent back to fix them
   }
 });
 
+
+test("a turn that edits the drawing and ends without a word still gets a reply", async () => {
+  const quiet = await fakeServer((_req, n) =>
+    n === 1
+      ? [oaChunk({ tool_calls: [{ index: 0, id: "c1", function: { name: "add_elements", arguments: JSON.stringify({ elements: [{ type: "rectangle", id: "q", x: 0, y: 0, width: 160, height: 70, label: "Queue" }] }) } }] }, "tool_calls")]
+      : [oaChunk({ content: "" }, "stop")],
+  );
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: quiet.url, model: "m" }] });
+    const t = await tab(path.join(root, "docs", "diagrams", "quiet.excalidraw"));
+    await t.chat("add a queue");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "done");
+    assert.equal(turn.parts.filter((p) => p.type === "text").map((p) => p.text).join(""), "Changed 2 elements on the canvas.");
+    t.ws.close();
+  } finally {
+    quiet.close();
+  }
+});
+
 test("a read-only call made twice is refused the third time, and the turn stops if it continues", async () => {
   const list = (id: string, args: unknown) => [oaChunk({ tool_calls: [{ index: 0, id, function: { name: "list_files", arguments: JSON.stringify(args) } }] }, "tool_calls")];
   const same = { dir: "src", glob: "**/OrderService.ts" };

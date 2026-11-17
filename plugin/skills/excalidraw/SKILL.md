@@ -29,7 +29,7 @@ Call `excalidraw_guide` once per session before your first edit. It has the elem
 ## New diagram
 
 1. **Read the code first,** so every box and arrow is real. Use the names from the code, and note the file each node comes from.
-2. **Draw with `create_diagram`.** `direction: "LR"` for request flows and pipelines, `"TB"` for hierarchies and decisions; leave it out and the layout picks the one that fits a screen. Groups for real boundaries (a system, a trust zone, a package). Give each node a readable `id` and a `code` link (`"services/orders/src/server.ts"`, or `"…/repo.ts:42"`). Labels of 1-4 words. Edge labels only when the meaning isn't obvious, 12 characters or fewer.
+2. **Draw with `create_diagram`.** `direction: "LR"` for request flows and pipelines, `"TB"` for hierarchies and decisions; leave it out and the layout picks the one that fits a screen, wrapping a long chain into rows. Groups for real boundaries (a system, a trust zone, a package). Give each node a readable `id` and a `code` link (`"services/orders/src/server.ts"`, or `"…/repo.ts:42"`). Labels of 1-4 words. Edge labels only when the meaning isn't obvious, 12 characters or fewer.
 3. **Check after every batch** (below), then `open_drawing` and tell the user the file path.
 
 ## Existing diagram

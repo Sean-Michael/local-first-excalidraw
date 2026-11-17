@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { reviewNote } from "../src/server/ai/agent.js";
 import { type GraphSpec, layoutGraph } from "../src/server/layout.js";
 import { checkLayout, layoutReport } from "../src/server/lint.js";
-import { addSkeletons, bounds, type El, live, type SkeletonEl } from "../src/server/scene.js";
+import { addSkeletons, bounds, connectArrow, type El, isSquare, live, type SkeletonEl, updateElements } from "../src/server/scene.js";
 
 const draw = (skeletons: SkeletonEl[]): El[] => live(addSkeletons([], skeletons).elements);
 const graph = (spec: GraphSpec): El[] => draw(layoutGraph(spec));
@@ -246,4 +246,110 @@ test("layout quality: an arrow arriving where others leave gets its own port", (
   const [xOut, xBack] = [out.x + (out.points as [number, number][])[0][0], back.x + backEnd[0]];
   assert.ok(Math.abs(xOut - xBack) >= 20, `ports ${xOut} and ${xBack} are apart`);
   for (const x of [xOut, xBack]) assert.ok(x > a.x + 8 && x < a.x + a.width - 8, "both on the flat of the side");
+});
+
+test("layout quality: a long chain wraps into rows instead of being a strip either way", () => {
+  const steps = ["commit", "lint", "unit tests", "build image", "scan image", "push image", "deploy staging", "smoke tests", "approve", "deploy prod", "verify", "announce"];
+  const chain: GraphSpec = { nodes: steps.map((id) => node(id)), edges: steps.slice(1).map((to, i) => ({ from: steps[i], to, label: i === 5 ? "tag" : undefined })) };
+  const els = graph(chain);
+  const b = bounds(els)!;
+  const aspect = (b.maxX - b.minX) / (b.maxY - b.minY);
+  assert.ok(aspect > 0.75 && aspect < 3, `close to a window's shape, got ${aspect.toFixed(2)}`);
+  const rows = new Set(steps.map((id) => els.find((e) => e.id === id)!.y));
+  assert.ok(rows.size >= 2 && rows.size <= 4, `${rows.size} rows`);
+  // Every row starts at the same left edge and reads left to right.
+  const firstOfRow = [...rows].map((y) => Math.min(...steps.map((id) => els.find((e) => e.id === id)!).filter((e) => e.y === y).map((e) => e.x)));
+  assert.equal(new Set(firstOfRow).size, 1);
+  const arrows = els.filter((e) => e.type === "arrow");
+  assert.equal(arrows.length, steps.length - 1);
+  for (const a of arrows) assert.ok(isSquare(a.points), `${a.id} runs at right angles`);
+  assert.deepEqual(checkLayout(els), { problems: [], suggestions: [] });
+
+  // An explicit direction is respected, and a graph with an edge across the cut isn't wrapped.
+  assert.equal(new Set(steps.map((id) => graph({ ...chain, direction: "LR" }).find((e) => e.id === id)!.y)).size, 1);
+  const skip = graph({ ...chain, edges: [...chain.edges!, { from: "commit", to: "announce" }] });
+  assert.ok(skip.filter((e) => e.type === "arrow").every((a) => a.points.length < 12));
+  assert.deepEqual(checkLayout(skip).problems, []);
+});
+
+test("layout quality: wrapped rows keep groups whole and carry several edges between rows", () => {
+  const ids = "abcdefghijklmnop".split("");
+  const spec: GraphSpec = {
+    nodes: ids.map((id) => node(id, { label: `step ${id}`, group: "cd".includes(id) ? "pair" : undefined })),
+    groups: [{ id: "pair", label: "Pair" }],
+    edges: edges(["a", "b"], ["b", "c"], ["b", "d"], ["c", "e"], ["d", "e"], ["e", "f"], ["f", "g"], ["g", "h"], ["g", "i"], ["h", "j"], ["i", "j"], ["j", "k"], ["k", "l"], ["l", "m"], ["m", "n"], ["n", "o"], ["o", "p"]),
+  };
+  const els = graph(spec);
+  const at = (id: string) => els.find((e) => e.id === id)!;
+  assert.ok(new Set(ids.map((id) => at(id).y)).size > 3, "more than one row");
+  assert.equal(at("c").frameId, "pair");
+  assert.equal(at("d").frameId, "pair");
+  assert.ok(Math.abs(at("c").x - at("d").x) < 1, "the group's two nodes stay in one layer of one row");
+  assert.deepEqual(checkLayout(els).problems, []);
+});
+
+test("layout quality: a label is moved off a stretch another edge runs through", () => {
+  const spec: GraphSpec = {
+    nodes: ["Draft", "Review", "Approved", "Published", "Archived", "Rejected", "Changes"].map((id) => node(id)),
+    edges: edges(["Draft", "Review", "submit"], ["Review", "Approved", "approve"], ["Review", "Rejected", "reject"], ["Review", "Changes", "request changes"], ["Changes", "Draft", "revise"], ["Rejected", "Draft", "reopen"], ["Approved", "Published", "publish"], ["Published", "Archived", "archive"], ["Published", "Draft", "new version"], ["Archived", "Draft", "restore"], ["Approved", "Review", "recheck"]),
+  };
+  for (const direction of ["LR", "TB"] as const) assert.deepEqual(checkLayout(graph({ ...spec, direction })).problems, [], direction);
+});
+
+test("an arrow running through another arrow's label is a problem", () => {
+  const els = draw([
+    box("a", 0, 0),
+    box("b", 500, 0),
+    box("c", 250, -300),
+    box("d", 250, 300),
+    { type: "arrow", id: "ab", start: { id: "a" }, end: { id: "b" }, label: "publishes" },
+    { type: "arrow", id: "cd", start: { id: "c" }, end: { id: "d" } },
+  ]);
+  const c = checkLayout(els);
+  assert.equal(c.problems.length, 1, c.problems.join("\n"));
+  assert.match(c.problems[0], /^The arrow "c box" → "d box" \(cd\) runs through the arrow label "publishes" \(on ab\)/);
+});
+
+test("hand-placed arrows: bound arrows without a path of their own run at right angles", () => {
+  const els = draw([
+    box("api", 0, 0),
+    box("auth", 400, -120),
+    box("orders", 400, 120),
+    box("queue", 440, 380),
+    box("near", 30, 110),
+    box("db", 800, 150, { type: "ellipse", height: 90 }),
+    { type: "arrow", id: "z", start: { id: "api" }, end: { id: "auth" } },
+    { type: "arrow", id: "down", start: { id: "orders" }, end: { id: "queue" } },
+    { type: "arrow", id: "side", start: { id: "orders" }, end: { id: "db" } },
+    { type: "arrow", id: "close", start: { id: "api" }, end: { id: "near" } },
+    { type: "arrow", id: "own", start: { id: "api" }, end: { id: "queue" }, points: [[0, 0], [440, 380]] },
+  ]);
+  const at = (id: string) => els.find((e) => e.id === id)!;
+  // Diagonal neighbours: out of one side, a turn in the gap, into the facing side.
+  assert.equal(at("z").points.length, 4);
+  assert.ok(isSquare(at("z").points));
+  assert.equal(at("z").roundness, null);
+  // Rectangles that face each other off-centre: one straight line, not a slant between centres.
+  assert.equal(at("down").points.length, 2);
+  assert.ok(Math.abs(at("down").points[1][0]) < 1 && at("down").points[1][1] > 100);
+  // An ellipse is entered at its middle, so the line turns to get there.
+  assert.ok(isSquare(at("side").points) && at("side").points.length === 4);
+  assert.ok(isSquare(at("close").points));
+  // An arrow drawn with its own points keeps them.
+  assert.ok(!isSquare(at("own").points));
+
+  // Moving a shape keeps its arrows square, and re-attaching an arrow routes it the same way.
+  let moved = updateElements(els, [{ id: "auth", x: 520, y: -300 }]);
+  assert.ok(isSquare(moved.find((e) => e.id === "z")!.points));
+  moved = connectArrow(moved, "z", "auth", "queue");
+  const z = moved.find((e) => e.id === "z")!;
+  assert.ok(isSquare(z.points));
+  assert.equal(z.endBinding.elementId, "queue");
+  assert.deepEqual(checkLayout(els).problems.filter((p) => !p.includes("(own)")), []);
+});
+
+test("layout quality: a diagram's arrows stay square when one of its nodes is moved", () => {
+  const els = graph({ ...SHOP, direction: "TB" });
+  const moved = updateElements(els, [{ id: "queue", x: els.find((e) => e.id === "queue")!.x + 260 }]);
+  for (const a of moved.filter((e) => e.type === "arrow" && [e.startBinding?.elementId, e.endBinding?.elementId].includes("queue"))) assert.ok(isSquare(a.points), `${a.id} still runs at right angles`);
 });

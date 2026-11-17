@@ -89,7 +89,7 @@ const contains = (outer: Box, inner: Box, slack = 2) =>
 const inside = (b: Box, [x, y]: Pt, slack = 0) => x >= b.x - slack && x <= b.x + b.w + slack && y >= b.y - slack && y <= b.y + b.h + slack;
 
 /** Whether the segment a-b passes through the box (Liang-Barsky clipping). */
-function segmentHits(a: Pt, b: Pt, box: Box): boolean {
+export function segmentHits(a: Pt, b: Pt, box: Box): boolean {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   let t0 = 0;
@@ -256,6 +256,17 @@ export function checkLayout(elements: El[]): LayoutCheck {
       covered.push(`The arrow label ${quote(l.text)} (on ${l.arrow}) sits on top of ${say(u)}: move the shapes further apart, shorten the label, or remove it.`);
     }
   }
+  // Another arrow's line through a label strikes the text out.
+  for (const l of labels) {
+    const core = shrink(l, 2);
+    for (const a of arrows) {
+      if (a.id === l.arrow) continue;
+      const pts = pathOf(a);
+      if (pts.some((p, i) => i > 0 && segmentHits(pts[i - 1], p, core))) {
+        covered.push(`${arrowName(a)} runs through the arrow label ${quote(l.text)} (on ${l.arrow}): shorten or remove the label, or move the shapes so the two arrows are further apart.`);
+      }
+    }
+  }
   for (let i = 0; i < labels.length; i++) {
     for (let j = i + 1; j < labels.length; j++) {
       // Labels that touch read as one ("timeoutreset"): they need a visible gap.
@@ -285,7 +296,7 @@ export function checkLayout(elements: El[]): LayoutCheck {
     const b = content.reduce<Box>((acc, u) => union(acc, u), content[0]);
     const size = `${Math.round(b.w)}×${Math.round(b.h)} px`;
     if (b.h > 0 && b.w / b.h > WIDE) {
-      suggestions.push(`The drawing is ${size}, ${(b.w / b.h).toFixed(1)} times wider than tall, so it is small when fitted to a window. Lay it out top to bottom (create_diagram direction "TB"), or stack related nodes in groups, to bring it closer to a screen's shape.`);
+      suggestions.push(`The drawing is ${size}, ${(b.w / b.h).toFixed(1)} times wider than tall, so it is small when fitted to a window. Lay it out top to bottom (create_diagram direction "TB"), leave direction out so a long chain wraps into rows, or stack related nodes in groups, to bring it closer to a screen's shape.`);
     } else if (b.w > 0 && b.h / b.w > TALL) {
       suggestions.push(`The drawing is ${size}, ${(b.h / b.w).toFixed(1)} times taller than wide, so it is small when fitted to a window. Lay it out left to right (create_diagram direction "LR"), or put parallel steps side by side.`);
     }

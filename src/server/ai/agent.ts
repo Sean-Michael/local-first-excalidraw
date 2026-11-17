@@ -168,7 +168,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "How to work:",
     o.mermaidOnly
       ? "- You can't call tools here. To draw, reply with one ```mermaid code block (a flowchart or a sequence diagram; other Mermaid types arrive as an uneditable image); it is converted into editable Excalidraw elements and added to the open drawing. Keep any prose to a sentence or two."
-      : "- Act, don't describe: when the user asks for a change, make it with the tools, then reply in one or two sentences saying what you did. Don't paste element JSON. The user sees the canvas, not the data: refer to things by their label and where they sit (\"the orders box, left of the queue\"), never by element id or x/y coordinates.",
+      : "- Act, don't describe: when the user asks for a change, make it with the tools, then reply in one or two plain sentences saying what you did: no headings, no bullet list, no bold lead-ins, no walk through what is on the canvas (the user can see it). Don't paste element JSON. The user sees the canvas, not the data: refer to things by their label and where they sit (\"the orders box, left of the queue\"), never by element id or x/y coordinates.",
     "- Drawing tools act on the open drawing when you omit `path`; pass a path only to read or create a different drawing.",
     o.mermaidOnly ? "" : "- Call excalidraw_guide once before your first edit in a conversation: it has the sizing rules, layout anti-patterns and error recovery.",
     o.mermaidOnly
@@ -835,6 +835,12 @@ export class Assistant {
     const snap: Snapshot = { before, after: elementMap(this.d.store.get(p).scene.elements), span: span.spanContext() };
     const changed = changedIds(snap).length;
     if (changed) c.snapshots.set(turnId, snap);
+    // Some models stop after their last tool call without a word. Say what happened for them.
+    if (status === "done" && changed && !stats.reply.trim()) {
+      const text = `Changed ${changed} element${changed === 1 ? "" : "s"} on the canvas.`;
+      stats.reply = text;
+      this.push(c, { type: "delta", id: turnId, part: "text", text });
+    }
     span.setAttributes({
       "lfx.turn.status": status,
       "lfx.turn.steps": stats.steps,

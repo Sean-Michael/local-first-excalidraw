@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { layoutGraph } from "../src/server/layout.js";
 import {
+  isSquare,
   addSkeletons,
   bump,
   deleteElements,
@@ -65,7 +66,8 @@ test("moving a shape re-routes its arrows and keeps the label centred", () => {
   elements = updateElements(elements, [{ id: "b", y: 300 }]);
   const after = byId(elements, "ab");
   assert.ok(after.version > before.version);
-  assert.ok(after.points[1][1] > 100, "arrow now points downwards");
+  assert.ok(after.points.at(-1)[1] > 100, "arrow now points downwards");
+  assert.ok(isSquare(after.points), "and still runs at right angles");
   const label = elements.find((e) => e.containerId === "a")!;
   elements = updateElements(elements, [{ id: "a", x: 500 }]);
   const moved = byId(elements, label.id);

@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { DEFAULT_PROMPTS, type EndpointKind, endpointLabel, type PublicEndpoint, type PublicSettings, type SavedPrompt, type ToolCatalog } from "../shared/chat";
+import { DEFAULT_PROMPTS, type EndpointKind, endpointLabel, type PublicEndpoint, type PublicSettings, type PublicTracing, type SavedPrompt, type ToolCatalog } from "../shared/chat";
 import { SettingsJson } from "./SettingsJson";
 import { api } from "./sync";
 
-type Icon = "local" | "lmstudio" | "llamacpp" | "terminal" | "spark" | "cloud" | "router" | "server" | "prompts" | "tools";
+type Icon = "local" | "lmstudio" | "llamacpp" | "terminal" | "spark" | "cloud" | "router" | "server" | "prompts" | "tools" | "trace";
 
 interface Preset {
   label: string;
@@ -35,12 +35,16 @@ const CONTEXTS = [8192, 16384, 32768, 65536, 131072];
 /** An endpoint being edited. `apiKey`: string sets it, null clears it, undefined keeps it. */
 type Draft = PublicEndpoint & { apiKey?: string | null };
 
+/** Tracing being edited. `headers` works like an endpoint's `apiKey`. */
+type TracingDraft = Pick<PublicTracing, "enabled" | "endpoint" | "captureContent" | "file"> & { headers?: string | null };
+
 type Page =
   | { name: "list" }
   | { name: "json" }
   | { name: "providers" }
   | { name: "form"; id?: string; preset?: Preset }
   | { name: "tools" }
+  | { name: "tracing" }
   | { name: "prompts" }
   | { name: "prompt"; id?: string };
 
@@ -81,7 +85,7 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
   const [saving, setSaving] = useState(false);
 
   /** Settings apply as soon as they change, like System Settings. */
-  const save = async (patch: Partial<Omit<PublicSettings, "endpoints" | "claudeCode">> & { endpoints?: Draft[] }) => {
+  const save = async (patch: Partial<Omit<PublicSettings, "endpoints" | "claudeCode" | "tracing">> & { endpoints?: Draft[]; tracing?: TracingDraft }) => {
     setSaving(true);
     setError(null);
     try {
@@ -102,6 +106,14 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
 
   if (page.name === "tools") {
     return <ToolsPage settings={settings} saving={saving} error={error} onSave={(disabledTools) => save({ disabledTools })} onBack={() => setPage({ name: "list" })} />;
+  }
+
+  if (page.name === "tracing") {
+    const back = () => {
+      setError(null);
+      setPage({ name: "list" });
+    };
+    return <TracingPage tracing={settings.tracing} saving={saving} error={error} onCancel={back} onSave={async (t) => (await save({ tracing: t })) && back()} />;
   }
 
   if (page.name === "prompts") {
@@ -299,6 +311,22 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
                   <small>What the assistant can do, and what it knows about diagrams</small>
                 </span>
                 <span className="lfx-cell-value">{settings.disabledTools.length ? `${settings.disabledTools.length} off` : "All on"}</span>
+                <Chevron />
+              </button>
+            </li>
+          </ul>
+        </Section>
+
+        <Section title="Diagnostics">
+          <ul className="lfx-group lfx-list">
+            <li>
+              <button type="button" className="lfx-cell" onClick={() => setPage({ name: "tracing" })}>
+                <Glyph icon="trace" />
+                <span className="lfx-cell-text">
+                  <span>Tracing</span>
+                  <small>Send OpenTelemetry traces of each reply to Phoenix, Langfuse, Jaeger…</small>
+                </span>
+                <span className="lfx-cell-value">{tracingSummary(settings.tracing)}</span>
                 <Chevron />
               </button>
             </li>
@@ -833,6 +861,12 @@ function Glyph({ icon, large }: { icon: Icon; large?: boolean }) {
         <path d="M12.6 4.2a3.3 3.3 0 00-4.2 4.2L4 12.8a1.4 1.4 0 002 2l4.4-4.4a3.3 3.3 0 004.2-4.2l-2 2-1.6-.4-.4-1.6z" />
       </>
     ),
+    trace: (
+      <>
+        <path d="M3.5 5.5h6M6 10h7.5M9.5 14.5h7" />
+        <path d="M3.5 5.5v9" />
+      </>
+    ),
     server: (
       <>
         <rect x="4" y="4" width="12" height="5" rx="1.2" />
@@ -948,6 +982,169 @@ function ToolsPage({
         )}
       </div>
     </div>
+  );
+}
+
+function tracingSummary(t: PublicTracing) {
+  if (!t.status.on) return "Off";
+  return t.status.source === "environment" ? "On (environment)" : "On";
+}
+
+function TracingPage({
+  tracing,
+  saving,
+  error,
+  onSave,
+  onCancel,
+}: {
+  tracing: PublicTracing;
+  saving: boolean;
+  error: string | null;
+  onSave: (t: TracingDraft) => void;
+  onCancel: () => void;
+}) {
+  const st = tracing.status;
+  const fromEnv = tracing.enabled === undefined && st.source === "environment";
+  // Until tracing is set here, the switch shows what the environment does.
+  const [d, setD] = useState<TracingDraft>({
+    enabled: tracing.enabled ?? st.on,
+    endpoint: tracing.endpoint ?? (fromEnv ? st.endpoint : undefined),
+    captureContent: tracing.enabled === undefined ? st.capture : tracing.captureContent,
+    file: tracing.file,
+  });
+  const set = (patch: Partial<TracingDraft>) => setD((x) => ({ ...x, ...patch }));
+  const ids = { url: useId(), headers: useId() };
+  const urlChanged = (d.endpoint ?? "") !== (tracing.endpoint ?? "");
+  const headersStored = tracing.hasHeaders && d.headers !== null && !urlChanged;
+  const nowhere = d.enabled && !d.endpoint?.trim() && !d.file;
+  return (
+    <form
+      className="lfx-settings"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ ...d, endpoint: d.endpoint?.trim() || undefined });
+      }}
+    >
+      <NavBar title="Tracing" onBack={onCancel} />
+      <div className="lfx-pane">
+        <p className="lfx-pane-intro">
+          Each reply becomes one OpenTelemetry trace: model calls, tool calls and the drawing operations they ran. Changes apply right away, no restart needed. In{" "}
+          <code>ai.json</code> this is <code>"tracing"</code>.
+        </p>
+        {st.disabledByEnv && (
+          <p className="lfx-banner" role="alert">
+            <code>OTEL_SDK_DISABLED</code> is set in the daemon’s environment, so tracing stays off whatever is set here.
+          </p>
+        )}
+        <Section
+          footer={
+            fromEnv ? (
+              <>
+                Currently on from the daemon’s environment ({st.env?.map((v) => v.split("=")[0]).join(", ")}). Saving here replaces those settings.
+              </>
+            ) : undefined
+          }
+        >
+          <div className="lfx-group">
+            <SwitchRow label="Tracing" checked={!!d.enabled} onChange={(enabled) => set({ enabled })} />
+          </div>
+        </Section>
+
+        <Section
+          title="Receiver"
+          footer={
+            <>
+              OTLP over http/protobuf: Phoenix, Langfuse, Jaeger, Grafana Tempo or an OpenTelemetry Collector. <code>/v1/traces</code> is added unless the URL already ends with it.{" "}
+              {urlChanged && tracing.hasHeaders && <>The stored headers are dropped when the URL changes. </>}
+              {headersStored && (
+                <button type="button" className="lfx-link" onClick={() => set({ headers: null })}>
+                  Remove Stored Headers
+                </button>
+              )}
+            </>
+          }
+        >
+          <div className="lfx-group">
+            <Row label="Endpoint" htmlFor={ids.url}>
+              <input
+                id={ids.url}
+                value={d.endpoint ?? ""}
+                placeholder="http://127.0.0.1:6006"
+                disabled={!d.enabled}
+                onChange={(e) => set({ endpoint: e.target.value || undefined })}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+              />
+            </Row>
+            <Row label="Headers" htmlFor={ids.headers}>
+              <input
+                id={ids.headers}
+                type="password"
+                autoComplete="off"
+                value={typeof d.headers === "string" ? d.headers : ""}
+                placeholder={headersStored ? "Stored" : "Authorization=Basic …"}
+                disabled={!d.enabled}
+                onChange={(e) => set({ headers: e.target.value || undefined })}
+              />
+            </Row>
+          </div>
+        </Section>
+
+        <Section
+          title="Recording"
+          footer={
+            <>
+              Only send content to a receiver you trust, preferably one on this machine. Values are cut to 16,000 characters and images are never recorded.
+            </>
+          }
+        >
+          <div className="lfx-group">
+            <SwitchRow
+              label="Record prompts and replies"
+              detail="Adds the system prompt, your messages, the model’s replies and tool arguments and results. Off: only counts, timings, tool names and errors."
+              checked={!!d.captureContent}
+              disabled={!d.enabled}
+              onChange={(captureContent) => set({ captureContent })}
+            />
+            <SwitchRow
+              label="Save to file"
+              detail={`Also append every span as a JSON line to ${tracing.traceFile.replace(/^\/(?:Users|home)\/[^/]+/, "~")}.`}
+              checked={!!d.file}
+              disabled={!d.enabled}
+              onChange={(file) => set({ file })}
+            />
+          </div>
+        </Section>
+
+        {st.on && (
+          <p className="lfx-section-foot">
+            {st.endpoint ? <>Sending to {st.endpoint}. </> : null}
+            {st.file ? <>Writing to {st.file}. </> : null}
+          </p>
+        )}
+        {st.lastError && (
+          <p className="lfx-error-inline lfx-pane-error" role="alert">
+            Last export failed: {st.lastError}
+          </p>
+        )}
+        {nowhere && <p className="lfx-section-foot">Add an endpoint or turn on Save to file, or there’s nowhere for traces to go.</p>}
+        {error && (
+          <p className="lfx-error-inline lfx-pane-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      <footer className="lfx-pane-foot">
+        <span className="lfx-spacer" />
+        <button type="button" className="lfx-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="lfx-btn lfx-primary" disabled={saving}>
+          Save
+        </button>
+      </footer>
+    </form>
   );
 }
 

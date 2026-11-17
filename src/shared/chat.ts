@@ -127,6 +127,29 @@ export interface PublicSettings {
   prompts: SavedPrompt[];
   /** Tools the assistant isn't given (by name, see GET /api/ai/tools). */
   disabledTools: string[];
+  tracing: PublicTracing;
+}
+
+/** Tracing settings as the page sees them: headers are write-only. */
+export interface PublicTracing {
+  /** Unset: tracing follows the environment variables. */
+  enabled?: boolean;
+  endpoint?: string;
+  captureContent: boolean;
+  /** Also write spans to `traceFile`. */
+  file: boolean;
+  hasHeaders: boolean;
+  traceFile: string;
+  status: {
+    on: boolean;
+    source: "settings" | "environment" | "off";
+    endpoint?: string;
+    file?: string;
+    capture: boolean;
+    disabledByEnv?: boolean;
+    env?: string[];
+    lastError?: string;
+  };
 }
 
 /** A reusable message for the assistant. */

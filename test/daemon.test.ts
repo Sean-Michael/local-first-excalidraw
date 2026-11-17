@@ -229,6 +229,49 @@ test("roots registered for a session are not persisted, and roots can be removed
   assert.equal((await raw(port, "DELETE", "/api/roots", bearer(), { path: project })).status, 404);
 });
 
+test("a folder inside a root isn't registered again", async () => {
+  const inner = path.join(root, "docs", "diagrams");
+  fs.mkdirSync(inner, { recursive: true });
+  for (const body of [{ path: inner }, { path: inner, session: true }]) {
+    const r = await raw(port, "POST", "/api/roots", bearer(), body);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.roots, [root]);
+  }
+  const listed = (await raw(port, "GET", "/api/roots", bearer())).body;
+  assert.deepEqual([listed.registered, listed.session], [[], []]);
+  // The folder is still usable: it's inside a root.
+  const made = await raw(port, "POST", "/api/op", bearer(), { op: "create", path: path.join(inner, "nested.excalidraw"), elements: [] });
+  assert.equal(made.status, 200);
+
+  // A folder inside a session root is registered when asked to stay: the session root won't outlive the session.
+  const project = tmp("outer");
+  const sub = path.join(project, "sub");
+  fs.mkdirSync(sub);
+  await raw(port, "POST", "/api/roots", bearer(), { path: project, session: true });
+  await raw(port, "POST", "/api/roots", bearer(), { path: sub });
+  assert.deepEqual((await raw(port, "GET", "/api/roots", bearer())).body.registered, [sub]);
+  // Once the outer folder is registered for good, the inner one is still listed (it was asked for first), and a new inner one isn't added.
+  await raw(port, "POST", "/api/roots", bearer(), { path: project });
+  const other = path.join(project, "other");
+  fs.mkdirSync(other);
+  await raw(port, "POST", "/api/roots", bearer(), { path: other });
+  assert.deepEqual((await raw(port, "GET", "/api/roots", bearer())).body.registered.sort(), [project, sub].sort());
+  for (const p of [project, sub]) await raw(port, "DELETE", "/api/roots", bearer(), { path: p });
+});
+
+test("an unknown lfx command fails and points at the help", async () => {
+  const typo = await lfx(env, "opne");
+  assert.equal(typo.code, 2);
+  assert.equal(typo.stdout, "");
+  assert.match(typo.stderr, /unknown command "opne".*lfx help/);
+  for (const flag of ["help", "--help", "-h"]) {
+    const help = await lfx(env, flag);
+    assert.equal(help.code, 0);
+    assert.match(help.stdout, /Usage:\n\s+lfx open/);
+  }
+  assert.equal((await lfx(env, "--version")).stdout.trim(), VERSION);
+});
+
 test("lfx status shows the daemon's and client's versions", async () => {
   const r = await lfx(env, "status");
   assert.equal(r.code, 0);

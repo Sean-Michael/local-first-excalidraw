@@ -4,7 +4,7 @@
  * reports a change to the drawing set, so drawings made or moved by agents appear on their own.
  */
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ancestorFolders, buildTree, displayName, type FolderNode, type Row, sepOf, type TreeNode, visibleRows } from "../shared/tree";
+import { ancestorFolders, buildTree, displayName, expandChain, type FolderNode, type Row, sepOf, type TreeNode, visibleRows } from "../shared/tree";
 import { dirOf, type FileList, files, folderOptions, useDialog } from "./FileActions";
 import { api, fileEvents } from "./sync";
 
@@ -198,6 +198,8 @@ export function DrawingTree({
     const v = readStored<{ folders?: unknown; closedRoots?: unknown }>(EXPANDED_KEY, {});
     return { folders: Array.isArray(v.folders) ? v.folders : [], closedRoots: Array.isArray(v.closedRoots) ? v.closedRoots : [] };
   });
+  // Nothing stored yet: a first visit, which starts with single-folder chains already open.
+  const firstVisit = useRef(readStored<unknown>(EXPANDED_KEY, null) === null);
   const [focus, setFocus] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -230,6 +232,25 @@ export function DrawingTree({
       return { ...o, folders: want ? [...folders, p] : folders };
     });
   }, [roots]);
+
+  /** Opens or closes a folder; opening also opens the folders that are its only way down. */
+  const toggleFolder = useCallback(
+    (n: FolderNode, want: boolean) => {
+      if (!want) return setFolder(n.path, false);
+      const chain = expandChain(n);
+      setOpen((o) => ({
+        folders: [...new Set([...o.folders, ...chain.filter((p) => !roots.has(p))])],
+        closedRoots: o.closedRoots.filter((r) => !chain.includes(r)),
+      }));
+    },
+    [roots, setFolder],
+  );
+  useEffect(() => {
+    if (!firstVisit.current || !tree.length) return;
+    firstVisit.current = false;
+    const chains = tree.flatMap((r) => expandChain(r).slice(1));
+    if (chains.length) setOpen((o) => ({ ...o, folders: [...new Set([...o.folders, ...chains])] }));
+  }, [tree]);
 
   // Reveal the open drawing: expand its folders and bring it into view.
   const drawingRoot = current ? tree.find((r) => current.startsWith(r.path + sepOf(r.path)))?.path : undefined;
@@ -398,7 +419,7 @@ export function DrawingTree({
       case "ArrowRight":
         handled();
         if (n.kind !== "folder") return;
-        if (!isOpen(n.path)) return setFolder(n.path, true);
+        if (!isOpen(n.path)) return toggleFolder(n, true);
         if (n.children.length) return moveFocus(focusIndex + 1);
         return;
       case "ArrowLeft":
@@ -410,7 +431,7 @@ export function DrawingTree({
       case " ":
         handled();
         if (n.kind === "drawing") return onOpen(n.path);
-        return setFolder(n.path, !isOpen(n.path));
+        return toggleFolder(n, !isOpen(n.path));
       case "F2":
         handled();
         if (n.kind === "drawing") return void renameDrawing(n.path);
@@ -565,7 +586,7 @@ export function DrawingTree({
                 onFocus={() => setFocus(n.path)}
                 onClick={() => {
                   setFocus(n.path);
-                  if (folder) setFolder(n.path, !expanded);
+                  if (folder) toggleFolder(folder, !expanded);
                   else onOpen(n.path);
                 }}
                 onContextMenu={(e) => {

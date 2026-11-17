@@ -122,7 +122,7 @@ Signs that it picked the wrong one: `list_drawings` shows nothing or someone els
 - The server registers its root with the daemon for the daemon's lifetime only. It registers it again automatically if the daemon restarted, so this error after a restart should clear on the next call.
 - With `LFX_LOCK_ROOTS=1` (the Docker setup), extra roots are refused, so the project has to be inside one of `LFX_ROOTS`.
 
-`lfx roots` lists the folders the daemon currently allows, and `lfx roots remove DIR` forgets one you added.
+`lfx roots` lists the folders the daemon currently allows, and `lfx roots remove DIR` forgets one you added. A folder inside a root that is already listed isn't added again: it is usable as it is.
 
 ## Tracing shows nothing
 

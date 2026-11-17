@@ -54,3 +54,14 @@ Run on 2026-10-21 with `sequence-code-shapes`: 7 tool calls, 1 harmless error, 0
 - [x] **Loops of identical successful lookups.** lfm2 sent the same `list_files` call about 20 times; each succeeded, so the failed-call guard never fired. *Done: a read-only call already made twice with the same arguments is refused with its earlier result, until something is written. After two refusals the turn stops.*
 - [ ] **A dedicated sequence tool.** lfm2 drew a box-and-arrow flow for a sequence request and never reached Mermaid. Structured input (participants, messages, fragments) may suit small models better than writing Mermaid.
 
+
+## From the showcase pass on 2026-11-16
+
+End-to-end run in the browser at 1024 px with Claude Code (Sonnet) on the `shopapp` fixture. The usability misses and the layout work are in the changelog under Unreleased. Still open:
+
+- [ ] **A plain chain has no good shape.** Seven steps in a row are 28:1 left to right and 1:6 top to bottom. The layout picks the lesser evil; wrapping a long chain into rows would fix it.
+- [ ] **Labels on long back edges.** In a state machine with several cycles, a label can still sit where another edge's line passes. The check doesn't look for lines through arrow labels.
+- [ ] **Hand-drawn and library layouts.** Right-angle routing applies to `create_diagram`. Arrows made with `connect_elements` or `add_elements` are still straight lines between boxes.
+- [ ] **The assistant panel has a fixed width** (380 px). The sidebar resizes; the panel doesn't.
+- [ ] **The settings footnote names `~/.local-first-excalidraw/ai.json`** even when `LFX_STATE_DIR` points elsewhere.
+- [ ] **Not exercised in this pass:** reverting a reply, the Shapes view, past chats, and local models (Ollama wasn't running).

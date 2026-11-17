@@ -49,6 +49,8 @@ import { apiKeyFor, type Endpoint, findClaude, type SettingsStore } from "./sett
 import { type Msg, type Part, type Provider, ProviderError, type ToolCall, type ToolResult, type Usage } from "./types.js";
 
 const MAX_STEPS = 40;
+/** How many times a turn is sent back to fix what the layout check still finds in its drawing. */
+const MAX_REVIEWS = 2;
 /** Refused repeats (of a failed call, or of a read-only call already run twice) before the turn stops. */
 const MAX_REPEATS = 2;
 /** Times the same read-only call (same tool and arguments) runs before repeats are refused. */
@@ -166,7 +168,7 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
     "How to work:",
     o.mermaidOnly
       ? "- You can't call tools here. To draw, reply with one ```mermaid code block (a flowchart or a sequence diagram; other Mermaid types arrive as an uneditable image); it is converted into editable Excalidraw elements and added to the open drawing. Keep any prose to a sentence or two."
-      : "- Act, don't describe: when the user asks for a change, make it with the tools, then reply in one or two sentences saying what you did. Don't paste element JSON.",
+      : "- Act, don't describe: when the user asks for a change, make it with the tools, then reply in one or two sentences saying what you did. Don't paste element JSON. The user sees the canvas, not the data: refer to things by their label and where they sit (\"the orders box, left of the queue\"), never by element id or x/y coordinates.",
     "- Drawing tools act on the open drawing when you omit `path`; pass a path only to read or create a different drawing.",
     o.mermaidOnly ? "" : "- Call excalidraw_guide once before your first edit in a conversation: it has the sizing rules, layout anti-patterns and error recovery.",
     o.mermaidOnly
@@ -182,6 +184,9 @@ const SYSTEM = (o: { vision: boolean; code: boolean; mermaidOnly: boolean; claud
       : "- UML and ER notation in create_diagram: give each edge a `relation` (inheritance, realization, composition, aggregation, association, dependency, include, extend, message, one-to-many, …) so it gets the right arrowhead and line style; put multiplicities, role names and cardinalities in the edge's `startLabel` / `endLabel` (beside each end), not the middle `label`; give class and entity nodes `attributes`, `operations` and `stereotype`; use the `initial`, `final` and `bar` shapes for ●, ◉ and fork/join; label decision branches with [guards]. When the type isn't named (\"a UML diagram of an online store\"), choose the best fit (a class diagram for a domain, activity for a process, sequence for one scenario, use case for who-does-what), say in a sentence which you chose, and draw it rather than asking.",
     "- Call read_drawing (filter with query on a big drawing) before editing parts the context doesn't describe. The user may be editing at the same time: pass the rev it returns as if_rev, and if a write says the drawing changed, read it again before retrying.",
     "- Layout: labels of 1-4 words; at least 40 px between elements; name a zone with a frame or free text at its top-left, never a label bound in the middle of a big rectangle; label an arrow only when its meaning isn't obvious, in 12 characters or fewer; bind every connection at both ends (connect_elements, or start/end); keep most arrows within a zone or between neighbouring zones.",
+    o.mermaidOnly
+      ? ""
+      : "- Every drawing tool result ends with a layout check: overlapping shapes, labels that don't fit their box, arrows running through shapes, arrow labels on top of things. Those are defects, not style: fix every problem it lists before you reply, so the user never has to ask you to clean up. Move or resize with update_elements (bound arrows follow), align and space with arrange_elements, shorten or drop a label; when the whole layout is wrong and you drew it this turn, redraw it once with create_diagram replace: true and a different direction or grouping rather than nudging boxes one by one. Take its \"worth improving\" notes seriously too. create_diagram already draws right-angle arrows, equal-width boxes and even spacing: prefer it to placing elements by hand, and keep hand-placed elements on the same grid (same sizes for the same kind of thing, aligned edges, equal gaps).",
     "- For icons or a house style (people, cloud services, UI components), call list_shapes and use library shapes: as create_diagram node shapes, or with insert_shape (next_to places it beside an existing element). Don't imitate an icon with plain boxes when the library has it.",
     "- Before a large or risky change, snapshot_drawing; restore_drawing puts it back if the result is worse.",
     o.vision ? "- After every batch of edits, look at the result with render_drawing and fix what hurts readability: overlapping or covered text, labels overflowing their shapes, arrows running through unrelated shapes or left unbound, needless crossings, ragged alignment (arrange_elements), and a flow that doesn't read in one direction. Say what you see before you fix it (\"I see the cache box covering an arrow, moving it\"). On a large drawing the overview is scaled down, so check small text with a close-up (element_ids or region) before changing it. Re-render what you changed, and finish only when it looks right." : "",
@@ -340,6 +345,21 @@ function cleanMentions(raw: unknown): Mention[] {
     });
   }
   return out;
+}
+
+/** The message that sends a turn back to fix its drawing. Written as the check, not as the user. */
+export function reviewNote(problems: string[], suggestions: string[]): string {
+  const lines = ["(Automatic layout check of the drawing you just changed. This is not a message from the user; don't thank them or mention it.)"];
+  if (problems.length) {
+    lines.push(`The drawing still has ${problems.length} problem${problems.length === 1 ? "" : "s"} a reader would trip over:`, ...problems.map((p) => `- ${p}`));
+  }
+  if (suggestions.length) lines.push(problems.length ? "Also worth improving:" : "The drawing has no outright defects, but it would read better with these changed:", ...suggestions.map((p) => `- ${p}`));
+  lines.push(
+    problems.length
+      ? "Fix these now with the drawing tools (update_elements to move or resize, arrange_elements to align or space, or one create_diagram with replace: true if you drew the whole diagram this turn and a different direction or grouping fixes it), check the result, then give the user your final reply in a sentence or two. If something listed is deliberate, leave it."
+      : "Make the change if it improves the drawing, then give the user your final reply in a sentence or two. If the drawing is better as it is, just reply.",
+  );
+  return lines.join("\n");
 }
 
 /** Mermaid fences in a reply, for endpoints without tool calling. */
@@ -832,6 +852,38 @@ export class Assistant {
     this.emitSessions(p);
   }
 
+  /** The layout problems in a drawing now (empty when it doesn't exist yet), and its revision. */
+  private async layoutOf(file: string): Promise<{ rev?: string; problems: string[]; suggestions: string[] }> {
+    try {
+      const r = await this.d.op({ op: "check", path: file });
+      const layout = (r.layout ?? {}) as { problems?: string[]; suggestions?: string[] };
+      return { rev: r.contentRev as string | undefined, problems: layout.problems ?? [], suggestions: layout.suggestions ?? [] };
+    } catch {
+      return { problems: [], suggestions: [] };
+    }
+  }
+
+  /**
+   * Called when the model says it is done. If the turn changed the drawing and left layout
+   * problems that weren't there before, returns a note sending it back to fix them: the user
+   * shouldn't have to ask for a clean-up pass. At most MAX_REVIEWS notes a turn, the first of
+   * which also passes on the check's suggestions.
+   */
+  private async review(c: Conversation, turnId: string, base: { rev?: string; problems: string[] }, round: number): Promise<string | undefined> {
+    // A turn that called no tools changed nothing: an edit the user made meanwhile isn't its to fix.
+    if (round >= MAX_REVIEWS || !c.turn?.toolCalls) return undefined;
+    const now = await this.layoutOf(c.path);
+    if (!now.rev || now.rev === base.rev) return undefined;
+    const known = new Set(base.problems);
+    const problems = now.problems.filter((p) => !known.has(p));
+    const suggestions = round === 0 ? now.suggestions : [];
+    if (!problems.length && !suggestions.length) return undefined;
+    activeSpan()?.addEvent("lfx.layout_review", { "lfx.review.round": round, "lfx.review.problems": problems.length, "lfx.review.suggestions": suggestions.length });
+    const what = problems.length ? `${problems.length} layout problem${problems.length === 1 ? "" : "s"} left` : "the layout could read better";
+    this.push(c, { type: "delta", id: turnId, part: "reasoning", text: `Layout check: ${what}. Tidying up before finishing.\n` });
+    return reviewNote(problems, suggestions);
+  }
+
   private async runLoop(
     c: Conversation,
     ep: Endpoint,
@@ -864,6 +916,8 @@ export class Assistant {
     // Each model span records only what's new since the previous call: the user message, then tool results.
     let seen = c.messages.length - 1;
     let retries = 0;
+    let reviews = 0;
+    const baseLayout = await this.layoutOf(c.path);
     const failed = new Map<string, { error: string; repeats: number }>();
     const reads = new Map<string, { count: number; refused: number; result: string }>();
     // Weaker models draw a codebase from memory. When the request is about the code and the turn
@@ -968,7 +1022,12 @@ export class Assistant {
       if (!res.toolCalls.length) {
         if (res.stop === "length") return cutOff(window);
         if (res.stop === "refusal") return "The model declined this request.";
-        return undefined;
+        // Done, as far as the model is concerned. If its drawing still has layout problems, it isn't.
+        const note = signal.aborted ? undefined : await this.review(c, turnId, baseLayout, reviews);
+        if (!note) return undefined;
+        reviews++;
+        c.messages.push({ role: "user", content: [{ type: "text", text: note }] });
+        continue;
       }
       if (res.stop === "length" || res.stop === "refusal") {
         // Never run tool calls from a truncated or refused reply, but keep the conversation well-formed.
@@ -1117,12 +1176,13 @@ export class Assistant {
     let chat: Span | undefined;
     const tools = new Map<string, Span>();
     // Turns this session ran on other endpoints are in `messages` but not in Claude Code's session.
+    const baseLayout = await this.layoutOf(c.path);
     const prompt = (sessionId?: string) => {
       const missed = transcript(sessionId ? c.messages.slice(c.claudeSeen ?? c.messages.length) : c.messages);
       const earlier = missed ? `<earlier_conversation>\n${missed}\n</earlier_conversation>\n\n` : "";
       return `${earlier}${contextBlock}\n\n${req.text}`;
     };
-    const run = (sessionId?: string) =>
+    const run = (sessionId?: string, followUp?: string) =>
       runClaudeCode(
         {
           bin,
@@ -1137,7 +1197,7 @@ export class Assistant {
           disabledTools: this.d.settings.get().disabledTools,
           signal,
         },
-        prompt(sessionId),
+        followUp ?? prompt(sessionId),
         (ev) => {
           if (ev.type === "text" || ev.type === "reasoning") {
             if (ev.type === "text") stats.reply += ev.text;
@@ -1183,6 +1243,17 @@ export class Assistant {
       r = await run();
     }
     if (r.sessionId) c.claudeSession = r.sessionId;
+    // Claude Code has finished its turn: send it back while its drawing has layout problems.
+    for (let reviews = 0; !r.error && r.sessionId && !signal.aborted; reviews++) {
+      const note = await this.review(c, turnId, baseLayout, reviews);
+      if (!note) break;
+      if (stats.reply) {
+        stats.reply += "\n\n";
+        this.push(c, { type: "delta", id: turnId, part: "text", text: "\n\n" });
+      }
+      r = await run(r.sessionId, note);
+      if (r.sessionId) c.claudeSession = r.sessionId;
+    }
     // Keep the provider-neutral history complete, so the session can switch to another endpoint.
     c.messages.push({ role: "user", content: [{ type: "text", text: `${contextBlock}\n\n${req.text}` }] });
     if (stats.reply) c.messages.push({ role: "assistant", text: stats.reply, toolCalls: [] });

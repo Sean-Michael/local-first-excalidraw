@@ -34,7 +34,9 @@ These are the same rules `excalidraw_guide` returns. The diagram-review skill's 
 
 ## Check after every batch
 
-After each `create_diagram`, `add_elements` or `apply_changes`, run `render_drawing` and go through:
+Every write's result ends with a layout check of the whole drawing: overlapping shapes, labels that don't fit their shape, arrows through shapes, arrow labels on top of things. Fix every problem it lists before you report. Act on its "worth improving" notes too (a drawing several times wider than tall, many crossings). When the whole layout is wrong and you drew it this session, one `create_diagram` with `replace: true` and another direction or grouping beats nudging boxes one by one.
+
+The check reads geometry only. After each `create_diagram`, `add_elements` or `apply_changes`, also run `render_drawing` and go through:
 
 1. Every label fits its shape with padding, and nothing is cut off.
 2. No shapes overlap, and frames contain their children with padding.

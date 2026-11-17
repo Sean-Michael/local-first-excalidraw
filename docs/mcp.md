@@ -62,7 +62,7 @@ If the server picks the wrong project, or tools fail with "Path is outside the a
 
 | Tool | What it does |
 |---|---|
-| `create_diagram` | Nodes and edges with layered auto-layout, left to right or top to bottom, placed to the right of anything already in the drawing. Edges (solid, dashed or dotted, optionally labelled) bend around the boxes they would cross, self-loops are drawn as small loops, and edges between the same two nodes are spread apart. Groups become labelled frames that don't overlap. A node's `shape` can be a library shape, drawn as that icon with its label in place of the icon's caption (or below it), or a UML symbol (`initial` ●, `final` ◉, `bar` for fork/join), and its `code` a [code link](#code-links). For UML and ER notation, an edge's `relation` sets its arrowheads and line style (`inheritance`, `realization`, `composition`, `aggregation`, `association`, `dependency`, `include`, `extend`, `message`, `reply`, `one-to-many` and the other crow's-foot relations; inheritance puts the parent first), an edge's `startLabel` and `endLabel` put multiplicities or cardinalities beside each end (grouped with the box there, so they move with it), and a node's `attributes`, `operations` and `stereotype` become UML compartments. `replace: true` swaps the drawing's content for the diagram in one write. The fastest way to an architecture or flow diagram. |
+| `create_diagram` | Nodes and edges with layered auto-layout, placed to the right of anything already in the drawing. `direction` is `LR` or `TB`; without it the layout picks the one closer to the shape of a window (`LR` unless that would be a wide strip). Edges (solid, dashed or dotted, optionally labelled) run at right angles: straight out of a box, one turn between layers, straight in, around the boxes they would cross. Edges leaving the same box share a trunk, an edge's label sits on its own last run, and arrowheads get a run long enough to be drawn at full size. Boxes of one kind share a width. Self-loops are drawn as small loops, and edges between the same two nodes are spread apart. Groups become labelled frames that don't overlap; groups in different layers sit in one row. A node's `shape` can be a library shape, drawn as that icon with its label in place of the icon's caption (or below it), or a UML symbol (`initial` ●, `final` ◉, `bar` for fork/join), and its `code` a [code link](#code-links). For UML and ER notation, an edge's `relation` sets its arrowheads and line style (`inheritance`, `realization`, `composition`, `aggregation`, `association`, `dependency`, `include`, `extend`, `message`, `reply`, `one-to-many` and the other crow's-foot relations; inheritance puts the parent first), an edge's `startLabel` and `endLabel` put multiplicities or cardinalities beside each end (grouped with the box there, so they move with it), and a node's `attributes`, `operations` and `stereotype` become UML compartments. `replace: true` swaps the drawing's content for the diagram in one write. The fastest way to an architecture or flow diagram. |
 | `list_shapes` | Searches library shapes: the built-in libraries, installed ones, `.excalidrawlib` files in the project, and your Excalidraw library. Can return a picture of the matches. |
 | `insert_shape` | Places a library shape, optionally `next_to` an existing element, with an optional label that replaces the shape's own caption (or goes below it). Shapes go in as grouped copies that arrows can bind to. |
 | `connect_elements` | An arrow from one element to another that stays attached when either moves. Given the `id` of an existing arrow, it attaches that arrow instead of drawing a new one. |
@@ -86,6 +86,31 @@ If the server picks the wrong project, or tools fail with "Path is outside the a
 | `diagram_reference` | The architecture-diagrams skill's reference notes (C4; all 14 UML diagrams; data flow and threat models; ER; infrastructure; messaging; visual principles; living diagrams). Takes a topic name or a description in the caller's own words (`"uml class diagram"`, `"use case"`, `"erd"`) and returns the best match, naming the section; lists the topics when called without one. |
 | `project_overview` | Read-only map of the project or one folder (`dir`): the tree with file counts, languages, manifests and deployment files (package.json, go.mod, pyproject, Cargo.toml, Compose services, Dockerfiles, Kubernetes manifests, `.proto`, OpenAPI), likely entry points, the README's headline and existing drawings. |
 | `git_changes` | Read-only summary of what changed: uncommitted changes and untracked files against HEAD (default), the last N commits (`last`), or between refs (`from`, `to`, or `A..B`), with +/- counts per file. `diff: true` adds the unified diff, capped at 20K characters; `path` limits it to one file or folder. Git runs with a timeout, without external diff or textconv programs, and secret-looking files are left out. |
+
+### The layout check
+
+Every tool that changes a drawing ends its result with a check of the whole drawing's geometry, so an agent learns what is wrong with a layout without having to spot it in a render:
+
+```text
+Layout check: 2 problems a reader would trip over. Fix them (update_elements moves and resizes; bound arrows follow) before you reply:
+- "API" (a) and "Worker" (b) overlap: move one so they are at least 40 px apart.
+- The arrow "API" → "Queue" (a->q) runs through "Cache" (cache): move cache out of its way, or move the shapes it joins.
+Worth improving:
+- The drawing is 2788×500 px, 5.6 times wider than tall, so it is small when fitted to a window. Lay it out top to bottom (create_diagram direction "TB"), or stack related nodes in groups, to bring it closer to a screen's shape.
+```
+
+| Reported as | What |
+|---|---|
+| Problem | Two shapes or texts overlap (a zone around other shapes, a caption inside a box and the parts of one library shape don't count) |
+| Problem | A shape sticks out of its frame, or overlaps a frame it isn't in |
+| Problem | A label is larger than its shape has room for (a diamond holds about half its width, an ellipse about 70%) |
+| Problem | An arrow runs through a shape or text it doesn't join |
+| Problem | An arrow label sits on a shape, or two arrow labels touch |
+| Worth improving | The drawing is more than 3.2 times wider than tall, or 4 times taller than wide |
+| Worth improving | Three or more pairs of arrows cross |
+| Worth improving | Two shapes are less than 10 px apart, or text is under 12 px |
+
+A clean drawing gets one line: `Layout check: no overlaps, no labels that don't fit, no arrows through shapes.` The check reads geometry only. It doesn't judge whether the diagram is the right one, so `render_drawing` is still worth a look.
 
 Render, export, Mermaid conversion and shape previews need a real browser for the fonts and canvas. An open tab of the drawing does the work if there is one; otherwise the daemon uses its own headless Chrome or Chromium, so these tools work without opening your browser, including in CI. Only `open_drawing` opens your browser. If no Chromium-family browser is installed, or `LFX_HEADLESS=off`, the server opens the drawing in your browser to do the work, as before. See [Headless rendering](configuration.md#headless-rendering), and [Troubleshooting](troubleshooting.md#render-export-or-mermaid-fails) when it fails.
 

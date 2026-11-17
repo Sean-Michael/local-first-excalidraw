@@ -16,7 +16,7 @@ import { relevantChange } from "../src/server/drawing-watch.js";
 import { gitTopOf } from "../src/server/code.js";
 import { listFolders } from "../src/server/files.js";
 import { listDrawings } from "../src/server/store.js";
-import { ancestorFolders, buildTree, type FolderNode, type TreeNode, visibleRows } from "../src/shared/tree.js";
+import { ancestorFolders, buildTree, expandChain, type FolderNode, type TreeNode, visibleRows } from "../src/shared/tree.js";
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "server", "cli.js");
 const tmp = (name: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `lfx-${name}-`)));
@@ -43,6 +43,31 @@ test("buildTree nests drawings under their folders, folders first, then by name"
   assert.equal(docs.rel, "docs");
   assert.equal(docs.count, 4);
   assert.equal((docs.children[0] as FolderNode).path, `${R}/docs/arch`);
+});
+
+test("expandChain opens a folder and the folders that are its only way down", () => {
+  const [root] = buildTree({
+    roots: [R],
+    drawings: [d("docs/diagrams/arch/a.excalidraw"), d("docs/diagrams/arch/b.excalidraw"), d("design/x.excalidraw"), d("design/flows/y.excalidraw")],
+    folders: [],
+  });
+  const docs = root.children.find((c) => c.name === "docs") as FolderNode;
+  const design = root.children.find((c) => c.name === "design") as FolderNode;
+  // docs > diagrams > arch is a chain of single folders; it stops where the drawings are.
+  assert.deepEqual(expandChain(docs), [`${R}/docs`, `${R}/docs/diagrams`, `${R}/docs/diagrams/arch`]);
+  // design holds a folder and a drawing: only design itself opens.
+  assert.deepEqual(expandChain(design), [`${R}/design`]);
+  // The root has two folders, so a first visit opens nothing below it.
+  assert.deepEqual(expandChain(root), [R]);
+
+  // Opening the chain shows the drawings in one step.
+  const open = new Set([R, ...expandChain(docs)]);
+  const names = visibleRows([root], (p) => open.has(p)).map((r) => r.node.name);
+  assert.deepEqual(names, [R, "design", "docs", "diagrams", "arch", "a", "b"]);
+
+  // A project with one drawing folder opens all the way from the root.
+  const [solo] = buildTree({ roots: [R], drawings: [d("docs/diagrams/a.excalidraw")], folders: [] });
+  assert.deepEqual(expandChain(solo), [R, `${R}/docs`, `${R}/docs/diagrams`]);
 });
 
 test("buildTree hides folders without drawings unless empty or showAll", () => {

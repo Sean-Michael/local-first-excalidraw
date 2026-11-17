@@ -13,6 +13,7 @@ import {
 } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI, LibraryItems } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { compactTopBar, sidebarShouldYield } from "../shared/layout";
 import { Chat, type ChatBridge } from "./Chat";
 import { dirOf, files, folderOptions, useDialog } from "./FileActions";
 import { api, basename, type RenderOpts, type SceneData, type ServerMsg, type Status, Sync } from "./sync";
@@ -113,6 +114,10 @@ const OFFLINE_BANNER_MS = 3000;
 const LINKS_REFRESH_MS = 10_000;
 // A canvas smaller than this is hidden or collapsed: too small to fit a drawing into.
 const MIN_FIT_PX = 50;
+const REFIT_DELAY_MS = 150;
+// How long a fit may keep moving the viewport: Excalidraw animates scrollToContent for 500 ms.
+const FIT_ANIMATION_MS = 900;
+const FIT_SETTLE_MS = 150;
 
 /** "claude-code" -> "Claude Code"; the in-app assistant and unnamed clients get generic names. */
 export function agentName(by: string | undefined): string {
@@ -199,6 +204,7 @@ export interface EditorProps {
 }
 
 const MOD = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl+";
+const ASSISTANT_KEYS = navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A";
 
 export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorProps) {
   const go = useCallback(
@@ -222,6 +228,10 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
   const [theme] = useState(storedTheme);
   const [liveTheme, setLiveTheme] = useState(theme);
   const [chatOpen, setChatOpen] = useState(() => storedFlag(CHAT_KEY));
+  const chatOpenRef = useRef(chatOpen);
+  // The user opened the panel in this session, so it takes the keyboard; a restored panel doesn't.
+  const chatOpenedHere = useRef(false);
+  const [canvasWidth, setCanvasWidth] = useState(0);
   const [selectionCount, setSelectionCount] = useState(0);
   const selectionKey = useRef("");
   const chatListeners = useRef(new Set<(m: ServerMsg) => void>());
@@ -327,16 +337,25 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
   );
 
 
+  const sidebarRef = useRef(sidebar);
+  sidebarRef.current = sidebar;
   const toggleChat = useCallback((open?: boolean) => {
-    setChatOpen((v) => {
-      const next = open ?? !v;
-      try {
-        localStorage.setItem(CHAT_KEY, next ? "1" : "0");
-      } catch {
-        // storage unavailable
-      }
-      return next;
-    });
+    const next = open ?? !chatOpenRef.current;
+    if (next === chatOpenRef.current) return;
+    chatOpenRef.current = next;
+    try {
+      localStorage.setItem(CHAT_KEY, next ? "1" : "0");
+    } catch {
+      // storage unavailable
+    }
+    if (next) {
+      chatOpenedHere.current = true;
+      // In a narrow window the sidebar gives its space to the canvas; ⌘B brings it back.
+      const side = sidebarRef.current;
+      const width = canvasRef.current?.getBoundingClientRect().width ?? 0;
+      if (side && sidebarShouldYield(width, side.open)) side.toggle();
+    }
+    setChatOpen(next);
   }, []);
 
   // ⇧⌘A can reach both the macOS app's menu and this page; one press must toggle once.
@@ -385,6 +404,27 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
   const canvasRef = useRef<HTMLDivElement>(null);
   const pendingFit = useRef(false);
   const fitTries = useRef(0);
+  // The viewport is still the one this page chose (a fit), not one the user panned or zoomed to.
+  // While that holds, the drawing is fitted again when the canvas changes size: a panel opening
+  // or closing, or the window resizing, would otherwise leave it small or off to one side.
+  const autoFitted = useRef(false);
+  // Non-zero while a fit of ours is moving the viewport, so its scroll changes aren't taken for the user's.
+  const fitting = useRef(0);
+  const fit = useCallback((x: ExcalidrawImperativeAPI, animate: boolean) => {
+    autoFitted.current = true;
+    window.clearTimeout(fitting.current);
+    fitting.current = window.setTimeout(() => (fitting.current = 0), animate ? FIT_ANIMATION_MS : FIT_SETTLE_MS);
+    x.scrollToContent(undefined, { fitToContent: true, animate, maxZoom: 1 });
+  }, []);
+  const fitWhen = useRef<() => void>(() => {});
+  const refitTimer = useRef<number | undefined>(undefined);
+  const refit = useRef<() => void>(() => {});
+  refit.current = () => {
+    const x = excalidraw;
+    if (!x || !loaded.current || !autoFitted.current || pendingFit.current) return;
+    // Through the same wait as the first fit: Excalidraw must have measured the new size first.
+    if (x.getSceneElements().length) fitWhen.current();
+  };
   const tryFit = useRef<() => void>(() => {});
   tryFit.current = () => {
     const x = excalidraw;
@@ -401,23 +441,32 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
       return;
     }
     pendingFit.current = false;
-    x.scrollToContent(undefined, { fitToContent: true, animate: false, maxZoom: 1 });
+    fit(x, false);
   };
   const fitWhenSized = useCallback(() => {
     pendingFit.current = true;
     fitTries.current = 0;
     requestAnimationFrame(() => tryFit.current());
   }, []);
+  fitWhen.current = fitWhenSized;
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => pendingFit.current && requestAnimationFrame(() => tryFit.current()));
+    const ro = new ResizeObserver((entries) => {
+      setCanvasWidth(Math.round(entries[0]?.contentRect.width ?? el.getBoundingClientRect().width));
+      if (pendingFit.current) return void requestAnimationFrame(() => tryFit.current());
+      if (!autoFitted.current) return;
+      // Wait for the size to settle (a sidebar being dragged) and for Excalidraw to measure it.
+      window.clearTimeout(refitTimer.current);
+      refitTimer.current = window.setTimeout(() => refit.current(), REFIT_DELAY_MS);
+    });
     ro.observe(el);
     // The user took the viewport into their own hands before the first fit happened.
     const cancel = () => (pendingFit.current = false);
     el.addEventListener("pointerdown", cancel, true);
     el.addEventListener("wheel", cancel, true);
     return () => {
+      window.clearTimeout(refitTimer.current);
       ro.disconnect();
       el.removeEventListener("pointerdown", cancel, true);
       el.removeEventListener("wheel", cancel, true);
@@ -455,16 +504,17 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
       } else if (!agent) {
         if (!quiet) x.setToast({ message: "Drawing updated", duration: 1200, closable: false });
       } else {
-        if (wasEmpty && merged.some((e) => !e.isDeleted)) {
-          // The agent just drew on a blank canvas: bring its work into view.
-          requestAnimationFrame(() => x.scrollToContent(undefined, { fitToContent: true, animate: true }));
+        if ((wasEmpty || autoFitted.current) && merged.some((e) => !e.isDeleted)) {
+          // The agent drew on a blank canvas, or added to a drawing the user hasn't panned or
+          // zoomed since it was last fitted: bring all of its work into view.
+          requestAnimationFrame(() => fit(x, true));
         }
         if (changed.length) showAgentEdit(changed, by);
       }
       if (saveFixes) flush();
       refreshLinks();
     },
-    [excalidraw, flush, fitWhenSized],
+    [excalidraw, flush, fitWhenSized, fit],
   );
 
   const fileAction = useCallback(
@@ -665,7 +715,7 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
   }, [excalidraw]);
 
   return (
-    <div className={`lfx-editor${chatOpen ? " lfx-with-chat" : ""}`} data-theme={liveTheme}>
+    <div className={`lfx-editor${chatOpen ? " lfx-with-chat" : ""}${compactTopBar(canvasWidth, stale.length > 0) ? " lfx-compact" : ""}`} data-theme={liveTheme}>
       <div className="lfx-canvas" ref={canvasRef}>
       <Excalidraw
         excalidrawAPI={setExcalidraw}
@@ -673,7 +723,11 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
         onChange={onChange}
         onLibraryChange={onLibraryChange}
         onLinkOpen={onLinkOpen}
-        onScrollChange={(scrollX, scrollY, zoom) => highlight && setView({ scrollX, scrollY, zoom: zoom.value })}
+        onScrollChange={(scrollX, scrollY, zoom) => {
+          // Panning or zooming by any means (wheel, drag, keys, the zoom buttons) makes the viewport the user's.
+          if (!fitting.current) autoFitted.current = false;
+          if (highlight) setView({ scrollX, scrollY, zoom: zoom.value });
+        }}
         aiEnabled={false}
         validateEmbeddable={() => false}
         UIOptions={{
@@ -728,13 +782,13 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
               </div>
             )}
             {!chatOpen && (
-              <button type="button" className="lfx-badge lfx-ai-toggle" onClick={() => toggleChat(true)} title="Open the assistant">
+              <button type="button" className="lfx-badge lfx-ai-toggle" onClick={() => toggleChat(true)} title={`Open the assistant (${ASSISTANT_KEYS})`} aria-label="Open the assistant">
                 <svg viewBox="0 0 20 20" aria-hidden>
                   <path d="M10 2l1.8 4.6L16.5 8l-4.7 1.6L10 14l-1.8-4.4L3.5 8l4.7-1.4z" />
                   <path d="M15.5 13l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
                 </svg>
-                Assistant
-                <kbd className="lfx-kbd">{navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A"}</kbd>
+                <span className="lfx-ai-label">Assistant</span>
+                <kbd className="lfx-kbd">{ASSISTANT_KEYS}</kbd>
               </button>
             )}
           </div>
@@ -747,7 +801,7 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
               {sidebar.open ? "Hide sidebar" : "Show sidebar"}
             </MainMenu.Item>
           )}
-          <MainMenu.Item onSelect={() => toggleChat()} shortcut={navigator.platform.startsWith("Mac") ? "⇧⌘A" : "Ctrl+Shift+A"}>
+          <MainMenu.Item onSelect={() => toggleChat()} shortcut={ASSISTANT_KEYS}>
             {chatOpen ? "Hide assistant" : "Show assistant"}
           </MainMenu.Item>
           <MainMenu.Separator />
@@ -802,7 +856,7 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
         </div>
       )}
       </div>
-      {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} dark={liveTheme === "dark"} onClose={() => toggleChat(false)} />}
+      {chatOpen && <Chat path={path} bridge={bridge} selectionCount={selectionCount} dark={liveTheme === "dark"} focusOnOpen={chatOpenedHere.current} onClose={() => toggleChat(false)} />}
       {deleted && (
         <div className="lfx-error" role="alert">
           This drawing was deleted or moved on disk. Edits are not being saved.{" "}

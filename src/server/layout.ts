@@ -110,9 +110,15 @@ export interface GraphSpec {
 }
 
 const MIN_H_GAP = 110; // between layers
+const UNIFORM_UP_TO = 2.2; // boxes up to this many times the narrowest are widened to match
+const LABEL_PAD = 14; // around an edge label on its run, clear of the turn and the arrowhead
+const CHANNEL = 18; // between the turns of edges that jog in the same gap
+const CHANNEL_MARGIN = 28; // a gap's spare room beside its channels
 const V_GAP = 50; // between siblings in a layer
-const SLOT = 16; // cross-axis room for an edge passing through a layer
+const SLOT = 24; // cross-axis room for an edge passing through a layer
 const PORT = 14; // how far past a layer's edge an edge's stub reaches
+const MIXED_PORT_STEP = 36; // between arrows arriving and leaving on the same side of a node
+const PORT_INSET = 12; // ports keep this far from a node's corners
 const PARALLEL = 18; // spacing between edges joining the same two nodes
 const FRAME_PAD = 60; // room around a group's members for its frame (frames use 40, plus the title)
 const BAND_GAP = 40; // between neighbouring groups
@@ -139,6 +145,19 @@ function nodeSize(n: NodeSpec, dir: "LR" | "TB"): { w: number; h: number } {
 
 type Pt = [number, number];
 
+/**
+ * How long the stub at an arrowhead's end must be. Excalidraw draws an arrowhead no longer than
+ * half the arrow's last segment, so a head on a short stub shrinks to a dot: leave the full
+ * length (25 px for an arrow, 12 for a diamond at a quarter, 20 for a crow's foot, 15 otherwise)
+ * plus the gap between the arrow and the shape it is bound to.
+ */
+function headRoom(head: Arrowhead | null | undefined): number {
+  if (!head) return 0;
+  if (head === "arrow") return 56;
+  if (head === "diamond" || head === "diamond_outline") return 54;
+  return head.startsWith("crowfoot") ? 46 : 36;
+}
+
 /** Drops waypoints that lie on the straight line between their neighbours. */
 function simplify(pts: Pt[]): Pt[] {
   const out: Pt[] = [pts[0]];
@@ -164,8 +183,37 @@ export function compartmentLabel(n: Pick<NodeSpec, "label" | "stereotype" | "att
   return [head, ...sections.map((xs) => [rule, ...xs].join("\n"))].join("\n");
 }
 
+/** The shape a diagram should come close to: a landscape window. */
+const TARGET_ASPECT = 1.5;
+
+/** Width and height of the nodes a layout placed. */
+function extentOf(els: SkeletonEl[]): { w: number; h: number } {
+  const boxes = els.filter((e) => e.type !== "arrow" && e.type !== "frame" && typeof e.width === "number" && typeof e.height === "number");
+  if (!boxes.length) return { w: 0, h: 0 };
+  const xs = boxes.flatMap((e) => [e.x ?? 0, (e.x ?? 0) + e.width!]);
+  const ys = boxes.flatMap((e) => [e.y ?? 0, (e.y ?? 0) + e.height!]);
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
+/**
+ * Lays the graph out in the given direction, or, when none is given, in the one whose result is
+ * closer to the shape of a window: a long pipeline drawn left to right is a strip that is tiny
+ * when fitted to the screen, and the same graph top to bottom often isn't. Left to right wins
+ * unless top to bottom is clearly better.
+ */
 export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonEl[] {
-  const dir = spec.direction ?? "LR";
+  if (spec.direction || (spec.nodes ?? []).length < 4) return layoutIn(spec, spec.direction ?? "LR", origin);
+  const lr = layoutIn(spec, "LR", origin);
+  const off = (els: SkeletonEl[]) => {
+    const { w, h } = extentOf(els);
+    return w && h ? Math.abs(Math.log(w / h / TARGET_ASPECT)) : 0;
+  };
+  if (off(lr) < Math.log(2)) return lr; // within a factor of two of the target: fine as it is
+  const tb = layoutIn(spec, "TB", origin);
+  return off(tb) < off(lr) - 0.2 ? tb : lr;
+}
+
+function layoutIn(spec: GraphSpec, dir: "LR" | "TB", origin: { x: number; y: number }): SkeletonEl[] {
   const nodes = (spec.nodes ?? []).map((n) => (n.stereotype || n.attributes || n.operations ? { ...n, label: compartmentLabel(n) } : n));
   if (!nodes.length) throw new SceneError("A diagram needs at least one node");
   const ids = new Set<string>();
@@ -234,6 +282,15 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   // Each edge runs from its earlier-layer end (u) to its later one (v), through one slot
   // ("dummy" node) per layer in between. Back edges of cycles are routed the same way, reversed.
   const groupOf = new Map(nodes.map((n) => [n.id, n.group ?? ""]));
+  // The layers each group's nodes span.
+  const span = new Map<string, [number, number]>();
+  for (const n of nodes) {
+    if (!n.group) continue;
+    const l = layer.get(n.id)!;
+    const sp = span.get(n.group);
+    span.set(n.group, sp ? [Math.min(sp[0], l), Math.max(sp[1], l)] : [l, l]);
+  }
+  const within = (g: string, l: number) => span.has(g) && l >= span.get(g)![0] && l <= span.get(g)![1];
   const dummies = new Set<string>();
   const preds = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
   const succs = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
@@ -245,8 +302,10 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
       const d = `\u0000${e.i}:${l}`;
       dummies.add(d);
       layers[l].push(d);
-      // An edge inside a group stays in the group's band.
-      groupOf.set(d, groupOf.get(u) === groupOf.get(v) ? groupOf.get(u)! : "");
+      // An edge inside a group stays in the group's band; one into or out of a group runs
+      // inside it where it passes the group's layers, rather than around the frame.
+      const [gu, gv] = [groupOf.get(u)!, groupOf.get(v)!];
+      groupOf.set(d, gu === gv ? gu : within(gv, l) ? gv : within(gu, l) ? gu : "");
       preds.set(d, []);
       succs.set(d, []);
       via.push(d);
@@ -304,24 +363,47 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   best.layers.forEach((l, i) => (layers[i] = l));
   reindex();
 
-  // Bands: every group (and the ungrouped nodes) gets its own stretch of the cross axis in all
-  // layers, ordered by where its members ended up on average.
+  // Bands: a group gets a stretch of the cross axis in every layer it spans, so its frame
+  // encloses only its own nodes. The ungrouped nodes of one layer form a band of their own.
+  // Bands whose layers don't overlap share a track (a tier of services beside a tier of data
+  // stores), instead of each group sitting on a step of a staircase with empty space around it.
+  const layerOfItem = new Map<string, number>();
+  layers.forEach((l, li) => l.forEach((id) => layerOfItem.set(id, li)));
+  const bandOf = (id: string) => groupOf.get(id)! || `\u0001${layerOfItem.get(id)}`;
   const bandKeys: string[] = [];
   const bandPos = new Map<string, number[]>();
-  for (const l of layers) {
+  const bandSpan = new Map<string, [number, number]>();
+  layers.forEach((l, li) => {
     for (const id of l) {
-      const g = groupOf.get(id)!;
+      const g = bandOf(id);
       if (!bandPos.has(g)) {
         bandKeys.push(g);
         bandPos.set(g, []);
+        bandSpan.set(g, [li, li]);
       }
       bandPos.get(g)!.push((pos.get(id)! + 0.5) / l.length);
+      const sp = bandSpan.get(g)!;
+      sp[1] = Math.max(sp[1], li);
     }
-  }
+  });
   const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
-  bandKeys.sort((a, b) => mean(bandPos.get(a)!) - mean(bandPos.get(b)!) || bandKeys.indexOf(a) - bandKeys.indexOf(b));
-  const bandIndex = new Map(bandKeys.map((g, i) => [g, i]));
-  for (const l of layers) l.sort((a, b) => bandIndex.get(groupOf.get(a)!)! - bandIndex.get(groupOf.get(b)!)! || pos.get(a)! - pos.get(b)!);
+  const firstSeen = new Map(bandKeys.map((g, i) => [g, i]));
+  bandKeys.sort((a, b) => mean(bandPos.get(a)!) - mean(bandPos.get(b)!) || firstSeen.get(a)! - firstSeen.get(b)!);
+  const tracks: string[][] = [];
+  const trackOf = new Map<string, number>();
+  // Widest bands first, so the groups that span the diagram share a row and the rest fit around them.
+  const width = (g: string) => bandSpan.get(g)![1] - bandSpan.get(g)![0];
+  for (const g of [...bandKeys].sort((x, y) => width(y) - width(x) || bandKeys.indexOf(x) - bandKeys.indexOf(y))) {
+    const sp = bandSpan.get(g)!;
+    let t = tracks.findIndex((members) => members.every((m) => bandSpan.get(m)![1] < sp[0] || bandSpan.get(m)![0] > sp[1]));
+    if (t < 0) t = tracks.push([]) - 1;
+    tracks[t].push(g);
+  }
+  // Tracks run across the diagram in the order the ordering sweeps put their members.
+  const trackMean = (members: string[]) => mean(members.flatMap((m) => bandPos.get(m)!));
+  tracks.sort((x, y) => trackMean(x) - trackMean(y));
+  tracks.forEach((members, t) => members.forEach((m) => trackOf.set(m, t)));
+  for (const l of layers) l.sort((a, b) => trackOf.get(bandOf(a))! - trackOf.get(bandOf(b))! || pos.get(a)! - pos.get(b)!);
   reindex();
 
   // Coordinates: layers advance along the main axis; siblings spread on the cross axis.
@@ -339,9 +421,22 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
     const texts = ks.map((k) => endText(chains[k].e, node)).filter((t): t is string => !!t);
     if (texts.length && ks.length > 1) portRoom.set(node, Math.max(portRoom.get(node) ?? 0, (ks.length - 1) * portStep(texts)));
   }
+  // Boxes of one kind share a width, as on a schematic: a row of boxes each sized to its own
+  // label looks ragged. A label much longer than the rest keeps its own, wider box.
+  const natural = new Map(nodes.map((n) => [n.id, nodeSize(n, dir)]));
+  const plain = (n: NodeSpec) => !n.size && !PSEUDO_SHAPES.has(n.shape ?? "") && !n.label.includes("\n");
+  const commonWidth = new Map<string, number>();
+  for (const n of nodes) {
+    if (!plain(n)) continue;
+    const kind = n.shape ?? "rectangle";
+    const widths = nodes.filter((o) => plain(o) && (o.shape ?? "rectangle") === kind).map((o) => natural.get(o.id)!.w);
+    const narrowest = Math.min(...widths);
+    commonWidth.set(kind, Math.max(...widths.filter((w) => w <= narrowest * UNIFORM_UP_TO)));
+  }
   const size = new Map(
     nodes.map((n) => {
-      const s = nodeSize(n, dir);
+      const own = natural.get(n.id)!;
+      const s = plain(n) ? { ...own, w: Math.max(own.w, commonWidth.get(n.shape ?? "rectangle")!) } : own;
       const room = n.size || PSEUDO_SHAPES.has(n.shape ?? "") ? 0 : (portRoom.get(n.id) ?? 0) / 0.8;
       return [n.id, dir === "LR" ? { ...s, h: Math.max(s.h, Math.ceil(room)) } : { ...s, w: Math.max(s.w, Math.ceil(room)) }];
     }),
@@ -351,15 +446,70 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   const gapAfter = (a: string, b: string) => (dummies.has(a) && dummies.has(b) ? SLOT : V_GAP);
   const extent = (ids: string[]) => ids.reduce((s, id, k) => s + cross(id) + (k ? gapAfter(ids[k - 1], id) : 0), 0);
 
-  const bandStart = new Map<string, number>();
   const bandSize = new Map<string, number>();
-  let c0 = 0;
   for (const g of bandKeys) {
-    const inner = Math.max(...layers.map((l) => extent(l.filter((id) => groupOf.get(id) === g))));
-    const s = inner + (g ? FRAME_PAD * 2 : 0);
-    bandStart.set(g, c0);
-    bandSize.set(g, s);
-    c0 += s + BAND_GAP;
+    const inner = Math.max(...layers.map((l) => extent(l.filter((id) => bandOf(id) === g))));
+    bandSize.set(g, inner + (span.has(g) ? FRAME_PAD * 2 : 0));
+  }
+  const bandStart = new Map<string, number>();
+  let c0 = 0;
+  for (const members of tracks) {
+    const size = Math.max(...members.map((m) => bandSize.get(m)!));
+    for (const m of members) bandStart.set(m, c0 + (size - bandSize.get(m)!) / 2);
+    c0 += size + BAND_GAP;
+  }
+
+  const crossAt = new Map<string, number>(); // top (or left) edge on the cross axis
+  for (const l of layers) {
+    for (const g of bandKeys) {
+      const items = l.filter((id) => bandOf(id) === g);
+      let c = bandStart.get(g)! + (bandSize.get(g)! - extent(items)) / 2;
+      items.forEach((id, k) => {
+        if (k) c += gapAfter(items[k - 1], id);
+        crossAt.set(id, c);
+        c += cross(id);
+      });
+    }
+  }
+  const crossMid = (id: string) => crossAt.get(id)! + cross(id) / 2;
+
+  // Edges joining the same two nodes (either way round) are spread apart.
+  const pairs = new Map<string, number[]>();
+  chains.forEach((ch, k) => {
+    const key = `${ch.u}\u0000${ch.v}`;
+    pairs.set(key, [...(pairs.get(key) ?? []), k]);
+  });
+  const offset = new Map<number, number>();
+  for (const ks of pairs.values()) ks.forEach((k, j) => offset.set(k, (j - (ks.length - 1) / 2) * PARALLEL));
+
+  // Where a node's edges on one side carry end labels, each edge gets its own port, ordered by
+  // where it heads, far enough apart that the labels don't stack; elsewhere they share the centre.
+  // The same goes for a side where some arrows arrive and others leave (the back edge of a cycle
+  // meets its node where that node's own arrows start): on one port, the incoming arrowhead sits
+  // on the outgoing line and the pair reads as a single two-headed arrow.
+  /** How much of an edge's run its middle label takes up. */
+  const labelLen = (e: EdgeSpec) => {
+    const text = e.label ?? relationOf(e)?.label;
+    return text ? measureText(text, 16)[dir === "LR" ? "width" : "height"] : 0;
+  };
+  const heads = chains.map((ch) => {
+    const rel = relationOf(ch.e);
+    const end = ch.e.endArrowhead !== undefined ? ch.e.endArrowhead : rel ? rel.end : "arrow";
+    const start = ch.e.startArrowhead !== undefined ? ch.e.startArrowhead : ch.e.bidirectional ? "arrow" : (rel?.start ?? null);
+    return ch.reversed ? { u: end, v: start } : { u: start, v: end };
+  });
+  const portOff = new Map<string, number>(); // `${k}:u` / `${k}:v`
+  for (const [key, ks] of sideEdges) {
+    const [node, side] = key.split("\u0000");
+    const texts = ks.map((k) => endText(chains[k].e, node)).filter((t): t is string => !!t);
+    const mixed = new Set(ks.map((k) => !!heads[k][side === "out" ? "u" : "v"])).size > 1;
+    // And for edges that end here with a label: on one port, each one's line would run through the others' labels.
+    const labelled = ks.some((k) => chains[k].reversed === (side === "out") && labelLen(chains[k].e) > 0);
+    if ((!texts.length && !mixed && !labelled) || ks.length < 2) continue;
+    // Ports stay on the flat part of the side, so every edge still leaves it at a right angle.
+    const step = Math.min(texts.length ? portStep(texts) : MIXED_PORT_STEP, Math.max(0, cross(node) - 2 * PORT_INSET) / (ks.length - 1));
+    const toward = (k: number) => crossMid(side === "out" ? (chains[k].via[0] ?? chains[k].v) : (chains[k].via.at(-1) ?? chains[k].u));
+    [...ks].sort((a, b) => toward(a) - toward(b) || a - b).forEach((k, j) => portOff.set(`${k}:${side === "out" ? "u" : "v"}`, (j - (ks.length - 1) / 2) * step));
   }
 
   const layerMain = layers.map((l) => Math.max(0, ...l.map(main)));
@@ -371,35 +521,80 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   // A longer stub at each end, so an end label sits beside a straight stretch of its arrow.
   const port = longestEnd ? Math.max(PORT, longestEnd + 14) : PORT;
   const H_GAP = Math.max(MIN_H_GAP, (dir === "LR" ? longestLabel : 0) + (longestEnd ? 2 * (longestEnd + 10) : 0) + (dir === "LR" ? 80 : 40));
+
+  // Edges are drawn the way a schematic draws wires: straight out of a node, one right-angle jog
+  // in the gap between two layers, straight into the next. Every hop that changes its cross
+  // position needs a channel in that gap to turn in. Hops leaving the same port share one (a
+  // trunk with branches); the others get channels of their own, ordered so that they nest
+  // instead of crossing, and the gap grows to hold them.
+  const hops = chains.map((ch, k) => {
+    const path = [ch.u, ...ch.via, ch.v];
+    const lu = layer.get(ch.u)!;
+    const ou = portOff.get(`${k}:u`) ?? offset.get(k)!;
+    const ov = portOff.get(`${k}:v`) ?? offset.get(k)!;
+    const c = path.map((id, j) => crossMid(id) + (j === 0 ? ou : j === path.length - 1 ? ov : 0));
+    return path.slice(0, -1).map((id, j) => ({ gap: lu + j, from: c[j], to: c[j + 1], key: `${id}\u0000${Math.round(c[j])}`, jog: Math.abs(c[j] - c[j + 1]) > 0.5 }));
+  });
+  const labelStack = new Map<string, number>();
+  const labelBehind = new Map<number, number>();
+  const channel = new Map<string, number>(); // `${gap}\u0000${key}` -> index of the channel in its gap
+  const channels: number[] = layers.map(() => 0);
+  const lead: number[] = layers.map(() => port); // straight run after a layer, before the first channel
+  const trail: number[] = layers.map(() => port); // and after the last channel, into the next layer
+  chains.forEach((ch, k) => {
+    const lu = layer.get(ch.u)!;
+    const lv = layer.get(ch.v)!;
+    // Room to draw an arrowhead at full size on the straight run into its node.
+    lead[lu] = Math.max(lead[lu], headRoom(heads[k].u));
+    trail[lv - 1] = Math.max(trail[lv - 1], headRoom(heads[k].v));
+    // And for the label of an edge that turns: it goes on the edge's own last run (see below).
+    // Labels of edges that end at the same node sit one behind the other, not side by side.
+    const len = labelLen(ch.e);
+    if (len && hops[k].some((h) => h.jog)) {
+      const key = `${ch.reversed ? ch.u : ch.v}\u0000${ch.reversed}`;
+      const behind = labelStack.get(key) ?? 0;
+      labelBehind.set(k, behind);
+      labelStack.set(key, behind + len + LABEL_PAD / 2);
+      if (ch.reversed) lead[lu] = Math.max(lead[lu], headRoom(heads[k].u) + behind + len + LABEL_PAD);
+      else trail[lv - 1] = Math.max(trail[lv - 1], headRoom(heads[k].v) + behind + len + LABEL_PAD);
+    }
+  });
+  layers.forEach((_, li) => {
+    const trunks = new Map<string, { from: number; drift: number }>();
+    for (const h of hops.flat()) {
+      if (h.gap !== li || !h.jog) continue;
+      const t = trunks.get(h.key) ?? { from: h.from, drift: 0 };
+      t.drift += h.to - h.from;
+      trunks.set(h.key, t);
+    }
+    // Trunks heading the same way nest when the one that starts furthest along turns first.
+    const down = [...trunks].filter(([, t]) => t.drift >= 0).sort((a, b) => b[1].from - a[1].from);
+    const up = [...trunks].filter(([, t]) => t.drift < 0).sort((a, b) => a[1].from - b[1].from);
+    [...down, ...up].forEach(([key], i) => channel.set(`${li}\u0000${key}`, i));
+    channels[li] = trunks.size;
+  });
+  const gapWidth = layers.map((_, li) => Math.max(H_GAP, lead[li] + trail[li] + Math.max(0, channels[li] - 1) * CHANNEL + CHANNEL_MARGIN));
   const colStart: number[] = [];
   let m = 0;
   layers.forEach((_, li) => {
     colStart[li] = m;
-    m += layerMain[li] + H_GAP;
+    m += layerMain[li] + gapWidth[li];
   });
   const colEnd = (li: number) => colStart[li] + layerMain[li];
+  /** Where on the main axis a hop turns: its channel, centred in the room the gap has for channels. */
+  const turnAt = (li: number, key: string) => {
+    const [from, to] = [colEnd(li) + lead[li], colStart[li + 1] - trail[li]];
+    return (from + to) / 2 + (channel.get(`${li}\u0000${key}`)! - (channels[li] - 1) / 2) * CHANNEL;
+  };
 
   /** Main-axis and cross-axis coordinates to canvas x, y. */
   const at = (mm: number, cc: number): Pt =>
     dir === "LR" ? [origin.x + mm, origin.y + titleOffset + cc] : [origin.x + cc, origin.y + titleOffset + mm];
-  const crossAt = new Map<string, number>(); // top (or left) edge on the cross axis
-  for (const l of layers) {
-    for (const g of bandKeys) {
-      const items = l.filter((id) => groupOf.get(id) === g);
-      let c = bandStart.get(g)! + (bandSize.get(g)! - extent(items)) / 2;
-      items.forEach((id, k) => {
-        if (k) c += gapAfter(items[k - 1], id);
-        crossAt.set(id, c);
-        c += cross(id);
-      });
-    }
-  }
   const coord = new Map<string, Pt>();
   for (const n of nodes) {
     const li = layer.get(n.id)!;
     coord.set(n.id, at(colStart[li] + (layerMain[li] - main(n.id)) / 2, crossAt.get(n.id)!));
   }
-  const crossMid = (id: string) => crossAt.get(id)! + cross(id) / 2;
   const mainMid = (id: string) => colStart[layer.get(id)!] + layerMain[layer.get(id)!] / 2;
 
   const els: SkeletonEl[] = [];
@@ -435,27 +630,6 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
     });
   }
 
-  // Edges joining the same two nodes (either way round) are spread apart.
-  const pairs = new Map<string, number[]>();
-  chains.forEach((ch, k) => {
-    const key = `${ch.u}\u0000${ch.v}`;
-    pairs.set(key, [...(pairs.get(key) ?? []), k]);
-  });
-  const offset = new Map<number, number>();
-  for (const ks of pairs.values()) ks.forEach((k, j) => offset.set(k, (j - (ks.length - 1) / 2) * PARALLEL));
-
-  // Where a node's edges on one side carry end labels, each edge gets its own port, ordered by
-  // where it heads, far enough apart that the labels don't stack; elsewhere they share the centre.
-  const portOff = new Map<string, number>(); // `${k}:u` / `${k}:v`
-  for (const [key, ks] of sideEdges) {
-    const [node, side] = key.split("\u0000");
-    const texts = ks.map((k) => endText(chains[k].e, node)).filter((t): t is string => !!t);
-    if (!texts.length || ks.length < 2) continue;
-    const step = Math.min(portStep(texts), (cross(node) * 0.8) / (ks.length - 1));
-    const toward = (k: number) => crossMid(side === "out" ? (chains[k].via[0] ?? chains[k].v) : (chains[k].via.at(-1) ?? chains[k].u));
-    [...ks].sort((a, b) => toward(a) - toward(b) || a - b).forEach((k, j) => portOff.set(`${k}:${side === "out" ? "u" : "v"}`, (j - (ks.length - 1) / 2) * step));
-  }
-
   const arrow = (e: (typeof allEdges)[number], pts?: Pt[]): SkeletonEl => {
     const rel = relationOf(e);
     return {
@@ -481,20 +655,34 @@ export function layoutGraph(spec: GraphSpec, origin = { x: 0, y: 0 }): SkeletonE
   };
 
   chains.forEach((ch, k) => {
-    const ou = portOff.get(`${k}:u`) ?? offset.get(k)!;
-    const ov = portOff.get(`${k}:v`) ?? offset.get(k)!;
-    const lu = layer.get(ch.u)!;
-    const lv = layer.get(ch.v)!;
-    // Centre of u, a stub just past u's layer, through each slot, a stub before v's layer, centre of v.
+    const hs = hops[k];
+    // Centre of u (routeArrow starts the arrow on u's edge), a turn in each gap where the edge
+    // changes its cross position, centre of v.
     let pts: Pt[] = [
-      at(mainMid(ch.u), crossMid(ch.u) + (portOff.has(`${k}:u`) ? ou : 0)),
-      at(colEnd(lu) + port, crossMid(ch.u) + ou),
-      ...ch.via.flatMap((d, j): Pt[] => [at(colStart[lu + 1 + j], crossMid(d)), at(colEnd(lu + 1 + j), crossMid(d))]),
-      at(colStart[lv] - port, crossMid(ch.v) + ov),
-      at(mainMid(ch.v), crossMid(ch.v) + (portOff.has(`${k}:v`) ? ov : 0)),
+      at(mainMid(ch.u), hs[0].from),
+      ...hs.flatMap((h): Pt[] => (h.jog ? [at(turnAt(h.gap, h.key), h.from), at(turnAt(h.gap, h.key), h.to)] : [])),
+      at(mainMid(ch.v), hs[hs.length - 1].to),
     ];
-    if (ch.reversed) pts.reverse();
     pts = simplify(pts);
+    // A straight edge off the centre line (one of two between the same nodes) keeps a waypoint,
+    // or it would be routed centre to centre on top of its twin.
+    if (pts.length === 2 && Math.abs(hs[0].from - crossMid(ch.u)) > 0.5) pts = [pts[0], [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2], pts[1]];
+    if (ch.reversed) pts.reverse();
+    // Excalidraw centres a label on the middle point of its arrow, which for an edge that turns
+    // is on the trunk it shares with its siblings: their lines would run through the text. Put
+    // the middle point on the edge's own last run instead, just before the arrowhead, by adding
+    // points there until as many follow it as come before.
+    const len = labelLen(ch.e);
+    if (len && pts.length > 2) {
+      const to = ch.reversed ? ch.u : ch.v;
+      const l = layer.get(to)!;
+      const inset = (layerMain[l] - main(to)) / 2;
+      const back = headRoom(ch.reversed ? heads[k].u : heads[k].v) + LABEL_PAD / 2 + (labelBehind.get(k) ?? 0) + len / 2;
+      const [side, step] = ch.reversed ? [colEnd(l) - inset + back, -1] : [colStart[l] + inset - back, 1];
+      const c = ch.reversed ? hs[0].from : hs[hs.length - 1].to;
+      const before = pts.length - 1;
+      pts = [...pts.slice(0, -1), ...Array.from({ length: before }, (_, j) => at(side + j * step, c)), pts[pts.length - 1]];
+    }
     els.push(arrow(ch.e, pts));
   });
   // Self-loops are drawn as a small loop on the node (see routeArrow).

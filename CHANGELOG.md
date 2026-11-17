@@ -4,8 +4,34 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- Tracing can be turned on and pointed at a receiver from the assistant's settings (**Tracing**, under Diagnostics) or `"tracing"` in `ai.json`, and applies without restarting the daemon. Receiver headers are write-only, `lfx mcp` reads the same settings, and the page shows the last export error.
+
+- A layout check on every write. Tools that change a drawing end their result with what a reader would trip over (overlapping shapes, labels that don't fit, arrows through shapes, arrow labels on top of things) and what is worth improving (a drawing several times wider than tall, many crossings). MCP clients get it too. See [the layout check](docs/mcp.md#the-layout-check).
+- The assistant tidies up before it finishes. When it says it is done and its drawing has layout problems it caused, it is sent back to fix them, twice at most, so a "clean it up" follow-up is no longer needed. This applies to Claude Code endpoints as well.
+
+### Changed
+
+- `create_diagram` draws like a schematic:
+  - Edges run at right angles (straight out of a box, one turn between layers, straight in) instead of slanting between bends. Edges leaving the same box share a trunk.
+  - Arrowheads are drawn at full size. On a bent edge they had shrunk to a dot, because the last segment was too short.
+  - An edge's label sits on the edge's own last run, clear of the lines of its siblings, and labels of edges that end at the same box no longer sit side by side.
+  - Boxes of one kind share a width, unless one label is far longer than the rest.
+  - With no `direction`, the layout picks left to right or top to bottom, whichever is closer to the shape of a window. `LR` was the default before; pass it to keep it.
+  - Groups whose layers don't overlap sit in one row instead of stacking as a staircase, and an edge into a group runs inside its frame.
+  - An arrow arriving on the side of a box that other arrows leave from gets its own port, so the pair no longer reads as one two-headed arrow.
+- The assistant refers to things by their label and position in its replies, not by element id or coordinates.
+- Opening the assistant puts the cursor in the message box. In a narrow window the drawings sidebar closes to make room for it (⌘B brings it back).
+- The drawing is fitted to the canvas again when a panel opens or closes or the window is resized, until you pan or zoom, and after each of the assistant's edits.
+- Tool calls in the chat read as what they did ("Looked over the project", "Read a file · services/orders/server.ts") for every tool, with paths shown from the project down instead of from the filesystem root.
+- In the drawing tree, opening a folder also opens the folders that are its only way down, and a first visit starts with those open.
+- `lfx` with an unknown command prints an error and exits with status 2 instead of printing the help and exiting 0. `lfx help`, `--help` and `-h` print the help.
+
 ### Fixed
 
+- At window widths around 1024 px with the sidebar open, the Assistant and Library buttons were pushed off the right edge of the canvas. The top-right controls now shrink to icons and wrap.
+- `lfx open docs/diagrams/x` in a folder that is already inside a root no longer registers `docs/diagrams` as a second root.
 - The assistant no longer draws in `docs/diagrams/<name>.excalidraw` when the open drawing is elsewhere. Claude Code now gets the open drawing as its default (`lfx mcp --drawing`), the path help no longer points models at `docs/diagrams/`, diagram recipes leave out their example paths, a path that names the open drawing's file in another folder is refused, and a write to any other drawing says so in its result.
 
 ## [1.3.0] - 2026-10-21

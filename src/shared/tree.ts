@@ -124,6 +124,20 @@ export function ancestorFolders(root: string, file: string): string[] {
   return out;
 }
 
+/**
+ * The folders to open when `folder` is expanded: itself, then down through every folder whose
+ * only child is another folder, so `docs/diagrams` opens in one click instead of two.
+ */
+export function expandChain(folder: FolderNode): string[] {
+  const out = [folder.path];
+  let n = folder;
+  while (n.children.length === 1 && n.children[0].kind === "folder") {
+    n = n.children[0];
+    out.push(n.path);
+  }
+  return out;
+}
+
 export interface Row {
   node: TreeNode;
   depth: number;

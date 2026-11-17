@@ -12,6 +12,7 @@ import {
   type ToolPart,
 } from "../shared/chat";
 import { mentionLabel } from "../shared/mentions";
+import { toolLabel, toolSummary } from "../shared/tool-labels";
 import { ChatSettings } from "./ChatSettings";
 import { Markdown } from "./Markdown";
 import { Shapes } from "./Shapes";
@@ -43,64 +44,9 @@ interface Suggestion {
 /** Two mentions of the same thing: same path, lines and symbol. */
 const mentionKey = (m: Suggestion) => `${m.kind}:${m.path}:${m.lines?.join("-") ?? ""}:${m.symbol ?? ""}`;
 
-const TOOL_LABELS: Record<string, string> = {
-  excalidraw_guide: "Read the element guide",
-  list_drawings: "Listed drawings",
-  read_drawing: "Read the drawing",
-  create_drawing: "Created a drawing",
-  create_diagram: "Drew a diagram",
-  add_elements: "Added elements",
-  update_elements: "Updated elements",
-  delete_elements: "Deleted elements",
-  mermaid_to_drawing: "Converted Mermaid",
-  render_drawing: "Looked at the drawing",
-  export_drawing: "Exported an image",
-  list_shapes: "Looked up library shapes",
-  insert_shape: "Inserted a library shape",
-  list_files: "Listed files",
-  search_files: "Searched files",
-  read_file: "Read a file",
-  Read: "Read a file",
-  Grep: "Searched files",
-  Glob: "Listed files",
-};
-
-/** Labels for failed calls, so a failure never reads as "Drew a diagram". */
-const FAILED_LABELS: Record<string, string> = {
-  create_drawing: "Couldn't create the drawing",
-  create_diagram: "Couldn't draw the diagram",
-  add_elements: "Couldn't add elements",
-  update_elements: "Couldn't update elements",
-  delete_elements: "Couldn't delete elements",
-  mermaid_to_drawing: "Couldn't convert Mermaid",
-  insert_shape: "Couldn't insert the shape",
-  apply_changes: "Couldn't apply the changes",
-};
-
-/** The first line of an error, without the "Error:" / "Invalid arguments:" prefix. */
-function errorLine(result: string | undefined): string | undefined {
-  const line = result?.replace(/^(Error|Invalid arguments|Not run):\s*/, "").split("\n").find((l) => l.trim());
-  return line ? line.replace(/^✖\s*/, "").trim() : undefined;
-}
-
-function toolSummary(p: ToolPart): string {
-  if (p.status === "error") return errorLine(p.result) ?? "";
-  let args: Record<string, unknown> = {};
-  try {
-    args = JSON.parse(p.args || "{}");
-  } catch {
-    // partial or invalid
-  }
-  const pick = (k: string) => (typeof args[k] === "string" ? String(args[k]) : undefined);
-  const detail =
-    pick("pattern") ?? pick("file_path") ?? (pick("path") && p.name !== "add_elements" ? pick("path")!.split("/").slice(-2).join("/") : undefined) ?? pick("glob") ?? pick("title");
-  const count = Array.isArray(args.nodes) ? `${args.nodes.length} nodes` : Array.isArray(args.elements) ? `${args.elements.length}` : Array.isArray(args.updates) ? `${args.updates.length}` : Array.isArray(args.ids) ? `${args.ids.length}` : undefined;
-  return [detail, count].filter(Boolean).join(" · ");
-}
-
-function ToolChip({ part }: { part: ToolPart }) {
-  const label = part.status === "error" ? (FAILED_LABELS[part.name] ?? `${TOOL_LABELS[part.name] ?? part.name} (failed)`) : (TOOL_LABELS[part.name] ?? part.name);
-  const summary = toolSummary(part);
+function ToolChip({ part, drawing }: { part: ToolPart; drawing: string }) {
+  const label = toolLabel(part);
+  const summary = toolSummary(part, drawing);
   return (
     <details className={`lfx-tool lfx-tool-${part.status}`}>
       <summary>
@@ -108,7 +54,7 @@ function ToolChip({ part }: { part: ToolPart }) {
           {part.status === "running" ? "" : part.status === "ok" ? "✓" : "!"}
         </span>
         <span className="lfx-tool-label">{label}</span>
-        {summary && <span className="lfx-tool-detail">{summary}</span>}
+        {summary && <span className="lfx-tool-detail" title={summary}>{summary}</span>}
       </summary>
       <div className="lfx-tool-body">
         <div className="lfx-tool-name">{part.name}</div>
@@ -133,7 +79,7 @@ function prettyJson(s: string): string {
   }
 }
 
-function AssistantTurn({ item, onRevert }: { item: AssistantItem; onRevert: () => void }) {
+function AssistantTurn({ item, drawing, onRevert }: { item: AssistantItem; drawing: string; onRevert: () => void }) {
   return (
     <div className="lfx-msg lfx-assistant">
       {item.parts.map((p, i) =>
@@ -145,7 +91,7 @@ function AssistantTurn({ item, onRevert }: { item: AssistantItem; onRevert: () =
             <p>{p.text}</p>
           </details>
         ) : (
-          <ToolChip key={p.callId} part={p} />
+          <ToolChip key={p.callId} part={p} drawing={drawing} />
         ),
       )}
       {item.status === "running" && (
@@ -253,12 +199,15 @@ export function Chat({
   bridge,
   selectionCount,
   dark,
+  focusOnOpen,
   onClose,
 }: {
   path: string;
   bridge: ChatBridge;
   selectionCount: number;
   dark: boolean;
+  /** The user just opened the panel (rather than the page restoring it): put the cursor in the message box. */
+  focusOnOpen?: boolean;
   onClose: () => void;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -450,6 +399,15 @@ export function Chat({
 
   const configured = !!active;
 
+  // Opening the panel, or coming back to the chat from settings, shapes or past chats, puts the
+  // cursor in the message box. A panel the page restored on load leaves the keys with the canvas.
+  const mayFocus = useRef(!!focusOnOpen);
+  useEffect(() => {
+    if (view !== "chat" || !configured) return;
+    if (mayFocus.current) inputRef.current?.focus();
+    mayFocus.current = true;
+  }, [view, configured]);
+
   return (
     <aside className="lfx-chat" aria-label="Assistant">
       <header className="lfx-chat-head">
@@ -486,6 +444,7 @@ export function Chat({
               onClick={() => {
                 bridge.send({ t: "chat-new" });
                 setView("chat");
+                requestAnimationFrame(() => inputRef.current?.focus());
               }}
             >
               <svg viewBox="0 0 20 20" aria-hidden>
@@ -613,7 +572,7 @@ export function Chat({
                     )}
                   </div>
                 ) : (
-                  <AssistantTurn key={it.id} item={it} onRevert={() => bridge.send({ t: "chat-revert", session, id: it.id })} />
+                  <AssistantTurn key={it.id} item={it} drawing={path} onRevert={() => bridge.send({ t: "chat-revert", session, id: it.id })} />
                 ),
               )
             )}
@@ -717,7 +676,7 @@ export function Chat({
               rows={1}
               value={text}
               disabled={!configured}
-              placeholder={configured ? (selectionCount && useSelection ? "Ask about the selection…" : "Describe a change or a new diagram, or type / for a saved prompt") : "Set up a model first"}
+              placeholder={configured ? (selectionCount && useSelection ? "Ask about the selection…" : "Ask for a diagram or a change") : "Set up a model first"}
               onChange={(e) => onInput(e.target.value, e.target.selectionStart)}
               onKeyDown={onKeyDown}
               onBlur={() =>

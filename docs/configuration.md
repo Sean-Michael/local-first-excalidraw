@@ -23,7 +23,7 @@
 | `LFX_CLAUDE_BIN` | `claude` on `PATH` | Claude Code binary for the assistant |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | unset | Used when an endpoint for that service has no stored key |
 | `LFX_HOST`, `LFX_ALLOWED_HOSTS` | `127.0.0.1` | Bind address and extra allowed `Host` headers, for containers only |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `LFX_TRACE_FILE` | unset | Send traces of the assistant to an OTLP receiver or a file; see [Tracing](tracing.md) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `LFX_TRACE_FILE` | unset | Send traces of the assistant to an OTLP receiver or a file, unless `tracing` in `ai.json` says otherwise; see [Tracing](tracing.md) |
 
 ## Headless rendering
 
@@ -67,6 +67,7 @@ Assistant settings live in `~/.local-first-excalidraw/ai.json` (mode 0600). Edit
     { "id": "uml-class", "name": "UML class diagram", "text": "Draw a UML class diagram of " },
   ],
   "disabledTools": ["export_drawing"],   // tools the assistant isn't given
+  "tracing": { "enabled": true, "endpoint": "http://127.0.0.1:6006", "captureContent": true },
 }
 ```
 
@@ -74,6 +75,7 @@ Assistant settings live in `~/.local-first-excalidraw/ai.json` (mode 0600). Edit
 |---|---|
 | `prompts` | Saved prompts: `id`, `name` (shown in the **/** menu) and `text`. A text ending in a space or `…` is put in the message box to finish rather than sent. Leave the field out to get the defaults back. Also editable under **Saved Prompts** in the settings |
 | `disabledTools` | Names of tools the assistant isn't given, for every endpoint including Claude Code. The **Tools** page in the settings lists them all with what each does |
+| `tracing` | OpenTelemetry tracing: `enabled`, `endpoint`, `headers` (write-only), `captureContent` and `file`. Applies without a restart and overrides the `OTEL_*` variables. Also under **Tracing** in the settings; see [Tracing](tracing.md#in-aijson) |
 
 Endpoint fields:
 

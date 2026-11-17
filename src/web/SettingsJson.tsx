@@ -3,7 +3,8 @@ import type { PublicSettings } from "../shared/chat";
 import { JsoncError, parseJsonc, tokenize } from "../shared/jsonc";
 import { api } from "./sync";
 
-const TOP_KEYS = ["enabled", "active", "codeAccess", "endpoints", "prompts", "disabledTools"];
+const TOP_KEYS = ["enabled", "active", "codeAccess", "endpoints", "prompts", "disabledTools", "tracing"];
+const TRACING_KEYS = ["enabled", "endpoint", "headers", "captureContent", "file"];
 const PROMPT_KEYS = ["id", "name", "text"];
 const ENDPOINT_KEYS = ["id", "name", "kind", "baseUrl", "model", "apiKey", "vision", "tools", "effort", "contextLength"];
 const KINDS = ["openai", "ollama", "anthropic", "claude-code"];
@@ -35,11 +36,22 @@ export function settingsToJsonc(s: PublicSettings): string {
     "  // Offered under / in the message box.",
     `  "prompts": [${s.prompts.length ? `\n    ${s.prompts.map((p) => `{ ${Object.entries(p).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")} }`).join(",\n    ")}\n  ` : ""}],`,
     "  // Tools the assistant isn't given, by name (see Tools in the settings).",
-    `  "disabledTools": ${JSON.stringify(s.disabledTools)}`,
+    `  "disabledTools": ${JSON.stringify(s.disabledTools)},`,
+    "  // OpenTelemetry traces of each reply. Leave out to use the OTEL_* environment",
+    '  // variables. "headers" (key=value,key2=value2) is write-only, like API keys.',
+    ...(s.tracing.hasHeaders ? ["  // Tracing headers: stored (write-only)"] : []),
+    `  "tracing": ${tracingJson(s)}`,
     "}",
     "",
   ];
   return lines.join("\n");
+}
+
+function tracingJson(s: PublicSettings): string {
+  const t = s.tracing;
+  if (t.enabled === undefined && !t.endpoint && !t.captureContent && !t.file) return "null";
+  const o = { enabled: t.enabled, endpoint: t.endpoint, captureContent: t.captureContent, file: t.file };
+  return `{ ${Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")} }`;
 }
 
 /** Problems worth pointing out that the daemon would silently ignore. */
@@ -73,6 +85,15 @@ function lint(v: unknown): string[] {
     });
   if (o.disabledTools !== undefined && (!Array.isArray(o.disabledTools) || o.disabledTools.some((t) => typeof t !== "string"))) {
     out.push('"disabledTools" should be a list of tool names');
+  }
+  if (o.tracing !== undefined && o.tracing !== null) {
+    const t = o.tracing as Record<string, unknown>;
+    if (typeof t !== "object" || Array.isArray(t)) out.push('"tracing" should be an object');
+    else {
+      for (const k of Object.keys(t)) if (!TRACING_KEYS.includes(k)) out.push(`Unknown property "${k}" in "tracing"`);
+      for (const k of ["enabled", "captureContent", "file"]) if (k in t && typeof t[k] !== "boolean") out.push(`"tracing.${k}" should be true or false`);
+      if (t.enabled === true && !t.endpoint && !t.file) out.push('Tracing is on but has no "endpoint" and no "file", so traces go nowhere');
+    }
   }
   return out;
 }
@@ -125,6 +146,7 @@ export function SettingsJson({ settings, onSaved, onBack }: { settings: PublicSe
         endpoints: Array.isArray(v.endpoints) ? v.endpoints.map((e: Record<string, unknown>) => ({ ...e, hasKey: undefined, keyFromEnv: undefined })) : [],
         prompts: v.prompts ?? null,
         disabledTools: v.disabledTools ?? [],
+        tracing: v.tracing ?? null,
       });
       onSaved(s);
       setFileError(s.fileError);

@@ -37,7 +37,8 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 |---|---|---|
 | Daemon | `src/server/daemon.ts` | HTTP and WebSocket server, auth, routes, broadcast to tabs |
 | Document store | `src/server/store.ts`, `scene.ts` | In-memory scenes, version merge, atomic writes, file watching, scene operations |
-| Auto-layout | `src/server/layout.ts` | Layered layout for `create_diagram` |
+| Auto-layout | `src/server/layout.ts` | Layered layout for `create_diagram`, with right-angle edge routing |
+| Layout check | `src/server/lint.ts` | Readability problems in a drawing's geometry, returned by every write |
 | Tool registry | `src/server/tools.ts` | Every tool, shared by MCP and the assistant |
 | MCP server | `src/server/mcp.ts` | stdio transport, project root detection |
 | Headless renderer | `src/server/headless.ts`, `src/web/Renderer.tsx` | Finds, starts and stops the hidden browser; the page it loads |
@@ -65,9 +66,14 @@ Tools don't touch files. They call `op()`, which the daemon applies to the in-me
 2. `Assistant.send` builds a context block: a compact description of the drawing, the selection, and the mentioned files and drawings. It snapshots the drawing so the turn can be reverted.
 3. `runLoop` calls the provider, streaming text and tool calls back to every tab showing the drawing. It runs at most 40 steps.
 4. `runTool` validates each call against the tool's schema and runs it. Drawing edits go through the same `op()` path as MCP edits, tagged as the assistant's so the canvas puts them on the undo stack.
-5. When the model stops calling tools, the turn ends and the chat session is saved under its drawing.
+5. When the model stops calling tools, the daemon runs the [layout check](mcp.md#the-layout-check) on the drawing. If the turn changed the drawing and left problems that weren't there before, the model gets them as a note and the loop continues, twice at most. A turn's first note also carries the check's suggestions.
+6. Otherwise the turn ends and the chat session is saved under its drawing.
 
-Claude Code endpoints skip the loop. The daemon runs the `claude` CLI with read-only file tools and an MCP config pointing at `lfx mcp`, and relays its stream to the panel. Claude Code runs its own loop and edits the drawing through MCP.
+Claude Code endpoints skip the loop. The daemon runs the `claude` CLI with read-only file tools and an MCP config pointing at `lfx mcp`, and relays its stream to the panel. Claude Code runs its own loop and edits the drawing through MCP. The layout check still applies: when Claude Code finishes with problems left, the daemon resumes its session with the same note.
+
+### Why a check as well as a render
+
+A model that accepts images is told to render its drawing and fix what it sees, and it often replies "looks fine" to a drawing with a label sitting on a box. Geometry doesn't have that problem: an overlap is an overlap. So the check (`src/server/lint.ts`) is computed from the elements on every write, returned in the tool result, and enforced at the end of the turn. It is deliberately conservative, because a check that cries wolf makes a model loop on nothing: a zone around other shapes, a caption inside a box and the parts of one library shape are never reported. Models without vision get the same check, which is most of what a render would have told them.
 
 A model without tool calling gets a prompt asking for Mermaid. Each Mermaid block in its answer is converted with `mermaid_to_drawing`.
 

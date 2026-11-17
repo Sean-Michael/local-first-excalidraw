@@ -13,6 +13,7 @@ import { gitChanges } from "./git-changes.js";
 import { GUIDE } from "./guide.js";
 import { RELATIONS, type Relation } from "./layout.js";
 import { type LibraryShape, searchShapes, slug } from "./library.js";
+import { type LayoutCheck, layoutReport } from "./lint.js";
 import { readTopic, topicIndex } from "./references.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
@@ -102,7 +103,7 @@ const updateItem = z.looseObject({
 /** " Rev abc123." for a write's result, plus any notes the daemon made. */
 function after(r: Record<string, unknown>, notes: string[] = []): string {
   const all = [...notes, ...((r.notes as string[] | undefined) ?? [])];
-  return (r.contentRev ? ` Rev ${String(r.contentRev)}.` : "") + (all.length ? `\nNotes:\n- ${all.join("\n- ")}` : "");
+  return (r.contentRev ? ` Rev ${String(r.contentRev)}.` : "") + (all.length ? `\nNotes:\n- ${all.join("\n- ")}` : "") + layoutReport(r.layout as LayoutCheck | undefined);
 }
 
 const PATH_HELP =
@@ -369,7 +370,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
           )
           .optional(),
         groups: z.array(z.object({ id: z.string(), label: z.string().optional() })).optional(),
-        direction: z.enum(["LR", "TB"]).optional().describe("LR = left to right (default), TB = top to bottom"),
+        direction: z.enum(["LR", "TB"]).optional().describe("LR = left to right, TB = top to bottom. Leave out to get the one that fits a screen better (LR unless the result would be a wide strip)"),
         title: z.string().optional(),
         replace: z.boolean().optional().describe("Replace everything in the drawing with this diagram (one atomic write)"),
         ...openArg,

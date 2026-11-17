@@ -2,7 +2,7 @@
 
 The daemon and the MCP server can send OpenTelemetry traces of everything the assistant does. Each reply produces one trace: the model calls, the tool calls, and the drawing operations those tools ran. Use it to see where a reply spent its time and tokens, and where the model made mistakes.
 
-Tracing is off by default. Nothing is collected or sent until you set one of the variables below.
+Tracing is off by default. Nothing is collected or sent until you turn it on in the settings, in `ai.json`, or with the variables below.
 
 ## Turn it on
 
@@ -12,7 +12,37 @@ Run a trace viewer locally. [Arize Phoenix](https://github.com/Arize-ai/phoenix)
 docker run -d --name phoenix -p 127.0.0.1:6006:6006 arizephoenix/phoenix:latest
 ```
 
-Then start the daemon with an OTLP endpoint:
+Then open the assistant's settings, choose **Tracing** under Diagnostics, turn it on, and enter `http://127.0.0.1:6006` as the endpoint. Turn on **Record prompts and replies** to see content, not just counts. Saving applies the change straight away: the daemon swaps its exporter without restarting, and the next reply is traced.
+
+Open http://127.0.0.1:6006 and chat with the assistant. Each reply shows up as an `invoke_agent lfx-assistant` trace. Replies in the same drawing share a session id, so Phoenix groups a drawing's conversation together.
+
+Any OTLP receiver that takes http/protobuf also works: Langfuse, Jaeger, Grafana Tempo, or an OpenTelemetry Collector. gRPC isn't supported. `/v1/traces` is added to the endpoint unless it already ends with it, so for Langfuse enter `https://cloud.langfuse.com/api/public/otel` and put `Authorization=Basic <base64 of public:secret key>` in **Headers**. Headers are write-only, like API keys: the page never gets them back, and changing the endpoint drops them.
+
+**Save to file** also appends every span to `~/.local-first-excalidraw/traces.jsonl`, one JSON object per line, for scripts. It works with or without an endpoint.
+
+If an export fails (the receiver isn't running, or rejects the headers), the Tracing page shows the error until an export gets through.
+
+### In ai.json
+
+The same settings are `"tracing"` in [`ai.json`](configuration.md#aijson), which you can edit with **Edit as JSON** or by hand. The daemon picks up hand edits too.
+
+```jsonc
+"tracing": {
+  "enabled": true,
+  "endpoint": "http://127.0.0.1:6006",
+  "captureContent": true,   // record prompts, replies and tool payloads
+  "file": true,             // also write ~/.local-first-excalidraw/traces.jsonl
+  // "headers": "Authorization=Basic ...",   write-only; null removes them
+},
+```
+
+`"enabled": true` or `false` overrides the environment variables below. Leave `"tracing"` out, or set it to `null`, to go back to them.
+
+`lfx mcp` reads the same settings, so drawing tools called by Claude Code, in the app or in your terminal, are traced to the same place, headers included.
+
+### With environment variables
+
+Without `"tracing"` in `ai.json`, the daemon follows the standard OpenTelemetry variables:
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:6006 \
@@ -20,15 +50,15 @@ OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true \
 lfx serve
 ```
 
-Open http://127.0.0.1:6006 and chat with the assistant. Each reply shows up as an `invoke_agent lfx-assistant` trace. Replies in the same drawing share a session id, so Phoenix groups a drawing's conversation together.
+The Tracing page says when tracing is on because of these variables. Saving there replaces them with the page's settings.
 
-Any OTLP receiver that takes http/protobuf also works: Langfuse, Jaeger, Grafana Tempo, or an OpenTelemetry Collector. gRPC isn't supported.
-
-The macOS app starts the daemon without your shell environment. To keep a trace file without a receiver, turn on **Record assistant traces** in the app's Settings (Diagnostics). The next daemon the app starts writes every turn, with content, to `~/.local-first-excalidraw/traces.jsonl`. To send traces to a receiver instead, quit the app, run `lfx serve` from a terminal with the variables set, and reopen the app: it uses a daemon that's already running.
+The macOS app starts the daemon without your shell environment, so use the settings page there. The app's own **Record assistant traces** switch (Settings, Diagnostics) still works: it sets `LFX_TRACE_FILE` for the next daemon the app starts, unless `ai.json` sets tracing.
 
 Without tracing, the assistant's saved chats still record every tool call's arguments and result. `npm run chats -- --since 24` summarises them, one row per reply: model, tool calls, failures, exact repeats of a failed call, and files read. Add a word to filter by drawing, prompt or model, or `--json` for the raw rows.
 
 ## Variables
+
+These apply while `ai.json` leaves tracing unset, except `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`, which always apply.
 
 | Variable | Effect |
 |---|---|
@@ -69,4 +99,4 @@ With `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, spans also hold 
 
 To keep spans small, each `chat` span records only the messages that are new since the previous model call: your message for the first call, then the tool results. The reply span records your message and the final reply.
 
-When the assistant runs Claude Code, the exporter settings are passed to the `lfx mcp` process it starts, except `OTEL_EXPORTER_OTLP_HEADERS`. Those settings travel on Claude Code's command line, where other local users could see headers. If your receiver needs headers, the drawing tools in those replies aren't traced.
+When the assistant runs Claude Code, the `lfx mcp` process it starts reads tracing from `ai.json` itself, headers included. With tracing set by environment variables instead, the exporter settings are passed to that process, except `OTEL_EXPORTER_OTLP_HEADERS`: those settings travel on Claude Code's command line, where other local users could see headers. If your receiver needs headers, set them in the settings rather than the environment.

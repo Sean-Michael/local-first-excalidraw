@@ -12,7 +12,7 @@ Workflow: read the real code first and use its names (project_overview maps an u
 export const GUIDE = `# Local-first Excalidraw: drawing guide
 
 ## Pick the tool
-- **create_diagram**: nodes + edges with automatic layout (LR or TB). The default for architecture, request flows, pipelines, state machines, dependency graphs, and UML and ER diagrams. Groups become labelled frames. Nodes take \`code\` links.
+- **create_diagram**: nodes + edges with automatic layout: right-angle arrows, boxes of one width, and LR or TB (leave \`direction\` out and it picks the one that fits a screen). The default for architecture, request flows, pipelines, state machines, dependency graphs, and UML and ER diagrams. Groups become labelled frames. Nodes take \`code\` links.
   - UML/ER notation: edges take a \`relation\` that sets the arrowheads and line style: \`inheritance\` and \`realization\` (hollow triangle at the parent, which is laid out first), \`composition\` and \`aggregation\` (diamond at \`from\`, the whole), \`association\` (plain line), \`dependency\` (dashed), \`include\`/\`extend\` (use cases), \`message\`/\`reply\`, and crow's foot \`one-to-one\`, \`one-to-many\`, \`many-to-many\`, \`one-to-one-or-many\`. \`startArrowhead\`/\`endArrowhead\` override them. Multiplicities, role names and cardinalities go in \`startLabel\` (beside \`from\`) and \`endLabel\` (beside \`to\`), not the middle \`label\`: \`{ "from": "order", "to": "item", "relation": "composition", "startLabel": "1", "endLabel": "1..*" }\`. Each is grouped with the box at its end, so it moves with that box.
   - Class and entity nodes take \`attributes\` and \`operations\` (compartments under rule lines) and \`stereotype\` («interface», «device», …). Shapes \`initial\` (●), \`final\` (◉) and \`bar\` (fork/join) take an empty label.
 - **mermaid_to_drawing**: only \`flowchart\` and \`sequenceDiagram\` become editable shapes. Class, ER, state and other Mermaid types arrive as one uneditable image: use create_diagram for those.
@@ -78,7 +78,8 @@ In one batch, shapes are created before arrows and frames, so arrows and frames 
 Meaning: blue = services, green = data stores, orange = external or third-party, violet = AI or processing, yellow = decisions and notes, red = failure paths, gray = infrastructure. Dashed strokes for async flows and external boundaries.
 
 ## Check after every batch
-After each create_diagram, add or apply call, run render_drawing and check:
+Every write's result ends with a **layout check** of the whole drawing: overlapping shapes, labels that don't fit, arrows through shapes, arrow labels on top of things. Fix every problem it lists before you report, and act on its "worth improving" notes (a drawing several times wider than tall, many crossings). When the whole layout is wrong and you drew it this session, one create_diagram with \`replace: true\` and another direction or grouping beats nudging boxes.
+The check reads geometry only, so also run render_drawing after each create_diagram, add or apply call and check:
 1. Every label fits its shape, with padding; nothing is cut off.
 2. No shapes overlap; frames contain their children with padding.
 3. No arrow runs through an unrelated shape or label; every connection is bound at both ends.

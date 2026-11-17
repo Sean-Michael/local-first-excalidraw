@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { SettingsStore } from "./ai/settings.js";
 import { DaemonClient, openInBrowser } from "./client.js";
 import { baseUrl, loadConfig, VERSION } from "./config.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry.js";
@@ -12,7 +13,8 @@ Usage:
   lfx open [file.excalidraw]   Open the editor (starts the daemon if needed)
   lfx url [file.excalidraw]    Print a one-time sign-in link instead of opening a browser
   lfx serve                    Run the daemon in the foreground
-  lfx mcp [--root DIR]         MCP server over stdio (for coding agents)
+  lfx mcp [--root DIR] [--drawing FILE]
+                               MCP server over stdio (for coding agents); --drawing makes FILE the default drawing
   lfx status                   Show daemon status
   lfx stop                     Stop the daemon
   lfx roots [list]             List the folders the daemon may read and write drawings in
@@ -27,7 +29,8 @@ Environment:
   LFX_PARENT_PID     stop the daemon when this process exits
   LFX_HEADLESS       auto | always | off: render in a hidden browser when no tab is open (auto)
   LFX_BROWSER        Chrome/Chromium binary for headless rendering (found automatically)
-  Tracing: OTEL_EXPORTER_OTLP_ENDPOINT (http/protobuf)  LFX_TRACE_FILE (JSON lines)
+  Tracing: "tracing" in ai.json (or Settings > Tracing in the app), else
+           OTEL_EXPORTER_OTLP_ENDPOINT (http/protobuf)  LFX_TRACE_FILE (JSON lines)
            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true  (record prompts and replies)
 `;
 
@@ -65,9 +68,10 @@ async function main() {
       return;
     }
     case "mcp": {
-      if (initTelemetry("local-first-excalidraw-mcp")) exitOnSignals();
+      // Tracing set in ai.json applies here too, headers included, so they never travel on a command line.
+      if (initTelemetry("local-first-excalidraw-mcp", { tracing: new SettingsStore(cfg.stateDir).tracing() })) exitOnSignals();
       const { runMcp } = await import("./mcp.js");
-      await runMcp(cfg, { root: argValue(args, "--root") });
+      await runMcp(cfg, { root: argValue(args, "--root"), drawing: argValue(args, "--drawing") });
       return;
     }
     case "open":
@@ -160,8 +164,15 @@ async function main() {
     case "-v":
       console.log(VERSION);
       return;
-    default:
+    case "help":
+    case "--help":
+    case "-h":
       console.log(HELP);
+      return;
+    default:
+      // A typo shouldn't look like success to a script, or bury the mistake under the help text.
+      console.error(`lfx: unknown command "${cmd}". Run \`lfx help\` for the list of commands.`);
+      process.exitCode = 2;
   }
 }
 

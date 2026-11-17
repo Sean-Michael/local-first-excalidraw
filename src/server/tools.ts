@@ -13,6 +13,7 @@ import { gitChanges } from "./git-changes.js";
 import { GUIDE } from "./guide.js";
 import { RELATIONS, type Relation } from "./layout.js";
 import { type LibraryShape, searchShapes, slug } from "./library.js";
+import { type LayoutCheck, layoutReport } from "./lint.js";
 import { readTopic, topicIndex } from "./references.js";
 import { normalizeUpdates } from "./scene.js";
 import { resolveSafePath } from "./security.js";
@@ -102,11 +103,15 @@ const updateItem = z.looseObject({
 /** " Rev abc123." for a write's result, plus any notes the daemon made. */
 function after(r: Record<string, unknown>, notes: string[] = []): string {
   const all = [...notes, ...((r.notes as string[] | undefined) ?? [])];
-  return (r.contentRev ? ` Rev ${String(r.contentRev)}.` : "") + (all.length ? `\nNotes:\n- ${all.join("\n- ")}` : "");
+  return (r.contentRev ? ` Rev ${String(r.contentRev)}.` : "") + (all.length ? `\nNotes:\n- ${all.join("\n- ")}` : "") + layoutReport(r.layout as LayoutCheck | undefined);
 }
 
 const PATH_HELP =
   'Drawing path, relative to the project root (e.g. "docs/diagrams/auth-flow.excalidraw"). A bare name like "auth-flow" goes to docs/diagrams/.';
+
+/** Path help for the assistant, where `path` defaults to the open drawing and bare names go next to it. */
+const CURRENT_PATH_HELP =
+  'Leave out to use the drawing the user has open, which is almost always what you want. Pass it only to read or create a different drawing: a path relative to the project root, or a bare name like "auth-flow", which goes next to the open drawing.';
 
 export function resolveDrawing(ctx: ToolContext, p: string | undefined): string {
   if (!p) {
@@ -115,12 +120,23 @@ export function resolveDrawing(ctx: ToolContext, p: string | undefined): string 
   }
   let rel = p.trim();
   if (!rel.endsWith(".excalidraw")) rel += ".excalidraw";
+  const cur = ctx.currentDrawing;
+  let file: string;
   if (!path.isAbsolute(rel) && !rel.includes("/") && !rel.includes(path.sep)) {
     // A bare name goes next to the open drawing in the assistant (so its own name means that
     // drawing), and into docs/diagrams/ for MCP agents.
-    return ctx.currentDrawing ? path.join(path.dirname(ctx.currentDrawing), rel) : path.resolve(ctx.projectRoot, DEFAULT_DIR, rel);
+    file = cur ? path.join(path.dirname(cur), rel) : path.resolve(ctx.projectRoot, DEFAULT_DIR, rel);
+  } else {
+    file = path.resolve(ctx.projectRoot, rel);
   }
-  return path.resolve(ctx.projectRoot, rel);
+  // Models told drawings live in docs/diagrams/ put the open drawing's name there and edit a
+  // different (often new) file. An absolute path is taken as deliberate.
+  if (cur && file !== cur && path.basename(file) === path.basename(cur) && !path.isAbsolute(rel)) {
+    throw new Error(
+      `${relPath(ctx, file)} is not the open drawing: the user has ${relPath(ctx, cur)} open. Leave out path to use the open drawing (or pass the absolute path ${file} if you really mean that other file).`,
+    );
+  }
+  return file;
 }
 
 export function relPath(ctx: ToolContext, abs: string): string {
@@ -204,12 +220,13 @@ export function normalizeGraphArgs(a: Obj): string[] {
 }
 
 export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
-  const pathArg = opts.currentDrawing
-    ? z.string().optional().describe(`${PATH_HELP} Omit to use the drawing the user has open.`)
-    : z.string().describe(PATH_HELP);
+  const pathArg = opts.currentDrawing ? z.string().optional().describe(CURRENT_PATH_HELP) : z.string().describe(PATH_HELP);
+  const newPathHelp = opts.currentDrawing
+    ? 'Path relative to the project root, or a bare name like "auth-flow", which goes next to the open drawing. To add to the open drawing, use the other tools instead.'
+    : PATH_HELP;
   const openArg: z.ZodRawShape = opts.currentDrawing ? {} : { open: z.boolean().optional().describe("Also open it in the user's browser") };
 
-  return [
+  const defs: ToolDef[] = [
     {
       name: "excalidraw_guide",
       title: "Excalidraw element guide",
@@ -227,7 +244,12 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
         'Pass a topic name or just describe the diagram in your own words ("uml class diagram", "use case", "erd"): the best-matching notes come back. Omit topic for the list.',
       input: { topic: z.string().optional().describe('A topic name from the list, or a description of the diagram, e.g. "uml-overview", "class diagram", "use case diagram"') },
       readOnly: true,
-      run: async ({ topic }) => ({ text: topic?.trim() ? readTopic(topic) : topicIndex() }),
+      run: async ({ topic }, ctx) => {
+        const text = topic?.trim() ? readTopic(topic) : topicIndex();
+        // The recipes name a docs/diagrams/ file for MCP agents; the assistant copies that path
+        // and draws in a new file instead of the open one.
+        return { text: ctx.currentDrawing ? text.replace(/^[ \t]*"path": "[^"]*",?\n/gm, "") : text };
+      },
     },
     {
       name: "list_drawings",
@@ -281,7 +303,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       title: "Create drawing",
       description: "Creates a new .excalidraw file, optionally with initial elements (simplified format, see excalidraw_guide).",
       input: {
-        path: z.string().describe(PATH_HELP),
+        path: z.string().describe(newPathHelp),
         elements: z.array(skeleton).optional(),
         overwrite: z.boolean().optional().describe("Replace an existing drawing"),
         ...openArg,
@@ -348,7 +370,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
           )
           .optional(),
         groups: z.array(z.object({ id: z.string(), label: z.string().optional() })).optional(),
-        direction: z.enum(["LR", "TB"]).optional().describe("LR = left to right (default), TB = top to bottom"),
+        direction: z.enum(["LR", "TB"]).optional().describe("LR = left to right, TB = top to bottom. Leave out to get the one that fits a screen better (LR unless the result would be a wide strip)"),
         title: z.string().optional(),
         replace: z.boolean().optional().describe("Replace everything in the drawing with this diagram (one atomic write)"),
         ...openArg,
@@ -748,6 +770,17 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       },
     },
   ];
+  if (!opts.currentDrawing) return defs;
+  // Say so when a write went to another drawing, so a model that passed the wrong path notices.
+  return defs.map((d) => ({
+    ...d,
+    run: async (args, ctx) => {
+      const out = await d.run(args, ctx);
+      if (!out.drawing || !ctx.currentDrawing) return out;
+      const note = `Note: this changed ${relPath(ctx, out.drawing)}, not the drawing the user has open (${relPath(ctx, ctx.currentDrawing)}). If you meant the open drawing, leave out path.`;
+      return { ...out, text: `${out.text}\n${note}` };
+    },
+  }));
 }
 
 /** A map of the project: the first call when asked to diagram it. Also served over MCP. */

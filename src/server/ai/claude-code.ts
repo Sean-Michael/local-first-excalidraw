@@ -12,6 +12,8 @@ import type { Usage } from "./types.js";
 export interface ClaudeCodeOptions {
   bin: string;
   cwd: string;
+  /** The drawing the user has open; drawing tools default to it. */
+  drawing?: string;
   model?: string;
   effort?: string;
   /** Resume the previous conversation for this drawing. */
@@ -71,7 +73,7 @@ export function claudeCodeArgs(o: ClaudeCodeOptions): string[] {
   const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "cli.js");
   const mcp = {
     mcpServers: {
-      excalidraw: { command: process.execPath, args: [cli, "mcp", "--root", o.cwd], env: o.mcpEnv },
+      excalidraw: { command: process.execPath, args: [cli, "mcp", "--root", o.cwd, ...(o.drawing ? ["--drawing", o.drawing] : [])], env: o.mcpEnv },
     },
   };
   const tools = o.codeAccess ? READ_TOOLS : [];

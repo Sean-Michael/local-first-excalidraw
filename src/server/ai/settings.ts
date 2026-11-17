@@ -10,6 +10,7 @@ import path from "node:path";
 import { writeFileAtomic } from "../config.js";
 import { DEFAULT_PROMPTS, type EndpointKind, type PublicEndpoint, type PublicSettings, type SavedPrompt } from "../../shared/chat.js";
 import { parseJsonc } from "../../shared/jsonc.js";
+import { parseHeaders, type TracingConfig, telemetryStatus } from "../telemetry.js";
 
 export interface Endpoint {
   id: string;
@@ -37,6 +38,18 @@ export interface AiSettings {
   prompts?: SavedPrompt[];
   /** Tool names the assistant isn't given. */
   disabledTools?: string[];
+  /** OpenTelemetry tracing; unset leaves it to the environment variables. */
+  tracing?: Tracing;
+}
+
+export interface Tracing {
+  enabled?: boolean;
+  endpoint?: string;
+  /** Write-only, like API keys: `key=value,key2=value2`. */
+  headers?: string;
+  captureContent?: boolean;
+  /** Also write `<stateDir>/traces.jsonl`. */
+  file?: boolean;
 }
 
 const KINDS: EndpointKind[] = ["openai", "ollama", "anthropic", "claude-code"];
@@ -46,7 +59,7 @@ export const DEFAULT_SETTINGS: AiSettings = { enabled: false, codeAccess: true, 
 
 export class SettingsError extends Error {}
 
-function normalizeUrl(u: string | undefined): string | undefined {
+function normalizeUrl(u: string | undefined, credentials = "Put credentials in the API key field, not the URL"): string | undefined {
   if (!u) return undefined;
   let url: URL;
   try {
@@ -55,7 +68,7 @@ function normalizeUrl(u: string | undefined): string | undefined {
     throw new SettingsError(`Invalid URL: ${u}`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new SettingsError("Endpoint URL must be http or https");
-  if (url.username || url.password) throw new SettingsError("Put credentials in the API key field, not the URL");
+  if (url.username || url.password) throw new SettingsError(credentials);
   return url.toString().replace(/\/+$/, "");
 }
 
@@ -125,6 +138,33 @@ function parseToolNames(raw: unknown): string[] | undefined {
   return [...new Set((raw as string[]).map((t) => t.trim()).filter((t) => /^[\w-]{1,64}$/.test(t)))].slice(0, 200);
 }
 
+/** Validates the tracing section. The caller decides what happens to its headers. */
+function parseTracing(raw: unknown): Omit<Tracing, "headers"> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new SettingsError('"tracing" must be an object');
+  const t = raw as Record<string, unknown>;
+  const bool = (k: string) => (t[k] === undefined || t[k] === null ? undefined : !!t[k]);
+  let endpoint: string | undefined;
+  try {
+    endpoint = normalizeUrl(str(t.endpoint, 2048), "Put receiver credentials in the tracing headers, not the URL");
+  } catch (e) {
+    throw new SettingsError(`Tracing endpoint: ${(e as Error).message}`);
+  }
+  return { enabled: bool("enabled"), endpoint, captureContent: bool("captureContent"), file: bool("file") };
+}
+
+const headersOf = (raw: unknown) => {
+  const h = (raw as Record<string, unknown> | undefined)?.headers;
+  return typeof h === "string" && h.trim() ? h.trim().slice(0, 8192) : undefined;
+};
+
+/** Drops fields left unset, so ai.json only says what the user chose. */
+const compact = (t: Tracing | undefined): Tracing | undefined => {
+  if (!t) return undefined;
+  const out = Object.fromEntries(Object.entries(t).filter(([, v]) => v !== undefined)) as Tracing;
+  return Object.keys(out).length ? out : undefined;
+};
+
 export class SettingsStore {
   private file: string;
   private data: AiSettings = { ...DEFAULT_SETTINGS };
@@ -132,7 +172,11 @@ export class SettingsStore {
   /** Why the last hand edit to ai.json was ignored, until it's fixed. */
   private fileError?: string;
 
-  constructor(stateDir: string) {
+  private stateDir: string;
+
+  /** `onChange` runs whenever the settings change, from the app or from a hand edit. */
+  constructor(stateDir: string, private onChange?: (store: SettingsStore) => void) {
+    this.stateDir = stateDir;
     this.file = path.join(stateDir, "ai.json");
     this.reload();
   }
@@ -161,8 +205,10 @@ export class SettingsStore {
         endpoints: (list as Record<string, unknown>[]).map((e) => ({ ...parseEndpoint(e), apiKey: str(e.apiKey, 4096) })),
         prompts: parsePrompts(raw.prompts),
         disabledTools: parseToolNames(raw.disabledTools),
+        tracing: compact(raw.tracing === undefined || raw.tracing === null ? undefined : { ...parseTracing(raw.tracing), headers: headersOf(raw.tracing) }),
       };
       this.fileError = undefined;
+      this.onChange?.(this);
     } catch (e) {
       // Keep the last good settings so a half-saved edit doesn't switch the assistant off.
       this.fileError = `${path.basename(this.file)} was not loaded: ${(e as Error).message}`;
@@ -197,6 +243,18 @@ export class SettingsStore {
     return this.get().prompts ?? DEFAULT_PROMPTS;
   }
 
+  /** Tracing settings in the form the telemetry module takes. */
+  tracing(): TracingConfig | undefined {
+    const t = this.get().tracing;
+    if (!t) return undefined;
+    return { enabled: t.enabled, endpoint: t.endpoint, headers: t.headers, captureContent: t.captureContent, file: t.file ? this.traceFile : undefined };
+  }
+
+  /** Where `"file": true` writes spans. */
+  get traceFile(): string {
+    return path.join(this.stateDir, "traces.jsonl");
+  }
+
   /** Whether the assistant may call a tool. */
   toolEnabled(name: string): boolean {
     return !(this.get().disabledTools ?? []).includes(name);
@@ -213,6 +271,15 @@ export class SettingsStore {
       fileError: this.fileError,
       prompts: this.prompts(),
       disabledTools: data.disabledTools ?? [],
+      tracing: {
+        enabled: data.tracing?.enabled,
+        endpoint: data.tracing?.endpoint,
+        captureContent: !!data.tracing?.captureContent,
+        file: !!data.tracing?.file,
+        hasHeaders: !!data.tracing?.headers,
+        traceFile: this.traceFile,
+        status: telemetryStatus(),
+      },
       endpoints: data.endpoints.map((e): PublicEndpoint => {
         const env = envKeyName(e);
         return {
@@ -235,6 +302,8 @@ export class SettingsStore {
   /**
    * Applies an update from the settings form or JSON editor. Per endpoint, `apiKey` is a
    * string to set it, null to clear it, or absent to keep the stored one (unless the URL changed).
+   * Tracing `headers` work the same way, keyed to the tracing endpoint; `tracing: null` unsets
+   * tracing, handing it back to the environment.
    */
   update(body: Record<string, unknown>): AiSettings {
     const current = this.get();
@@ -256,6 +325,18 @@ export class SettingsStore {
       if (ids.has(e.id)) throw new SettingsError(`Two endpoints share the id "${e.id}"`);
       ids.add(e.id);
     }
+    let tracing = current.tracing;
+    if (body.tracing === null) tracing = undefined;
+    else if (body.tracing !== undefined) {
+      const t = parseTracing(body.tracing)!;
+      let headers = current.tracing?.headers;
+      if (current.tracing?.endpoint !== t.endpoint) headers = undefined;
+      const rawHeaders = (body.tracing as Record<string, unknown>).headers;
+      if (rawHeaders === null) headers = undefined;
+      else if (headersOf(body.tracing)) headers = headersOf(body.tracing);
+      if (headers && !Object.keys(parseHeaders(headers)).length) throw new SettingsError("Tracing headers must look like key=value,key2=value2");
+      tracing = compact({ ...t, headers });
+    }
     this.data = {
       enabled: body.enabled === undefined ? current.enabled : !!body.enabled,
       codeAccess: body.codeAccess === undefined ? current.codeAccess : !!body.codeAccess,
@@ -263,10 +344,12 @@ export class SettingsStore {
       endpoints,
       prompts: body.prompts === undefined ? current.prompts : parsePrompts(body.prompts),
       disabledTools: body.disabledTools === undefined ? current.disabledTools : parseToolNames(body.disabledTools),
+      tracing,
     };
     writeFileAtomic(this.file, JSON.stringify(this.data, null, 2), 0o600);
     this.mtime = fs.statSync(this.file).mtimeMs;
     this.fileError = undefined;
+    this.onChange?.(this);
     return this.data;
   }
 }

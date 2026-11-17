@@ -29,7 +29,7 @@ Call `excalidraw_guide` once per session before your first edit. It has the elem
 ## New diagram
 
 1. **Read the code first,** so every box and arrow is real. Use the names from the code, and note the file each node comes from.
-2. **Draw with `create_diagram`.** `direction: "LR"` for request flows and pipelines, `"TB"` for hierarchies and decisions. Groups for real boundaries (a system, a trust zone, a package). Give each node a readable `id` and a `code` link (`"services/orders/src/server.ts"`, or `"…/repo.ts:42"`). Labels of 1-4 words. Edge labels only when the meaning isn't obvious, 12 characters or fewer.
+2. **Draw with `create_diagram`.** `direction: "LR"` for request flows and pipelines, `"TB"` for hierarchies and decisions; leave it out and the layout picks the one that fits a screen. Groups for real boundaries (a system, a trust zone, a package). Give each node a readable `id` and a `code` link (`"services/orders/src/server.ts"`, or `"…/repo.ts:42"`). Labels of 1-4 words. Edge labels only when the meaning isn't obvious, 12 characters or fewer.
 3. **Check after every batch** (below), then `open_drawing` and tell the user the file path.
 
 ## Existing diagram
@@ -44,7 +44,7 @@ When the code changed and a diagram should follow (`/excalidraw:sync`, "update t
 
 ## Check after every batch
 
-After each create, add or apply, `render_drawing` and check that labels fit, nothing overlaps, every connection is bound at both ends and crosses no unrelated shape, arrow labels are short and clear, gaps are at least 40 px, and text is at least 14 px. If something fails, say what you see ("I see the queue label overflowing its box, fixing it"), fix it, and render that part again. Report only after a render passes. Details and the layout anti-patterns: [references/layout.md](references/layout.md).
+Every write's result ends with a layout check (overlaps, labels that don't fit, arrows through shapes): fix what it lists first. Then, after each create, add or apply, `render_drawing` and check that labels fit, nothing overlaps, every connection is bound at both ends and crosses no unrelated shape, arrow labels are short and clear, gaps are at least 40 px, and text is at least 14 px. If something fails, say what you see ("I see the queue label overflowing its box, fixing it"), fix it, and render that part again. Report only after a render passes. Details and the layout anti-patterns: [references/layout.md](references/layout.md).
 
 ## When a tool fails
 

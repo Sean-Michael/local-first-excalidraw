@@ -67,8 +67,9 @@ import {
   SECURITY_HEADERS,
 } from "./security.js";
 import { editorCommand, editorSetting, launch } from "./open-code.js";
+import { checkLayout } from "./lint.js";
 import { DocStore, InvalidDrawingError, listDrawings, type SceneChange } from "./store.js";
-import { contextFromHeaders, runIn, shutdownTelemetry, withSpan } from "./telemetry.js";
+import { configureTelemetry, contextFromHeaders, runIn, shutdownTelemetry, withSpan } from "./telemetry.js";
 
 const MAX_BODY = 60 * 1024 * 1024;
 const SESSION_COOKIE = "lfx_session";
@@ -425,7 +426,12 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const out = (await runOp(body, via)) as Record<string, unknown>;
       const p = String(out.path ?? body.path);
       // Writes report the new content revision, so the caller can chain if_rev.
-      if (WRITE_OPS.has(String(body.op)) && typeof out.rev === "number") out.contentRev = contentRev(store.get(p).scene.elements);
+      if (WRITE_OPS.has(String(body.op)) && typeof out.rev === "number") {
+        const { elements } = store.get(p).scene;
+        out.contentRev = contentRev(elements);
+        // And how the drawing reads now, so the caller can fix a layout problem it just made.
+        out.layout = checkLayout(elements);
+      }
       let rel = path.basename(p);
       try {
         rel = path.relative(projectRootFor(p), p) || rel;
@@ -475,6 +481,11 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
     const root = () => projectRootFor(p);
     const links = <T extends Parameters<typeof codeLinks>[0][number]>(items: T[], existing?: El[]) => codeLinks(items, root(), notes, existing, origin === "agent");
     switch (body.op) {
+      case "check": {
+        const doc = store.getLive(p);
+        if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
+        return { path: p, contentRev: contentRev(doc.scene.elements), elements: live(doc.scene.elements).length, layout: checkLayout(doc.scene.elements) };
+      }
       case "read": {
         const doc = store.getLive(p);
         if (!doc.exists) throw new HttpError(404, `No drawing at ${p}`);
@@ -766,7 +777,9 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
   };
 
   // ---- assistant ----------------------------------------------------------------------------
-  const settings = new SettingsStore(cfg.stateDir);
+  // Tracing follows ai.json as it changes, whether from the settings page or a hand edit.
+  const settings = new SettingsStore(cfg.stateDir, (s) => configureTelemetry(s.tracing()));
+  configureTelemetry(settings.tracing());
 
   /**
    * The assistant's project root for a drawing: the git repository it lives in (`lfx open`
@@ -1241,7 +1254,13 @@ export async function startDaemon(cfg: Config): Promise<http.Server> {
       const r = fs.realpathSync.native(path.resolve(String(body.path)));
       if (!fs.statSync(r).isDirectory()) throw new HttpError(400, "Root must be a directory");
       if (r === path.parse(r).root) throw new HttpError(400, "Refusing to register the filesystem root");
-      if (body.session === true) {
+      // A folder inside a root that's there to stay is already usable: registering it again would
+      // only list it twice (`lfx open docs/diagrams/x` in a project that is itself a root).
+      const real = (o: string) => (fs.existsSync(o) ? fs.realpathSync.native(o) : o);
+      const covered = [...cfg.defaultRoots.map(real), ...registered].some((o) => o !== r && r.startsWith(o.endsWith(path.sep) ? o : o + path.sep));
+      if (covered && !registered.has(r)) {
+        sessionRoots.delete(r);
+      } else if (body.session === true) {
         if (!registered.has(r)) sessionRoots.add(r);
       } else {
         sessionRoots.delete(r);

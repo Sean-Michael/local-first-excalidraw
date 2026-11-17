@@ -10,7 +10,9 @@ Click **Assistant** at the top right of a drawing, or press ⇧⌘A (Ctrl+Shift+
 
 Ask for a new diagram, or select items (drag a rectangle or click them) and ask for changes to just those. The selection chip above the input shows what will be sent; click it to leave the selection out. Type `@` to mention a project file, a folder, a line range, a symbol or another drawing ([Mention code](#mention-code)).
 
-Each reply lists the tools it called (read a file, drew a diagram, looked at the drawing) and shows which endpoint answered.
+Each reply lists the tools it called (read a file, drew a diagram, looked at the drawing) and shows which endpoint answered. Click a tool to see its arguments and result.
+
+Opening the panel puts the cursor in the message box. In a window too narrow for the sidebar, the canvas and the panel together, the sidebar closes to make room; ⌘B (Ctrl+B) brings it back. The drawing is fitted to the canvas again whenever a panel opens or closes, until you pan or zoom it yourself.
 
 ## Add a model
 
@@ -103,7 +105,9 @@ The Claude Code endpoint explores with Claude Code's own Read, Grep and Glob, pl
 The assistant has the same drawing tools as MCP agents ([the tool list](mcp.md#tools)) and follows the same rules as the plugin's skills:
 
 - It prefers `create_diagram` for new diagrams and edits existing ones in place, keeping element ids, so your layout, colours and notes survive. It redraws a whole drawing only when you ask it to start over.
-- After each batch of edits, a model that accepts images renders the drawing, says what it sees wrong ("I see the cache box covering an arrow"), fixes it and renders again.
+- `create_diagram` lays the diagram out like a schematic: arrows run at right angles, boxes of one kind share a width, and with no direction given it picks left to right or top to bottom, whichever is closer to the shape of a window.
+- Every edit's result ends with a layout check ([what it looks for](mcp.md#the-layout-check)). The assistant fixes what the check lists before it replies. If it says it is done while its drawing still has problems it caused, it is sent back to fix them, twice at most, and the reply shows "Layout check: … Tidying up before finishing". Problems that were in the drawing before your message are left alone.
+- After each batch of edits, a model that accepts images also renders the drawing, says what it sees wrong ("I see the cache box covering an arrow"), fixes it and renders again.
 - It links nodes to the files they stand for (`code=src/orders/repo.ts#L42` in the drawing description), so when you say the code changed it can list the changes with `git_changes`, match them to nodes by their links and labels, read the changed code, and update just those elements.
 - For "which diagram should this be" and the notation of C4, all 14 UML diagrams (class, object, package, component, composite structure, deployment, use case, activity, state machine, sequence, communication, interaction overview, timing), ER, data flow, infrastructure and messaging diagrams, it reads the reference notes with `diagram_reference`, the same notes the architecture-diagrams skill gives Claude Code. It can ask for them in its own words ("uml class diagram").
 - It draws UML and ER in their real notation: hollow triangles for inheritance, diamonds for composition, «include» arrows, ● and ◉ start and end nodes, crow's feet. Asked for "a UML diagram" without a type, it picks the one that fits (a class diagram for a domain, an activity diagram for a process) and says which.

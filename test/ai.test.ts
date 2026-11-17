@@ -193,6 +193,10 @@ test("Claude Code runs restricted, with only this project's MCP server", () => {
   const mcp = JSON.parse(args[args.indexOf("--mcp-config") + 1]);
   assert.deepEqual(Object.keys(mcp.mcpServers), ["excalidraw"]);
   assert.deepEqual(mcp.mcpServers.excalidraw.args.slice(1), ["mcp", "--root", "/p"]);
+  // The open drawing reaches `lfx mcp`, so its tools default to it as they do for other models.
+  const withDrawing = claudeCodeArgs({ bin: "claude", cwd: "/p", drawing: "/p/a.excalidraw", systemPrompt: "", mcpEnv: {}, codeAccess: false, signal: new AbortController().signal });
+  const mcp2 = JSON.parse(withDrawing[withDrawing.indexOf("--mcp-config") + 1]);
+  assert.deepEqual(mcp2.mcpServers.excalidraw.args.slice(1), ["mcp", "--root", "/p", "--drawing", "/p/a.excalidraw"]);
   const noCode = claudeCodeArgs({ bin: "claude", cwd: "/p", systemPrompt: "", mcpEnv: {}, codeAccess: false, signal: new AbortController().signal });
   assert.equal(noCode[noCode.indexOf("--tools") + 1], "");
 });
@@ -438,6 +442,8 @@ test("OpenAI-compatible endpoint: streamed tool calls edit the drawing and can b
     assert.equal(first.headers.authorization, "Bearer sk-test");
     assert.equal(first.body.model, "qwen");
     assert.equal(first.body.messages[0].role, "system");
+    // Replies are for someone looking at the canvas: labels and places, not ids and coordinates.
+    assert.match(first.body.messages[0].content, /refer to things by their label.*never by element id or x\/y coordinates/);
     assert.match(first.body.messages[1].content, /<context>\nOpen drawing: docs\/diagrams\/oa\.excalidraw/);
     const toolNames = first.body.tools.map((x: any) => x.function.name);
     assert.ok(toolNames.includes("create_diagram") && toolNames.includes("search_files"));
@@ -485,6 +491,78 @@ test("an identical failing call is refused, and the turn stops when the model ke
     t.ws.close();
   } finally {
     fake.close();
+  }
+});
+
+test("a turn that leaves layout problems in its drawing is sent back to fix them, at most twice", async () => {
+  const call = (id: string, name: string, args: unknown) => [oaChunk({ tool_calls: [{ index: 0, id, function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls")];
+  const say = (text: string) => [oaChunk({ content: text }, "stop")];
+  const boxes = [
+    { type: "rectangle", id: "a", x: 0, y: 0, width: 160, height: 70, label: "API" },
+    { type: "rectangle", id: "b", x: 90, y: 30, width: 160, height: 70, label: "Worker" },
+  ];
+  const userTexts = (n: number, fake: { requests: any[] }) => fake.requests[n].body.messages.filter((m: any) => m.role === "user").map((m: any) => (typeof m.content === "string" ? m.content : m.content.map((p: any) => p.text ?? "").join("")));
+
+  // The model draws two overlapping boxes and says it is done; told about the overlap, it moves one.
+  const fixes = await fakeServer((_req, n) => [call("c1", "add_elements", { elements: boxes }), say("Drew the API and its worker."), call("c2", "update_elements", { updates: [{ id: "b", x: 300, y: 0 }] }), say("Moved the worker clear of the API.")][n - 1] ?? say("?"));
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: fixes.url, model: "m" }] });
+    const file = path.join(root, "docs", "diagrams", "review.excalidraw");
+    const t = await tab(file);
+    await t.chat("draw the api and its worker");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "done");
+    assert.equal(fixes.requests.length, 4, "draw, done, fix, done");
+    // The write's own result already said so...
+    const added = fixes.requests[1].body.messages.filter((m: any) => m.role === "tool").at(-1).content;
+    assert.match(added, /Layout check: 1 problem a reader would trip over\. Fix it[^\n]*\n- "API" \(a\) and "Worker" \(b\) overlap/);
+    // ...and when the model stopped anyway, the check came back as a note.
+    const note = userTexts(2, fixes).at(-1);
+    assert.match(note, /^\(Automatic layout check[^\n]*not a message from the user/);
+    assert.match(note, /"API" \(a\) and "Worker" \(b\) overlap/);
+    const moved = fixes.requests[3].body.messages.filter((m: any) => m.role === "tool").at(-1).content;
+    assert.match(moved, /Layout check: no overlaps/);
+    assert.equal(userTexts(3, fixes).length, 2, "a clean drawing isn't reviewed again");
+    assert.match(turn.parts.filter((p) => p.type === "reasoning").map((p) => p.text).join(""), /Layout check: 1 layout problem left\. Tidying up before finishing\./);
+    assert.equal(read(file).elements.find((e: any) => e.id === "b").x, 300);
+
+    // A later turn that only talks doesn't get the drawing's state thrown at it.
+    const before = fixes.requests.length;
+    await t.chat("thanks");
+    assert.equal(fixes.requests.length, before + 1);
+    t.ws.close();
+  } finally {
+    fixes.close();
+  }
+
+  // A model that never fixes it gets two notes, then the turn ends rather than looping.
+  const stubborn = await fakeServer((_req, n) => (n === 1 ? call("c1", "add_elements", { elements: boxes }) : say("Done.")));
+  try {
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: stubborn.url, model: "m" }] });
+    const file = path.join(root, "docs", "diagrams", "review-stubborn.excalidraw");
+    const t = await tab(file);
+    await t.chat("draw the api and its worker");
+    const turn = t.items.find((i) => i.kind === "assistant");
+    assert.ok(turn && turn.kind === "assistant");
+    assert.equal(turn.status, "done");
+    assert.equal(stubborn.requests.length, 4, "draw, done, done after the first note, done after the second");
+    assert.equal(userTexts(3, stubborn).filter((x: string) => x.startsWith("(Automatic layout check")).length, 2);
+
+    // Problems that were there before the turn aren't the turn's to fix: adding a box elsewhere ends cleanly.
+    const far = await fakeServer((_req, n) => (n === 1 ? call("c1", "add_elements", { elements: [{ type: "rectangle", id: "c", x: 900, y: 0, width: 160, height: 70, label: "Queue" }] }) : say("Added the queue.")));
+    await api("PUT", "/api/ai/settings", { enabled: true, active: "x", endpoints: [{ id: "x", kind: "openai", baseUrl: far.url, model: "m" }] });
+    try {
+      await t.chat("add a queue");
+      assert.equal(far.requests.length, 2, "no note about the overlap that was already there");
+      // The write's result still reports it, since it describes the whole drawing.
+      assert.match(far.requests[1].body.messages.filter((m: any) => m.role === "tool").at(-1).content, /"API" \(a\) and "Worker" \(b\) overlap/);
+    } finally {
+      far.close();
+    }
+    t.ws.close();
+  } finally {
+    stubborn.close();
   }
 });
 
@@ -764,6 +842,29 @@ test("in the assistant, a bare drawing name means the open drawing's folder, not
   assert.equal(resolveDrawing(base, "sketch"), "/home/me/docs/diagrams/sketch.excalidraw");
 });
 
+test("in the assistant, the open drawing's name in another folder is refused, not written", async () => {
+  const base = { projectRoot: "/home/me", op: async () => ({}), withEditor: async () => ({}), list: async () => [] } as ToolContext;
+  const assistant = { ...base, currentDrawing: "/home/me/test.excalidraw" };
+  // What models did after reading that drawings live in docs/diagrams/.
+  assert.throws(() => resolveDrawing(assistant, "docs/diagrams/test.excalidraw"), /not the open drawing: the user has test.excalidraw open/);
+  assert.throws(() => resolveDrawing(assistant, "docs/diagrams/test"), /Leave out path/);
+  assert.equal(resolveDrawing(assistant, "./test.excalidraw"), "/home/me/test.excalidraw");
+  assert.equal(resolveDrawing(assistant, "/home/me/docs/diagrams/test.excalidraw"), "/home/me/docs/diagrams/test.excalidraw");
+  assert.equal(resolveDrawing(base, "docs/diagrams/test"), "/home/me/docs/diagrams/test.excalidraw");
+
+  // A write that lands in another drawing says so; recipes lose their docs/diagrams paths.
+  const tools = new Map(drawingTools({ currentDrawing: true }).map((t) => [t.name, t]));
+  const ctx = { ...assistant, op: async () => ({ created: ["a"] }) } as ToolContext;
+  const other = await tools.get("add_elements")!.run({ path: "docs/other", elements: [] }, ctx);
+  assert.match(other.text, /not the drawing the user has open \(test.excalidraw\)/);
+  const open = await tools.get("add_elements")!.run({ elements: [] }, ctx);
+  assert.doesNotMatch(open.text, /not the drawing/);
+  const recipe = await tools.get("diagram_reference")!.run({ topic: "c4" }, ctx);
+  assert.doesNotMatch(recipe.text, /"path":/);
+  const mcpRecipe = await drawingTools({ currentDrawing: false }).find((t) => t.name === "diagram_reference")!.run({ topic: "c4" }, base);
+  assert.match(mcpRecipe.text, /"path": "docs\/diagrams\//);
+});
+
 test("library shapes: list, insert, and use as create_diagram nodes with bound arrows", async () => {
   const proj = path.join(root, "shapes-proj");
   fs.mkdirSync(path.join(proj, ".git"), { recursive: true });
@@ -921,8 +1022,9 @@ test("a turn is traced: agent, model calls with usage, tools and the operations 
     assert.equal(agent.attributes["output.value"], "Drew Web calling API.");
 
     const kids = childrenOf(agent).sort((a, b) => a.startTime[0] - b.startTime[0] || a.startTime[1] - b.startTime[1]);
-    assert.deepEqual(kids.map((s) => s.name), ["chat qwen", "execute_tool create_diagram", "chat qwen"]);
-    const [chat1, tool, chat2] = kids;
+    // The layout check runs before the turn (what was already wrong) and when the model says it is done.
+    assert.deepEqual(kids.map((s) => s.name), ["lfx.op check", "chat qwen", "execute_tool create_diagram", "chat qwen", "lfx.op check"]);
+    const [, chat1, tool, chat2] = kids;
     assert.equal(chat1.attributes["gen_ai.usage.output_tokens"], 9);
     assert.equal(chat1.attributes["gen_ai.usage.cache_read.input_tokens"], 100);
     assert.equal(chat1.attributes["gen_ai.response.model"], "qwen-served");

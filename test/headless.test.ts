@@ -209,9 +209,11 @@ describe("headless browser lifetime", { skip: skip || (!hasRenderer && "dist/web
     await d.start({ LFX_HEADLESS: "always", LFX_HEADLESS_IDLE_MIN: "0.001" });
     try {
       await d.op({ op: "render", path: d.drawing });
-      const pid = (await d.browserPid())!;
-      assert.ok(pid);
-      assert.ok(await gone(pid, 15_000), "the idle shutdown still runs once the request is done");
+      // With a 60 ms timeout the idle shutdown may already have run by the time status is read.
+      const pid = await d.browserPid();
+      if (pid) assert.ok(await gone(pid, 15_000), "the idle shutdown still runs once the request is done");
+      for (const end = Date.now() + 15_000; (await d.browserPid()) !== null && Date.now() < end; ) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(await d.browserPid(), null, "the idle shutdown still runs once the request is done");
     } finally {
       d.stop();
     }

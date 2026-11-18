@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-18
+
 ### Added
 
 - Tracing can be turned on and pointed at a receiver from the assistant's settings (**Tracing**, under Diagnostics) or `"tracing"` in `ai.json`, and applies without restarting the daemon. Receiver headers are write-only, `lfx mcp` reads the same settings, and the page shows the last export error.
@@ -213,7 +215,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - A native macOS app and a Homebrew cask that also puts `lfx` on your PATH.
 - A Docker Compose setup with an egress-isolated app container and a loopback-only gateway.
 
-[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Sean-Michael/local-first-excalidraw/compare/v1.0.0...v1.1.0

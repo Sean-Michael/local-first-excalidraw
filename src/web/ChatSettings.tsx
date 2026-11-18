@@ -297,7 +297,7 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
                 <Glyph icon="prompts" />
                 <span className="lfx-cell-text">
                   <span>Saved Prompts</span>
-                  <small>Reusable requests, from “UML class diagram” to “Update after my change”</small>
+                  <small>Requests you reuse, under / in the chat</small>
                 </span>
                 <span className="lfx-cell-value">{settings.prompts.length}</span>
                 <Chevron />
@@ -308,7 +308,7 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
                 <Glyph icon="tools" />
                 <span className="lfx-cell-text">
                   <span>Tools</span>
-                  <small>What the assistant can do, and what it knows about diagrams</small>
+                  <small>What the assistant may do</small>
                 </span>
                 <span className="lfx-cell-value">{settings.disabledTools.length ? `${settings.disabledTools.length} off` : "All on"}</span>
                 <Chevron />
@@ -324,7 +324,7 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
                 <Glyph icon="trace" />
                 <span className="lfx-cell-text">
                   <span>Tracing</span>
-                  <small>Send OpenTelemetry traces of each reply to Phoenix, Langfuse, Jaeger…</small>
+                  <small>OpenTelemetry traces of each reply</small>
                 </span>
                 <span className="lfx-cell-value">{tracingSummary(settings.tracing)}</span>
                 <Chevron />
@@ -337,7 +337,7 @@ export function ChatSettings({ settings, onSaved, onClose }: { settings: PublicS
           title="Privacy"
           footer={
             <>
-              Requests are made by the local daemon, not this page. API keys are stored in <code>~/.local-first-excalidraw/ai.json</code>, readable only by
+              Requests are made by the local daemon, not this page. API keys are stored in <code>{settings.file ? settings.file.replace(/^\/(?:Users|home)\/[^/]+/, "~") : "ai.json"}</code>, readable only by
               you, and are never sent back to the browser.
             </>
           }

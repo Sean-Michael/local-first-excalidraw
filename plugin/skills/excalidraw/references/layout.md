@@ -20,7 +20,7 @@ These are the same rules `excalidraw_guide` returns. The diagram-review skill's 
 1. **A zone label as the bound label of a big rectangle.** It sits in the middle, where the children go, and can't be moved. Use a frame (`create_diagram` groups, or a frame element with `name`), or a free text element at the zone's top-left: x + 20, y + 10, `fontSize` 18.
 2. **Cross-zone spaghetti.** Long diagonal arrows between distant zones cross everything in between. Place zones that talk to each other side by side, keep most arrows inside a zone or between neighbouring zones, and split the diagram if it still tangles.
 3. **Arrow labels everywhere.** A label sits at the arrow's middle and collides with shapes on short arrows. Label an arrow only when its meaning isn't obvious from its ends (a protocol, an event name, a verb), keep it to 12 characters or fewer, and leave labels off on dense diagrams.
-4. **Free arrows.** An arrow that means "A talks to B" must be bound at both ends (`start`/`end` in `add_elements`, or `connect_elements`). A free arrow stays behind when the user moves a box.
+4. **Free arrows.** An arrow that means "A talks to B" must be bound at both ends (`start`/`end` in `add_elements`, or `connect_elements`). A free arrow stays behind when the user moves a box. A bound arrow with no `points` is routed at right angles and stays square when a tool moves its shapes.
 5. **Shrinking text to fit.** Widen the shape or shorten the label instead.
 6. **Hand-placing what `create_diagram` can lay out,** and drawing an icon from plain boxes when `list_shapes` has it.
 7. **Redrawing to change something.** `replace: true` or delete-and-recreate throws away the user's layout, colours and notes. Edit in place and keep ids.

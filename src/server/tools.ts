@@ -499,7 +499,7 @@ export function drawingTools(opts: { currentDrawing: boolean }): ToolDef[] {
       name: "connect_elements",
       title: "Connect elements",
       description:
-        "Draws an arrow from one element to another (by id). The arrow stays attached when either end moves. Pass the id of an existing arrow to attach that arrow to from and to instead of drawing a new one (it is re-routed straight between them).",
+        "Draws an arrow from one element to another (by id), routed at right angles: straight when the two face each other, otherwise with a turn in the gap between them. The arrow stays attached, and square, when either end moves. Pass the id of an existing arrow to attach that arrow to from and to instead of drawing a new one (it is re-routed between them).",
       input: {
         path: pathArg,
         from: z.string().describe("Id of the element the arrow starts at"),

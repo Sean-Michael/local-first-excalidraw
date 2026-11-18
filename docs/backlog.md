@@ -57,11 +57,12 @@ Run on 2026-10-21 with `sequence-code-shapes`: 7 tool calls, 1 harmless error, 0
 
 ## From the showcase pass on 2026-11-16
 
-End-to-end run in the browser at 1024 px with Claude Code (Sonnet) on the `shopapp` fixture. The usability misses and the layout work are in the changelog under Unreleased. Still open:
+End-to-end runs in the browser at 1024 px on the `shopapp` fixture, with Claude Code (Sonnet) and with `qwen3.5:9b` on Ollama. The usability misses and the layout work are in the changelog under Unreleased. Still open:
 
-- [ ] **A plain chain has no good shape.** Seven steps in a row are 28:1 left to right and 1:6 top to bottom. The layout picks the lesser evil; wrapping a long chain into rows would fix it.
-- [ ] **Labels on long back edges.** In a state machine with several cycles, a label can still sit where another edge's line passes. The check doesn't look for lines through arrow labels.
-- [ ] **Hand-drawn and library layouts.** Right-angle routing applies to `create_diagram`. Arrows made with `connect_elements` or `add_elements` are still straight lines between boxes.
+- [ ] **Wrapping needs a clean cut.** A long chain wraps into rows only where no group and no long edge spans the cut, and at most three edges run from one row to the next. A long graph with one edge from its first node to its last stays a strip.
+- [ ] **Right-angle arrows don't avoid obstacles.** A hand-placed arrow turns once in the gap between its two shapes. A third shape in that gap is reported by the layout check, not routed around.
+- [ ] **Dragging a box in the editor slants its arrows.** Tools keep right-angle arrows square when they move a shape. Excalidraw moves only the arrow's end point when you drag one by hand. Its own elbow arrows would follow, at the cost of the layout's channels and label positions.
+- [ ] **Arrows drawn before this change keep their shape.** A straight arrow in an older drawing isn't marked as right-angle, so moving its shapes slants it as before.
 - [ ] **The assistant panel has a fixed width** (380 px). The sidebar resizes; the panel doesn't.
-- [ ] **The settings footnote names `~/.local-first-excalidraw/ai.json`** even when `LFX_STATE_DIR` points elsewhere.
-- [ ] **Not exercised in this pass:** reverting a reply, the Shapes view, past chats, and local models (Ollama wasn't running).
+- [ ] **A reasoning model fills the chat with "Thought" rows,** one before each tool call. They could fold into the call they precede.
+- [ ] **A small local model reads "below" loosely.** `qwen3.5:9b` put a new box on top of an existing one, then needed five more calls to move it clear. A placement argument on `add_elements` that takes "below X" would spare it the arithmetic.

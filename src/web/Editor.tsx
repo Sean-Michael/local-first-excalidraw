@@ -118,6 +118,8 @@ const REFIT_DELAY_MS = 150;
 // How long a fit may keep moving the viewport: Excalidraw animates scrollToContent for 500 ms.
 const FIT_ANIMATION_MS = 900;
 const FIT_SETTLE_MS = 150;
+// How much of the canvas a fitted drawing fills.
+const FIT_FRACTION = 0.86;
 
 /** "claude-code" -> "Claude Code"; the in-app assistant and unnamed clients get generic names. */
 export function agentName(by: string | undefined): string {
@@ -414,7 +416,8 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
     autoFitted.current = true;
     window.clearTimeout(fitting.current);
     fitting.current = window.setTimeout(() => (fitting.current = 0), animate ? FIT_ANIMATION_MS : FIT_SETTLE_MS);
-    x.scrollToContent(undefined, { fitToContent: true, animate, maxZoom: 1 });
+    // A margin, so the drawing clears the toolbar above it and the controls below.
+    x.scrollToContent(undefined, { fitToContent: true, animate, maxZoom: 1, viewportZoomFactor: FIT_FRACTION });
   }, []);
   const fitWhen = useRef<() => void>(() => {});
   const refitTimer = useRef<number | undefined>(undefined);
@@ -784,8 +787,7 @@ export function Editor({ path, onNavigate, onMoved, onTheme, sidebar }: EditorPr
             {!chatOpen && (
               <button type="button" className="lfx-badge lfx-ai-toggle" onClick={() => toggleChat(true)} title={`Open the assistant (${ASSISTANT_KEYS})`} aria-label="Open the assistant">
                 <svg viewBox="0 0 20 20" aria-hidden>
-                  <path d="M10 2l1.8 4.6L16.5 8l-4.7 1.6L10 14l-1.8-4.4L3.5 8l4.7-1.4z" />
-                  <path d="M15.5 13l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+                  <path d="M4.5 4.5h11a1.5 1.5 0 011.5 1.5v6a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3h-1A1.5 1.5 0 013 12V6a1.5 1.5 0 011.5-1.5z" />
                 </svg>
                 <span className="lfx-ai-label">Assistant</span>
                 <kbd className="lfx-kbd">{ASSISTANT_KEYS}</kbd>

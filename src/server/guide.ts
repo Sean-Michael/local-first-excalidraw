@@ -12,7 +12,7 @@ Workflow: read the real code first and use its names (project_overview maps an u
 export const GUIDE = `# Local-first Excalidraw: drawing guide
 
 ## Pick the tool
-- **create_diagram**: nodes + edges with automatic layout: right-angle arrows, boxes of one width, and LR or TB (leave \`direction\` out and it picks the one that fits a screen). The default for architecture, request flows, pipelines, state machines, dependency graphs, and UML and ER diagrams. Groups become labelled frames. Nodes take \`code\` links.
+- **create_diagram**: nodes + edges with automatic layout: right-angle arrows, boxes of one width, and LR or TB (leave \`direction\` out and it picks the one that fits a screen, wrapping a long chain into rows). The default for architecture, request flows, pipelines, state machines, dependency graphs, and UML and ER diagrams. Groups become labelled frames. Nodes take \`code\` links.
   - UML/ER notation: edges take a \`relation\` that sets the arrowheads and line style: \`inheritance\` and \`realization\` (hollow triangle at the parent, which is laid out first), \`composition\` and \`aggregation\` (diamond at \`from\`, the whole), \`association\` (plain line), \`dependency\` (dashed), \`include\`/\`extend\` (use cases), \`message\`/\`reply\`, and crow's foot \`one-to-one\`, \`one-to-many\`, \`many-to-many\`, \`one-to-one-or-many\`. \`startArrowhead\`/\`endArrowhead\` override them. Multiplicities, role names and cardinalities go in \`startLabel\` (beside \`from\`) and \`endLabel\` (beside \`to\`), not the middle \`label\`: \`{ "from": "order", "to": "item", "relation": "composition", "startLabel": "1", "endLabel": "1..*" }\`. Each is grouped with the box at its end, so it moves with that box.
   - Class and entity nodes take \`attributes\` and \`operations\` (compartments under rule lines) and \`stereotype\` («interface», «device», …). Shapes \`initial\` (●), \`final\` (◉) and \`bar\` (fork/join) take an empty label.
 - **mermaid_to_drawing**: only \`flowchart\` and \`sequenceDiagram\` become editable shapes. Class, ER, state and other Mermaid types arrive as one uneditable image: use create_diagram for those.
@@ -21,7 +21,7 @@ export const GUIDE = `# Local-first Excalidraw: drawing guide
 - **apply_changes**: add + update + delete in one call and one revision. Best for a planned set of edits.
 - **update_elements**: move, resize, relabel, recolour, re-link or re-frame by id. Labels re-centre and bound arrows follow.
 - **arrange_elements**: align or evenly distribute elements by id.
-- **connect_elements**: an arrow between two ids, or re-bind an existing arrow.
+- **connect_elements**: an arrow between two ids, routed at right angles, or re-bind an existing arrow.
 - **delete_elements**: removes elements with their labels; attached arrows are detached, not deleted.
 - **read_drawing**: \`[id] type at (x,y) size WxH "label" fill=… in frame … code=…\`, arrows as \`[id] arrow from -> to\`, plus the drawing's \`rev\`. Filter with \`query\`, \`ids\` or \`type\`.
 - **render_drawing**: a PNG to check your work; \`element_ids\` or \`region\` for a full-size close-up, \`dark\` for dark mode.
@@ -43,7 +43,7 @@ Text: { "type": "text", "id": "title", "x": 100, "y": 40, "text": "Checkout arch
 Arrows: bind both ends by id; the ends sit on the outlines and follow when shapes move.
   { "type": "arrow", "id": "api-db", "start": { "id": "orders-api" }, "end": { "id": "orders-db" }, "label": "SQL" }
   End labels: "startLabel": "1", "endLabel": "0..*" put small text beside each end, grouped with the shape there.
-  Style: "strokeStyle": "dashed" | "dotted"; "startArrowhead"/"endArrowhead": "arrow" | "triangle" | "dot" | "bar" | null. Waypoints: "points": [[0,0],[0,-60],[200,-60],[200,0]].
+  Style: "strokeStyle": "dashed" | "dotted"; "startArrowhead"/"endArrowhead": "arrow" | "triangle" | "dot" | "bar" | null. A bound arrow with no "points" is routed at right angles and stays that way when its shapes move; give "points" (waypoints: [[0,0],[0,-60],[200,-60],[200,0]]) only for a path of your own.
 Frames: { "type": "frame", "id": "backend", "name": "Backend", "children": ["orders-api", "orders-db"] }, sized around its children.
 Any raw Excalidraw property also works (strokeColor, backgroundColor, fillStyle, strokeWidth, roughness 0-2, opacity, fontFamily "hand"|"normal"|"code", frameId, groupIds).
 

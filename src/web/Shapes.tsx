@@ -399,7 +399,7 @@ export function Shapes({
           })}
           {libs && !libs.some((l) => l.origin === "installed") && (
             <p className="lfx-muted">
-              Nothing installed yet. Browse the catalog, or import .excalidrawlib files you've downloaded (drag them onto this panel).
+              No libraries installed yet. Browse the catalog, or import a file.
             </p>
           )}
         </>

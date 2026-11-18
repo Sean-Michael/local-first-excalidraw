@@ -158,7 +158,7 @@ function SessionList({
             <button type="button" className="lfx-session" onClick={() => onOpen(s.id)}>
               <span className="lfx-session-title">
                 {s.busy && <span className="lfx-spinner" aria-label="Working" />}
-                {s.title || "Untitled chat"}
+                <span className="lfx-session-name">{s.title || "Untitled chat"}</span>
               </span>
               <span className="lfx-muted">
                 {[when(s.updated), `${s.messages} message${s.messages === 1 ? "" : "s"}`, ep ? (ep.model ? `${ep.name} · ${ep.model}` : ep.name) : ""].filter(Boolean).join(" · ")}
